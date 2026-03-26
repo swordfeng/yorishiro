@@ -62,8 +62,9 @@ Phase 0 uses simple JSON/YAML files for extracted data. Vector database (Qdrant)
 - [x] README.md created
 - [x] epub parsing pipeline implemented (ebooklib)
 - [x] Chapter splitting (16 chapters)
-- [x] Scene segmentation (117 scenes across 9 narrative chapters)
-- [ ] Character extraction from scenes (彩葉, ヤチヨ, etc.)
+- [x] Scene segmentation (16 chapters, 87 scenes, all verified)
+- [x] Coreference resolution (character_aliases.json with 17 canonical characters)
+- [x] Character extraction (彩葉: 77 scene extractions)
 - [ ] SOUL.md synthesis
 - [ ] SOUL.md quality assessed
 
@@ -101,7 +102,7 @@ yorishiro/
 ├── uv.lock           # Locked dependencies
 ├── yorishiro.md       # Full architecture document
 ├── README.md          # Project overview
-└── agent.md          # This file - AI agent context
+└── AGENT.md          # This file - AI agent context
 ```
 
 ---
@@ -153,6 +154,89 @@ Changes to `yorishiro.md` Section 5.1 affect all future generation. Consider:
 - [ ] Which character will be used for Phase 0 validation? (Iroha Sakayori recommended as protagonist)
 - [ ] OOC evaluation methodology to be defined
 - [x] epub parsing library choice: ebooklib (works with CPK.epub)
+
+---
+
+## Learnings (Documented Decisions)
+
+### Non-Narrative Chapter Detection
+
+**NEVER implement code-based automatic detection of non-narrative chapters.**
+
+Non-narrative chapters (cautions, TOCs, colophons, afterwords) are identified by **human decision only**. Code-based detection:
+- Is brittle and error-prone
+- Can misclassify content (e.g., "あとがき" in chapter 011 has meaningful character content)
+- Destroys the workflow logic
+
+**Correct approach**:
+- Human identifies non-narrative chapters
+- Manifests created manually with proper skip reasoning
+- All narrative chapters must be properly segmented with verified offsets
+
+**Current CPK non-narrative chapters**: ch000 (caution), ch001 (TOC), ch012-015 (colophon/navigation)
+**Note**: ch011 (あとがき/afterword) is classified as narrative - it contains character information about 桐山なると
+
+### Codepoint vs Byte Offsets
+
+JavaScript `String.length` counts UTF-16 code units. Python `len()` counts Unicode codepoints.
+
+**Always use Python codepoints** for offset tracking in this project. Document this in all prompts.
+
+### Scene Segmentation Boundaries
+
+Cuts MUST be at natural boundaries:
+- After 「※」 or 「──」 decorative dividers
+- At sentence endings (。！？)
+- NEVER mid-sentence
+
+### Character Name Aliases (Coreference Resolution)
+
+Characters may appear under different names in different scenes. This requires a dedicated resolution pass BEFORE character extraction.
+
+**CPK Character Identity Map:**
+- かぐや = 赤ちゃん = 少女 (same character, different life stages)
+- 八千代 = ヤチヨ (same entity, future identity)
+- 彩葉 = いろＰ = 酒寄 (same character, streaming handle)
+- 芦花, 真実, 帝アキラ, 雷, 乃依, 月人, 黒鬼 (supporting characters)
+
+**Coreference Resolution Method:**
+1. **Read-until-understood**: No language-specific patterns. Read scenes sequentially until you understand who the alias refers to.
+2. For each alias, read its first occurrence scene. If unclear, continue reading subsequent scenes.
+3. **Never use pattern matching** - text may be in any language. Only rely on contextual understanding.
+4. If entire book read and still unclear → flag for manual review.
+
+**Execution Flow:**
+```
+Step 1: Collect all unique aliases from scenes_manifest.json
+Step 2: Process each alias in order of first appearance
+        - Read alias's first scene
+        - If unclear, continue reading subsequent scenes
+        - Continue until resolved or end of book
+Step 3: Output character_aliases.json
+```
+
+**Output Format:**
+```json
+{
+  "かぐや": [
+    {"chapter": "ch004", "scene": 0, "alias": "赤ちゃん"},
+    {"chapter": "ch004", "scene": 1, "alias": "少女"}
+  ],
+  "彩葉": [...],
+  "八千代": [...],
+  "UNRESOLVED": [...]  // Cannot resolve, needs manual review
+}
+```
+
+**Important Notes:**
+- Canonical names use 日文原文 as they appear in source material
+- "叙述者" is excluded from alias mapping (narrator, not a character)
+- Channel/duo names (e.g., "いろＰ") may be aliases for characters - read until understood
+- Manual confirmation is one-time at the end, not per-chapter
+
+### Manifest Naming
+
+Scene manifests MUST be named `scenes_manifest.json` (not `manifest.json` or other variants).
 
 ## Current Test Material
 

@@ -14,7 +14,7 @@ def main():
     print("  uv run python cli.py extract <epub> --output <dir>")
     print()
     print("See yorishiro.md for architecture documentation.")
-    print("See agent.md for development context.")
+    print("See AGENT.md for development context.")
 
 
 if __name__ == "__main__":

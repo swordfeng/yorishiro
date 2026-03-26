@@ -4,41 +4,39 @@ SYSTEM_PROMPT = """你是一个专业的角色分析师。你的任务是从给�
 
 ## 输出要求
 
-以 YAML 格式输出，包含以下字段:
+以 JSON 格式输出，包含以下字段:
 
-```yaml
-character_scene_note:
-  character: "角色名"
-  chapter_index: 章节索引
-  source: "novel" | "film" | "artbook"
+```json
+{
+  "character_scene_note": {
+    "character": "角色名",
+    "chapter_index": 章节索引,
+    "scene_index": 场景索引,
+    "source": "novel" | "film" | "artbook",
 
-  # 台词与语言风格
-  dialogue_samples: ["原文台词1", "原文台词2"]   # 保留原文, 不要总结
-  language_traits: "观察到的语言特征 (口头禅/句式/语域/幽默方式)"
+    "dialogue_samples": ["原文台词1", "原文台词2"],
+    "language_traits": "观察到的语言特征 (口头禅/句式/语域/幽默方式)",
 
-  # 情绪与动机
-  emotional_state: "当前情绪状态"
-  inferred_motivation: "推断的行为动机"
-  internal_conflict: "如有内心冲突, 描述之"
+    "emotional_state": "当前情绪状态",
+    "inferred_motivation": "推断的行为动机",
+    "internal_conflict": "如有内心冲突, 描述之",
 
-  # 关系动态
-  relationships:
-    - target: "角色B"
-      dynamic: "本场景中的关系表现"
-      shift: "相比之前有无变化"
+    "relationships": [
+      {"target": "角色B", "dynamic": "本场景中的关系表现", "shift": "相比之前有无变化"}
+    ],
 
-  # 行为模式
-  actions_taken: "做了什么"
-  actions_avoided: "选择不做什么 (负面约束信号)"
-  decision_logic: "决策背后的逻辑推断"
+    "actions_taken": "做了什么",
+    "actions_avoided": "选择不做什么 (负面约束信号)",
+    "decision_logic": "决策背后的逻辑推断",
 
-  # Arc 信号
-  arc_marker: "是否为角色发展的关键节点, 如何改变了角色"
+    "arc_marker": "是否为角色发展的关键节点, 如何改变了角色",
 
-  # 知识边界 (运行时 RAG 使用)
-  knowledge_scope:
-    facts_revealed: ["本场景中角色获知的新信息"]
-    facts_hidden: ["本场景中角色不知道但观众知道的信息"]
+    "knowledge_scope": {
+      "facts_revealed": ["本场景中角色获知的新信息"],
+      "facts_hidden": ["本场景中角色不知道但观众知道的信息"]
+    }
+  }
+}
 ```
 
 ## 重要提醒
@@ -79,4 +77,4 @@ def build_extraction_prompt(character_name: str, chapter_index: int, chapter_tit
 
 ## 输出格式
 
-严格按照上述 YAML 格式输出。如果该角色未出现，输出 "NOT_PRESENT"。"""
+严格按照上述 JSON 格式输出。如果该角色未出现，输出 "NOT_PRESENT"。"""

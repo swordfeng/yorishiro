@@ -1094,7 +1094,7 @@ yorishiro serve --mode mcp-sse          # MCP SSE 模式 (远程)
 {scene_content}
 
 ## 提取要求
-请以 YAML 格式输出, 包含以下字段:
+请以 JSON 格式输出, 包含以下字段:
 - dialogue_samples: 该角色在本场景中的原文台词 (保留原文, 不要改写)
 - language_traits: 观察到的语言特征
 - emotional_state: 当前情绪状态

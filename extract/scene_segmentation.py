@@ -111,7 +111,15 @@ If the chapter file is too large to read at once:
 - content is NOT in manifest - only in scene_XXX.txt files
 - Merge first, split only when necessary
 - Do NOT assume a specific scene count - judge based on actual content boundaries
-- Cuts MUST be at natural boundaries - never mid-sentence"""
+- Cuts MUST be at natural boundaries - never mid-sentence
+
+## Non-Narrative Chapters
+
+If a chapter is truly non-narrative (caution page, TOC, colophon, credits, etc.):
+- STILL create a scenes_manifest.json
+- STILL create one scene_000.txt containing the full chapter text
+- Set location/time/characters as appropriate for the content type
+- Do NOT skip creating the manifest or scene files"""
 
 
 def build_scene_segmentation_prompt(

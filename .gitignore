@@ -1,0 +1,38 @@
+# Raw source materials (films, novels, artbooks, etc.)
+# Raw materials are not part of the code/docs
+/material/
+
+# Build outputs
+/build/
+/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+*.egg-info/
+.eggs/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Optional: local database (Qdrant data)
+/data/

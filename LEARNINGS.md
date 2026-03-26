@@ -21,17 +21,11 @@
 
 **Rule**: Always use the source material's language for all metadata.
 
-### 2. Over-Segmentation | 过度分割
+### 2. Incorrect Segmentation | 不正确分割
 
-**Problem**: ch004 had 32 scenes with identical consecutive locations/times.
+**Problem**: ch004 had scenes with identical consecutive locations/times that should have been merged, and scenes split without proper justification.
 
-**Rule**: Only split on actual boundaries (location change, time jump, POV change, narrative marker). Merge if consecutive scenes share same location/time/POV.
-
-### 3. No Assumptions About Scene Count | 不假设场景数量
-
-**Problem**: Prompt assumed "5-15 typical", ">20 over-segmentation".
-
-**Rule**: Do NOT assume a specific scene count. Judge based on actual content boundaries only.
+**Rule**: Split ONLY on actual boundaries (location change, time jump, POV change, narrative marker). Merge if consecutive scenes share same location/time/POV. The number of scenes is irrelevant - correctness matters, not count.
 
 ---
 
@@ -105,7 +99,7 @@ Before finishing any subagent task, verify:
 ## Files Status | 文件状态
 
 ### Need Re-do | 需要重做
-- `ch004/` - over-segmented, needs redo
+- `ch004/` - incorrect segmentation, needs redo
 
 ### Quality OK | 质量尚可
 - `ch003/` - good

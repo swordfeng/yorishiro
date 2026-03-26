@@ -28,8 +28,6 @@ def generate_scene_prompts(
 
         prompt = build_scene_segmentation_prompt(
             chapter_index=data["chapter_index"],
-            chapter_title=data["title"],
-            chapter_content=data["content"],
         )
 
         output_file = output_dir / f"prompt_ch{data['chapter_index']:03d}_scene_seg.txt"

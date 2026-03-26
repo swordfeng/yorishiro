@@ -60,7 +60,7 @@ Phase 0 uses simple JSON/YAML files for extracted data. Vector database (Qdrant)
 
 - [x] Architecture defined in yorishiro.md
 - [x] README.md created
-- [ ] epub parsing pipeline implemented
+- [x] epub parsing pipeline implemented (ebooklib)
 - [ ] Phase 0 workflow validated with sample character
 - [ ] SOUL.md quality assessed
 
@@ -70,11 +70,14 @@ Phase 0 uses simple JSON/YAML files for extracted data. Vector database (Qdrant)
 
 ```
 yorishiro/
+├── extract/           # Extraction pipelines
+│   ├── __init__.py
+│   └── epub_pipeline.py
 ├── material/          # Raw source materials (gitignored)
-│   ├── novel/
-│   └── film/
+│   └── novel/
 ├── material.yaml      # Source material metadata (gitignored)
 ├── pyproject.toml     # Python project config
+├── uv.lock           # Locked dependencies
 ├── yorishiro.md       # Full architecture document
 ├── README.md          # Project overview
 └── agent.md          # This file - AI agent context
@@ -126,6 +129,13 @@ Changes to `yorishiro.md` Section 5.1 affect all future generation. Consider:
 
 ## Open Questions
 
-- [ ] Which character will be used for Phase 0 validation?
+- [ ] Which character will be used for Phase 0 validation? (Chobits has 彩葉, ヤチヨ, etc.)
 - [ ] OOC evaluation methodology to be defined
-- [ ] epub parsing library choice (python-calibre or epub2py?)
+- [x] epub parsing library choice: ebooklib (works with CPK.epub)
+
+## Current Test Material
+
+**CPK.epub** - Chobits (人形电脑天使心) Japanese novel
+- Extracted: 16 chapters
+- Characters mentioned: 彩葉 (Sayah), ヤチヨ (Yachiyo), 芦花, 真理, etc.
+- Story: Modern Japan with virtual space 'ツクヨミ' and AI liver Yachiyo

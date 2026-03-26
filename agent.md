@@ -61,7 +61,10 @@ Phase 0 uses simple JSON/YAML files for extracted data. Vector database (Qdrant)
 - [x] Architecture defined in yorishiro.md
 - [x] README.md created
 - [x] epub parsing pipeline implemented (ebooklib)
-- [ ] Phase 0 workflow validated with sample character
+- [x] Chapter splitting (16 chapters)
+- [x] Scene segmentation (117 scenes across 9 narrative chapters)
+- [ ] Character extraction from scenes (彩葉, ヤチヨ, etc.)
+- [ ] SOUL.md synthesis
 - [ ] SOUL.md quality assessed
 
 ---
@@ -72,7 +75,12 @@ Phase 0 uses simple JSON/YAML files for extracted data. Vector database (Qdrant)
 yorishiro/
 ├── extract/           # Extraction pipelines
 │   ├── __init__.py
-│   └── epub_pipeline.py
+│   ├── epub_pipeline.py
+│   ├── split_chapters.py
+│   ├── scene_segmentation.py
+│   ├── character_extractor.py
+│   ├── generate_prompts.py
+│   └── generate_scene_prompts.py
 ├── cli.py            # CLI entry point
 ├── main.py           # Main entry point
 ├── material/          # Source materials
@@ -82,9 +90,12 @@ yorishiro/
 │   │       └── CPK_CN.epub
 │   └── processed/     # Processed/extracted content
 │       └── novel/CPK/
-│           ├── chapters/       # Extracted chapters
-│           ├── scenes/         # Scene segmentation (future)
-│           └── character_notes/ # Character extraction (future)
+│           ├── chapters/           # Individual chapter JSON files
+│           ├── scenes/            # Scene segmentation
+│           │   ├── ch003/scene_XXX.txt (9 scenes)
+│           │   ├── ch004/scene_XXX.txt (32 scenes)
+│           │   └── ... (117 total scenes)
+│           └── character_notes/    # Character extraction (future)
 ├── material.yaml      # Source material metadata (gitignored)
 ├── pyproject.toml     # Python project config
 ├── uv.lock           # Locked dependencies

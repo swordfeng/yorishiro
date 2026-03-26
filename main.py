@@ -1,12 +1,18 @@
-"""Yorishiro - Fictional Character Soul Document Generator"""
+"""Yorishiro - Fictional Character Soul Document Generator."""
 
-import sys
+from pathlib import Path
+
+import cli
 
 
 def main():
     print("Yorishiro - Fictional Character Soul Document Generator")
     print()
     print("Phase 0: Validating core workflow...")
+    print()
+    print("Usage:")
+    print("  uv run python cli.py extract <epub> --output <dir>")
+    print()
     print("See yorishiro.md for architecture documentation.")
     print("See agent.md for development context.")
 

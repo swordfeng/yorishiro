@@ -73,8 +73,18 @@ yorishiro/
 ├── extract/           # Extraction pipelines
 │   ├── __init__.py
 │   └── epub_pipeline.py
-├── material/          # Raw source materials (gitignored)
-│   └── novel/
+├── cli.py            # CLI entry point
+├── main.py           # Main entry point
+├── material/          # Source materials
+│   ├── raw/          # Original source files
+│   │   └── novel/
+│   │       ├── CPK.epub
+│   │       └── CPK_CN.epub
+│   └── processed/     # Processed/extracted content
+│       └── novel/CPK/
+│           ├── chapters/       # Extracted chapters
+│           ├── scenes/         # Scene segmentation (future)
+│           └── character_notes/ # Character extraction (future)
 ├── material.yaml      # Source material metadata (gitignored)
 ├── pyproject.toml     # Python project config
 ├── uv.lock           # Locked dependencies

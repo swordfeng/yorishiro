@@ -7,6 +7,11 @@ from .epub_pipeline import (
     Chapter,
     ExtractedEpub,
 )
+from .character_extractor import (
+    SYSTEM_PROMPT,
+    build_extraction_prompt,
+)
+from .generate_prompts import generate_prompts
 
 __all__ = [
     "parse_epub",
@@ -14,4 +19,7 @@ __all__ = [
     "iter_chapters",
     "Chapter",
     "ExtractedEpub",
+    "SYSTEM_PROMPT",
+    "build_extraction_prompt",
+    "generate_prompts",
 ]

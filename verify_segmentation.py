@@ -32,8 +32,10 @@ def verify_chapter_scenes(chapter_index: int, base_dir: str | Path) -> dict:
     if not scenes_dir.exists():
         return {"chapter_index": chapter_index, "error": f"S scenes directory not found"}
 
-    # Read manifest
+    # Read manifest (check both possible locations)
     manifest_file = scenes_dir / "scenes_manifest.json"
+    if not manifest_file.exists():
+        manifest_file = scenes_dir / "manifest.json"
     if not manifest_file.exists():
         return {"chapter_index": chapter_index, "error": f"Manifest not found"}
 

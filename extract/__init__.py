@@ -8,10 +8,13 @@ from .epub_pipeline import (
     ExtractedEpub,
 )
 from .character_extractor import (
-    SYSTEM_PROMPT,
+    SYSTEM_PROMPT as EXTRACTION_SYSTEM_PROMPT,
     build_extraction_prompt,
 )
-from .generate_prompts import generate_prompts
+from .scene_segmentation import (
+    SYSTEM_PROMPT as SEGMENTATION_SYSTEM_PROMPT,
+    build_scene_segmentation_prompt,
+)
 
 __all__ = [
     "parse_epub",
@@ -19,7 +22,8 @@ __all__ = [
     "iter_chapters",
     "Chapter",
     "ExtractedEpub",
-    "SYSTEM_PROMPT",
+    "EXTRACTION_SYSTEM_PROMPT",
     "build_extraction_prompt",
-    "generate_prompts",
+    "SEGMENTATION_SYSTEM_PROMPT",
+    "build_scene_segmentation_prompt",
 ]

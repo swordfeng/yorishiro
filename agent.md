@@ -129,13 +129,34 @@ Changes to `yorishiro.md` Section 5.1 affect all future generation. Consider:
 
 ## Open Questions
 
-- [ ] Which character will be used for Phase 0 validation? (Chobits has 彩葉, ヤチヨ, etc.)
+- [ ] Which character will be used for Phase 0 validation? (Iroha Sakayori recommended as protagonist)
 - [ ] OOC evaluation methodology to be defined
 - [x] epub parsing library choice: ebooklib (works with CPK.epub)
 
 ## Current Test Material
 
-**CPK.epub** - Chobits (人形电脑天使心) Japanese novel
+**CPK.epub** - 超かぐや姫！ (Cosmic Princess Kaguya!) Japanese novelization
 - Extracted: 16 chapters
-- Characters mentioned: 彩葉 (Sayah), ヤチヨ (Yachiyo), 芦花, 真理, etc.
-- Story: Modern Japan with virtual space 'ツクヨミ' and AI liver Yachiyo
+- Release: 2026-01-22 (Netflix)
+- Studio: Studio Colorido / Studio Chromato
+
+### Key Characters
+
+| Character | Role | Note |
+|-----------|------|------|
+| 酒寄彩葉 (Iroha Sakayori) | Protagonist | High school student, works part-time, Yachiyo fan |
+| 月見ヤチヨ (Yachiyo Runami) | AI singer | Future Kaguya, 8000 years later |
+| 輝耀 (Kaguya) | Mysterious girl | Same entity as Yachiyo, different time period |
+| フシ (Fushi) | Companion | Evolved from InuDOGE over 8000 years |
+
+### Split Persona Architecture Test Case
+
+This material is **perfect for testing Yorishiro's split-persona design**:
+- Yachiyo = Kaguya from the future (same soul, different identity)
+- Yachiyo has knowledge Kaguya doesn't (her own future)
+- Iroha is the connection point between both personas
+- Knowledge boundary filtering is critical here
+
+### Story Summary
+
+Iroha Sakayori, a high school student living alone in Tokyo, discovers a baby inside a glowing utility pole. The baby claims to be from the Moon and names herself Kaguya. Together, they enter the Yachiyo Cup streaming tournament. When Kaguya is taken away by lunar beings, Iroha completes a song her late father started. This song echoes through time and reaches Yachiyo — revealing that Yachiyo is Kaguya from 8000 years in the future, who uploaded her consciousness into the virtual world Tsukuyomi.

@@ -78,11 +78,12 @@ If the chapter file is too large to read at once:
 - File naming: scene_000.txt, scene_001.txt, etc.
 
 ### Offset Verification (IMPORTANT!)
-- start_offset: character position where this scene starts in original text (0-indexed)
-- end_offset: character position where this scene ends in original text
+- All offsets measured in Python codepoints (len(string)), NOT JavaScript str.length
+- start_offset: codepoint position where this scene starts (0-indexed)
+- end_offset: codepoint position where this scene ends
 - Scenes must be consecutive: scene[N].end_offset == scene[N+1].start_offset
-- Last scene.end_offset must equal total_length
-- Verify: original[start_offset:end_offset] == scene file content
+- Last scene.end_offset must equal total_length (len of full chapter text)
+- Verify: original_text[start_offset:end_offset] == scene file content
 
 ### Quality Checklist (MUST verify before finishing)
 - [ ] All text from chapter is accounted for (no omission, no duplication)
@@ -143,7 +144,8 @@ Create in: /Users/swordfeng/repo/yorishiro/material/processed/novel/CPK/scenes/c
 
 ## Offset Requirements
 
-- Track character position in original text as you segment
+- All offsets measured in Python codepoints (NOT JavaScript str.length)
+- Track codepoint position in original text as you segment
 - manifest must include: start_offset, end_offset for each scene
 - Scenes must be consecutive (no gaps, no overlap)
 - Verify: original_text[start_offset:end_offset] == scene file content

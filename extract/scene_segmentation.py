@@ -23,6 +23,16 @@ Split ONLY on these conditions:
 4. **Narrative break** - Clear narrative separator present (※ or ── in Japanese, similar markers in other languages)
 5. **Event sequence jump** - Completely different event sequence
 
+## Cut Point Requirements
+
+**CRITICAL**: Cuts must be at natural narrative boundaries, NEVER mid-sentence:
+- After narrative separators (※ or ──)
+- At paragraph/section breaks
+- At sentence endings (。 or ！or ？or similar)
+- Before a clear new beginning (indication of new location/time/POV)
+
+**DO NOT** cut in the middle of a flowing sentence or dialogue.
+
 ## Merge Rules (IMPORTANT!)
 
 **If two adjacent segments meet ALL of these conditions, they should be MERGED into ONE scene:**
@@ -84,11 +94,13 @@ If the chapter file is too large to read at once:
 - Scenes must be consecutive: scene[N].end_offset == scene[N+1].start_offset
 - Last scene.end_offset must equal total_length (len of full chapter text)
 - Verify: original_text[start_offset:end_offset] == scene file content
+- Cut points MUST be at natural boundaries: never mid-sentence
 
 ### Quality Checklist (MUST verify before finishing)
 - [ ] All text from chapter is accounted for (no omission, no duplication)
 - [ ] All metadata uses source material language
 - [ ] Each split has clear justification based on boundary signals
+- [ ] Cut points are at natural boundaries (after ※ or ──, sentence endings, etc.) - NOT mid-sentence
 - [ ] Manifest JSON is valid
 - [ ] Offset chain is continuous (no gaps)
 - [ ] Offset chain covers entire text (start to end)
@@ -98,7 +110,8 @@ If the chapter file is too large to read at once:
 - ALL metadata (location, time, characters) must use the SAME language as source
 - content is NOT in manifest - only in scene_XXX.txt files
 - Merge first, split only when necessary
-- Do NOT assume a specific scene count - judge based on actual content boundaries"""
+- Do NOT assume a specific scene count - judge based on actual content boundaries
+- Cuts MUST be at natural boundaries - never mid-sentence"""
 
 
 def build_scene_segmentation_prompt(

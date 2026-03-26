@@ -47,6 +47,16 @@
 
 **Rule**: If file is too large, read in parts. Track position to ensure no omission or duplication.
 
+### 7. Character Naming in Scene Segmentation | 场景分段中的角色命名
+
+**Problem**: Same character called by different names in different scenes (e.g., "赤ちゃん" → "少女" for Kaguya).
+
+**Solution**: Scene segmentation manifest uses names AS THEY APPEAR in the text. Do NOT normalize names here.
+
+**Rationale**: This is a character extraction concern, not scene segmentation. The alias mapping (identifying "赤ちゃん" and "少女" as the same entity) should be handled in the character extraction phase.
+
+**Rule**: In scene segmentation, `characters` field lists names as they appear in that specific scene. Normalization happens later.
+
 ---
 
 ## Workflow | 工作流

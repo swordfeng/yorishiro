@@ -153,7 +153,7 @@ The file contains:
 Create in: /Users/swordfeng/repo/yorishiro/material/processed/novel/CPK/scenes/ch{chapter_index:03d}/
 
 - scene_XXX.txt: Original text for each scene
-- scenes_manifest.json: Metadata including offsets
+- scenes_manifest.json: **MUST be named "scenes_manifest.json"** (exactly this name)
 
 ## Offset Requirements
 

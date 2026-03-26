@@ -53,20 +53,23 @@ If the chapter file is too large to read at once:
 
 ### Manifest (scenes_manifest.json)
 ```json
-{{
+{
   "chapter_index": N,
   "chapter_title": "title",
+  "total_length": N,
   "scene_count": N,
   "scenes": [
-    {{
+    {
       "scene_index": 0,
       "location": "location in source language",
       "time": "time in source language",
       "characters": ["character1", "character2"],
+      "start_offset": 0,
+      "end_offset": 1234,
       "file": "scene_000.txt"
-    }}
+    }
   ]
-}}
+}
 ```
 
 ### Scene Files (scene_XXX.txt)
@@ -74,11 +77,20 @@ If the chapter file is too large to read at once:
 - Original text ONLY - no modification, no summarization
 - File naming: scene_000.txt, scene_001.txt, etc.
 
+### Offset Verification (IMPORTANT!)
+- start_offset: character position where this scene starts in original text (0-indexed)
+- end_offset: character position where this scene ends in original text
+- Scenes must be consecutive: scene[N].end_offset == scene[N+1].start_offset
+- Last scene.end_offset must equal total_length
+- Verify: original[start_offset:end_offset] == scene file content
+
 ### Quality Checklist (MUST verify before finishing)
 - [ ] All text from chapter is accounted for (no omission, no duplication)
 - [ ] All metadata uses source material language
 - [ ] Each split has clear justification based on boundary signals
 - [ ] Manifest JSON is valid
+- [ ] Offset chain is continuous (no gaps)
+- [ ] Offset chain covers entire text (start to end)
 
 ## Important Reminders
 
@@ -117,21 +129,22 @@ The file contains:
 1. Read the chapter file (handle large files by reading in parts if needed)
 2. Detect the source material language
 3. Identify scene boundaries: location change, time jump, POV change, or narrative separator
-4. Merge adjacent scenes that should stay together
-5. Create scene files: scene_000.txt, scene_001.txt, etc.
-6. Create manifest: scenes_manifest.json
+4. Track character offsets as you segment (start_offset, end_offset)
+5. Merge adjacent scenes that should stay together
+6. Create scene files: scene_000.txt, scene_001.txt, etc.
+7. Create manifest: scenes_manifest.json with offset information
 
 ## Output Files
 
 Create in: /Users/swordfeng/repo/yorishiro/material/processed/novel/CPK/scenes/ch{chapter_index:03d}/
 
 - scene_XXX.txt: Original text for each scene
-- scenes_manifest.json: Metadata for all scenes
+- scenes_manifest.json: Metadata including offsets
 
-## Quality Check
+## Offset Requirements
 
-Before finishing, verify:
-- No text duplication or omission
-- All metadata in source language
-- Reasonable scene count (5-15 typical)
-- Manifest JSON is valid"""
+- Track character position in original text as you segment
+- manifest must include: start_offset, end_offset for each scene
+- Scenes must be consecutive (no gaps, no overlap)
+- Verify: original_text[start_offset:end_offset] == scene file content
+- Final end_offset must equal len(original_text)"""

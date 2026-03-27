@@ -441,9 +441,9 @@ def main() -> None:
         print(f"Skipping: {manifest_path} already exists (use --force to overwrite)")
         sys.exit(0)
 
-    api_key = os.environ.get("YORISHIRO_OPENAI_API_KEY")
+    api_key = os.environ.get("YORISHIRO_API_KEY")
     if not api_key:
-        print("Error: YORISHIRO_OPENAI_API_KEY environment variable is not set", file=sys.stderr)
+        print("Error: YORISHIRO_API_KEY environment variable is not set", file=sys.stderr)
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)

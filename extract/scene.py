@@ -183,6 +183,7 @@ def build_user_prompt(
     cursor: int,
     carry_info: str,
     failed_end_text: str = "",
+    is_final_chunk: bool = False,
 ) -> str:
     parts = []
     if summary:
@@ -197,13 +198,18 @@ def build_user_prompt(
         )
     parts.append(
         f"[Text window — cursor at character offset {cursor}]\n"
-        f"<novel_text>\n{chunk}\n</novel_text>"
+        f"<novel_text>\n{chunk}\n</novel_text>\n"
     )
+    if is_final_chunk:
+        chapter_end_note = "This is the END of the chapter. The last scene must end here; set has_more=false."
+    else:
+        chapter_end_note = "This is NOT the end of the chapter. More text follows after this window."
     parts.append(
-        "[Task]\n"
-        "Identify all scenes in the novel_text above.\n"
-        "For each complete scene output its metadata and end_text.\n"
-        "For the last scene: if it extends beyond this window, set end_text='' and has_more=true."
+        f"[Task]\n"
+        f"{chapter_end_note}\n"
+        f"Identify all scenes in the novel_text above.\n"
+        f"For each complete scene output its metadata and end_text.\n"
+        f"For the last scene: if it extends beyond this window, set end_text='' and has_more=true."
     )
     return "\n\n".join(parts)
 
@@ -251,6 +257,7 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
 
     while cursor < total_length:
         chunk = chapter_text[cursor:cursor + chunk_size]
+        is_final_chunk = (cursor + len(chunk) >= total_length)
         carry_info = (
             f"location={carry_meta.location!r}, time={carry_meta.time!r}, "
             f"characters={carry_meta.characters}"
@@ -259,7 +266,7 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
         # --- LLM call ---
         try:
             result = await agent.run(
-                build_user_prompt(summary, chunk, cursor, carry_info, failed_end_text)
+                build_user_prompt(summary, chunk, cursor, carry_info, failed_end_text, is_final_chunk)
             )
             data: SegmentationResult = result.response  # type: ignore[assignment]
         except Exception as e:

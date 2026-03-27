@@ -117,6 +117,26 @@ class SceneSegment(BaseModel):
     )
 
 
+def _inline_refs(schema: dict) -> dict:
+    """Resolve all $ref/$defs in a JSON schema to produce a fully inlined schema.
+
+    Some models/providers reject schemas that use $ref pointers (e.g. Nvidia via OpenRouter).
+    """
+    defs = schema.pop("$defs", {})
+
+    def resolve(obj: object) -> object:
+        if isinstance(obj, dict):
+            if "$ref" in obj:
+                def_name = obj["$ref"].split("/")[-1]
+                return resolve(dict(defs[def_name]))
+            return {k: resolve(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [resolve(item) for item in obj]
+        return obj
+
+    return resolve(schema)  # type: ignore[return-value]
+
+
 class SegmentationResult(BaseModel):
     scenes: list[SceneSegment] = Field(
         description=(
@@ -130,6 +150,10 @@ class SegmentationResult(BaseModel):
     summary: str = Field(
         description="Brief summary of the content processed in this window, for continuity in the next call"
     )
+
+    @classmethod
+    def model_json_schema(cls, **kwargs) -> dict:  # type: ignore[override]
+        return _inline_refs(super().model_json_schema(**kwargs))
 
 
 @dataclass

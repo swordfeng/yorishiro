@@ -27,23 +27,21 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
 
 INITIAL_CHUNK_SIZE = 8000   # chars per LLM batch
 MAX_CHUNK_SIZE = 64000      # grows on stall; covers very long scenes
 
 
-SYSTEM_PROMPT = """You are a professional narrative structure analyst. Your task is to identify scene boundaries in novel chapters.
+SYSTEM_PROMPT = """You are a professional narrative structure analyst. Your task is to segment a novel chapter into independent scenes.
 
 ## Source Material Language
 
@@ -52,10 +50,10 @@ ALL metadata (location, time, characters) must use the SAME language as the sour
 ## Scene Definition
 
 A scene is a narrative unit with:
-- Same location: events in the same physical/virtual space
-- Continuous time: no significant jumps
-- Same POV: primarily the same character's perspective
-- Coherent events: direct causal relationship
+- **Same location**: Events occur in the same physical/virtual space
+- **Same time**: Continuous time period, no significant jumps
+- **Same POV**: Primarily the same character's perspective
+- **Coherent events**: Direct causal relationship between events
 
 ## Scene Boundary Signals (split ONLY on these)
 
@@ -63,6 +61,22 @@ A scene is a narrative unit with:
 2. Time jump — significant time progression (hours, days later, etc.)
 3. POV change — perspective character changes
 4. Narrative break — explicit separator (※, ──, ・・・ as scene break, etc.)
+5. Significant context/state change — atmosphere shifting from relaxed to tense, a game just started, etc.
+
+Also judge on whether a scene cut would result in reasonable size — It's probably not reasonable to generate a very short scene.
+
+**IMPORTANT**: Carefully think which scene each sentence belongs to. Pay attention to phrases indicating changing of time or location.
+Identify both ending text of current scene and starting text of next scene, though only ending text is needed for the response.
+
+## Cut Point Requirements
+
+**CRITICAL**: Cuts must be at natural narrative boundaries, NEVER mid-sentence:
+- After narrative separators (※ or ──)
+- At paragraph/section breaks
+- At sentence endings (。 or ！or ？or similar)
+- Before a clear new beginning (indication of new location/time/POV)
+
+**DO NOT** cut in the middle of a flowing sentence or dialogue.
 
 ## Merge Rule
 
@@ -92,6 +106,12 @@ List names EXACTLY as they appear in this scene's text. Do not normalize or tran
 ## Non-Narrative Content
 
 For non-narrative sections (caution pages, TOC, colophon, etc.): one scene, boundary_type="non_narrative", location="N/A", time="N/A", characters=[].
+
+## Updating Summary
+
+After identifying the scenes, summarize the story BEFORE the cursor. You can combine previous summary with last few scenes before the cursor.
+If none of the text is available before the cursor, leave an empty string "" in the summary.
+Try to keep summary under or around 4000 characters.
 """
 
 
@@ -101,40 +121,20 @@ class SceneSegment(BaseModel):
     location: str = Field(description="Scene location in source material language")
     time: str = Field(description="Time of day in source material language")
     characters: list[str] = Field(description="Character names exactly as they appear in this scene")
-    boundary_type: Literal[
+    boundary_type: str = Field(description="Type of boundary that ends this scene", json_schema_extra={"enum": [
         "chapter_start",
         "location_change",
         "time_jump",
         "pov_change",
         "narrative_break",
         "non_narrative",
-    ] = Field(description="Type of boundary that ends this scene")
+    ]})
     end_text: str = Field(
         description=(
             "Last 40-60 characters of this scene, verbatim from source. "
             "Empty string '' if this scene extends beyond the current text window."
         )
     )
-
-
-def _inline_refs(schema: dict) -> dict:
-    """Resolve all $ref/$defs in a JSON schema to produce a fully inlined schema.
-
-    Some models/providers reject schemas that use $ref pointers (e.g. Nvidia via OpenRouter).
-    """
-    defs = schema.pop("$defs", {})
-
-    def resolve(obj: object) -> object:
-        if isinstance(obj, dict):
-            if "$ref" in obj:
-                def_name = obj["$ref"].split("/")[-1]
-                return resolve(dict(defs[def_name]))
-            return {k: resolve(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [resolve(item) for item in obj]
-        return obj
-
-    return resolve(schema)  # type: ignore[return-value]
 
 
 class SegmentationResult(BaseModel):
@@ -148,12 +148,13 @@ class SegmentationResult(BaseModel):
         description="True if the chapter continues beyond this window and the last scene is incomplete"
     )
     summary: str = Field(
-        description="Brief summary of the content processed in this window, for continuity in the next call"
+        description=(
+            "Summary of the story so far BEFORE the cursor. "
+            "Can be a combine of previous summary with last few scenes text. "
+            "Empty string '' if there is no previous story summary and scene texts. "
+            "Used as a compacted context."
+        )
     )
-
-    @classmethod
-    def model_json_schema(cls, **kwargs) -> dict:  # type: ignore[override]
-        return _inline_refs(super().model_json_schema(**kwargs))
 
 
 @dataclass
@@ -179,41 +180,57 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
     return {}, text
 
 
-def build_agent(model_name: str, base_url: str, api_key: str) -> Agent[None, SegmentationResult]:
-    provider = OpenAIProvider(base_url=base_url, api_key=api_key)
-    model = OpenAIChatModel(model_name, provider=provider)
+def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str) -> Agent[None, SegmentationResult]:
+    """Build a pydantic-ai Agent using infer_provider_class and infer_model.
+
+    provider_name: any provider name known to pydantic_ai (e.g. openrouter, openai, anthropic).
+    base_url: empty string means use provider default.
+    """
+    from pydantic_ai.models import infer_model
+    from pydantic_ai.providers import infer_provider_class
+
+    cls = infer_provider_class(provider_name)
+    kwargs: dict = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    provider = cls(**kwargs)
+
+    model = infer_model(f"{provider_name}:{model_name}", provider_factory=lambda _: provider)
     return Agent(model=model, output_type=SegmentationResult, system_prompt=SYSTEM_PROMPT)
 
 
 def find_end_offset(chapter_text: str, end_text: str, search_from: int) -> int:
     """Find position right after end_text in chapter_text, searching from search_from.
 
+    Whitespace sequences in end_text are treated flexibly (any whitespace matches).
     Returns the offset immediately after end_text (= start of next scene).
     Raises ValueError if end_text is not found.
     """
-    pos = chapter_text.find(end_text, search_from)
-    if pos == -1:
+    end_text = "".join(end_text.split())
+    pattern = re.compile(r"\s*".join(re.escape(part) for part in end_text))
+    m = pattern.search(chapter_text, search_from)
+    if m is None:
         raise ValueError(
             f"Could not locate end_text in chapter (searching from offset {search_from}).\n"
             f"  end_text = {end_text!r}\n"
             f"  context  = {chapter_text[search_from:search_from + 200]!r}"
         )
-    return pos + len(end_text)
+    return m.end()
 
 
 def build_user_prompt(
     summary: str,
+    previous_chunk: str,
     chunk: str,
     cursor: int,
-    carry_info: str,
     failed_end_text: str = "",
     is_final_chunk: bool = False,
 ) -> str:
     parts = []
     if summary:
-        parts.append(f"[Previously processed — summary]\n{summary}")
-    if carry_info:
-        parts.append(f"[Currently inside a scene]\n{carry_info}\nThe text window below is a continuation of this scene (or may transition to a new one).")
+        parts.append(f"[Previously processed — summary of the story so far]\n{summary}")
+    if previous_chunk:
+        parts.append(f"[Previously processed — last few scenes BEFORE cursor]\n{previous_chunk}")
     if failed_end_text:
         parts.append(
             f"[Previous attempt failed]\n"
@@ -222,7 +239,7 @@ def build_user_prompt(
         )
     parts.append(
         f"[Text window — cursor at character offset {cursor}]\n"
-        f"<novel_text>\n{chunk}\n</novel_text>\n"
+        f"<novel_text>\n{chunk}\n</novel_text>"
     )
     if is_final_chunk:
         chapter_end_note = "This is the END of the chapter. The last scene must end here; set has_more=false."
@@ -232,14 +249,14 @@ def build_user_prompt(
         f"[Task]\n"
         f"{chapter_end_note}\n"
         f"Identify all scenes in the novel_text above.\n"
-        f"For each complete scene output its metadata and end_text.\n"
+        f"For each complete scene output its metadata and end_text. **DO NOT** mess up with end_text from previous scenes BEFORE cursor.\n"
         f"For the last scene: if it extends beyond this window, set end_text='' and has_more=true."
     )
     return "\n\n".join(parts)
 
 
 def _append_scene(
-    all_scenes: list[SceneData],
+    scenes: list[SceneData],
     start_offset: int,
     end_offset: int,
     seg: SceneSegment | None,
@@ -247,13 +264,13 @@ def _append_scene(
     """Append a scene with in-loop continuity validation. Raises ValueError on violation."""
     if end_offset <= start_offset:
         raise ValueError(f"Empty/inverted scene: start={start_offset}, end={end_offset}")
-    if all_scenes and all_scenes[-1].end_offset != start_offset:
+    if scenes and scenes[-1].end_offset != start_offset:
         raise ValueError(
-            f"Continuity gap: previous scene ends at {all_scenes[-1].end_offset}, "
+            f"Continuity gap: previous scene ends at {scenes[-1].end_offset}, "
             f"new scene starts at {start_offset}"
         )
-    all_scenes.append(SceneData(
-        scene_index=len(all_scenes),
+    scenes.append(SceneData(
+        scene_index=len(scenes),
         start_offset=start_offset,
         end_offset=end_offset,
         location=seg.location if seg else "N/A",
@@ -275,27 +292,27 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
 
     total_length = len(chapter_text)
     all_scenes: list[SceneData] = []
+    last_scenes: list[SceneData] = []
     cursor = 0          # always = start of current unfinished scene
     chunk_size = INITIAL_CHUNK_SIZE
     summary = ""
-    carry_meta: SceneSegment | None = None
     failed_end_text = ""  # end_text that failed matching last attempt
     retry_count = 0     # resets on any forward progress
 
     while cursor < total_length:
         chunk = chapter_text[cursor:cursor + chunk_size]
         is_final_chunk = (cursor + len(chunk) >= total_length)
-        carry_info = (
-            f"location={carry_meta.location!r}, time={carry_meta.time!r}, "
-            f"characters={carry_meta.characters}"
-        ) if carry_meta else ""
+        previous_chunk = "\n".join(chapter_text[scene.start_offset:scene.end_offset] for scene in last_scenes)
+        last_scenes = []
 
         # --- LLM call ---
         try:
+            print(f"Calling model, current scene len = {len(all_scenes)}")
             result = await agent.run(
-                build_user_prompt(summary, chunk, cursor, carry_info, failed_end_text, is_final_chunk)
+                build_user_prompt(summary, previous_chunk, chunk, cursor, failed_end_text, is_final_chunk)
             )
-            data: SegmentationResult = result.response  # type: ignore[assignment]
+            data = result.output
+            print(f"  Result: scene len = {len(data.scenes)}, summary = {data.summary}")
         except Exception as e:
             print(f"  Warning: LLM error at offset {cursor}: {e}", file=sys.stderr)
             retry_count += 1
@@ -324,7 +341,6 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
 
             if is_last and data.has_more:
                 # Scene continues beyond window — carry to next batch
-                carry_meta = seg
                 break
 
             if is_last and not data.has_more:
@@ -335,26 +351,23 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
                     print(f"  Warning: {e}. Stopping at last confirmed cut.", file=sys.stderr)
                     break
                 batch_cursor = total_length
-                carry_meta = None
                 reached_end = True
                 break
 
             # Non-last scene: locate boundary via end_text
             if not seg.end_text:
-                carry_meta = seg
                 break
 
             try:
                 scene_end = find_end_offset(chapter_text, seg.end_text, batch_cursor)
                 _append_scene(all_scenes, scene_start, scene_end, seg)
+                _append_scene(last_scenes, scene_start, scene_end, seg)
             except ValueError as e:
                 print(f"  Warning: {e}. Continuing from last good cut.", file=sys.stderr)
-                carry_meta = seg
                 failed_end_text = seg.end_text
                 break
 
             batch_cursor = scene_end
-            carry_meta = None
 
         # --- Advance cursor or grow chunk ---
         if batch_cursor > cursor:
@@ -437,12 +450,15 @@ def main() -> None:
     parser.add_argument("chapter_file", type=Path, help="YAML frontmatter chapter .txt file")
     parser.add_argument("output_dir", type=Path, nargs="?", default=None,
                         help="Output directory (default: <chapter_file>/../scenes/ch{index:03d}/)")
+    parser.add_argument("--provider",
+                        default=os.environ.get("YORISHIRO_PROVIDER", "openrouter"),
+                        help="Provider name (env: YORISHIRO_PROVIDER, default: openrouter)")
     parser.add_argument("--model",
                         default=os.environ.get("YORISHIRO_MODEL", "anthropic/claude-opus-4-6"),
                         help="Model name (env: YORISHIRO_MODEL, default: anthropic/claude-opus-4-6)")
     parser.add_argument("--base-url",
-                        default=os.environ.get("YORISHIRO_BASE_URL", "https://openrouter.ai/api/v1"),
-                        help="API base URL (env: YORISHIRO_BASE_URL, default: OpenRouter)")
+                        default=os.environ.get("YORISHIRO_BASE_URL", ""),
+                        help="API base URL override (env: YORISHIRO_BASE_URL, empty = provider default)")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing output")
     args = parser.parse_args()
@@ -471,7 +487,7 @@ def main() -> None:
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(args.model, args.base_url, api_key)
+    agent = build_agent(args.model, args.provider, api_key, args.base_url)
 
     print(f"Segmenting {chapter_file.name} ({total_length} chars) with {args.model} ...")
     try:

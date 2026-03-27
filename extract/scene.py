@@ -33,10 +33,10 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 
 CHUNK_SIZE = 8000  # chars per LLM batch
@@ -155,9 +155,9 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
 
 
 def build_agent(model_name: str, base_url: str, api_key: str) -> Agent:
-    client = AsyncOpenAI(base_url=base_url, api_key=api_key)
-    model = OpenAIModel(model_name, openai_client=client)
-    return Agent(model=model, result_type=SegmentationResult, system_prompt=SYSTEM_PROMPT)
+    provider = OpenAIProvider(base_url=base_url, api_key=api_key)
+    model = OpenAIChatModel(model_name, provider=provider)
+    return Agent(model=model, output_type=SegmentationResult, system_prompt=SYSTEM_PROMPT)
 
 
 def find_end_offset(chapter_text: str, end_text: str, search_from: int) -> int:
@@ -209,7 +209,7 @@ async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
 
         user_prompt = build_user_prompt(summary, chunk, cursor, carry_info)
         result = await agent.run(user_prompt)
-        data: SegmentationResult = result.data
+        data: SegmentationResult = result.response  # type: ignore[assignment]
 
         if not data.scenes:
             # LLM returned nothing — force advance to avoid infinite loop
@@ -217,7 +217,6 @@ async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
             continue
 
         batch_cursor = cursor
-        made_progress = False
 
         for i, seg in enumerate(data.scenes):
             scene_start = batch_cursor
@@ -241,7 +240,6 @@ async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
                 ))
                 batch_cursor = total_length
                 carry_meta = None
-                made_progress = True
                 break
 
             # Non-last scene — use end_text to find exact boundary
@@ -262,7 +260,6 @@ async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
             ))
             batch_cursor = scene_end
             carry_meta = None
-            made_progress = True
 
         # Advance cursor past the last confirmed scene boundary
         if batch_cursor > cursor:
@@ -341,12 +338,12 @@ def main() -> None:
     parser.add_argument("chapter_file", type=Path, help="YAML frontmatter chapter .txt file")
     parser.add_argument("output_dir", type=Path, nargs="?", default=None,
                         help="Output directory (default: <chapter_file>/../scenes/ch{index:03d}/)")
-    parser.add_argument("--model", default="anthropic/claude-opus-4-6",
-                        help="Model name (default: anthropic/claude-opus-4-6)")
-    parser.add_argument("--base-url", default="https://openrouter.ai/api/v1",
-                        help="API base URL (default: OpenRouter)")
-    parser.add_argument("--api-key-env", default="OPENROUTER_API_KEY", metavar="VAR",
-                        help="Env var name for API key (default: OPENROUTER_API_KEY)")
+    parser.add_argument("--model",
+                        default=os.environ.get("YORISHIRO_MODEL", "anthropic/claude-opus-4-6"),
+                        help="Model name (env: YORISHIRO_MODEL, default: anthropic/claude-opus-4-6)")
+    parser.add_argument("--base-url",
+                        default=os.environ.get("YORISHIRO_BASE_URL", "https://openrouter.ai/api/v1"),
+                        help="API base URL (env: YORISHIRO_BASE_URL, default: OpenRouter)")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing output")
     args = parser.parse_args()
@@ -369,9 +366,9 @@ def main() -> None:
         print(f"Skipping: {manifest_path} already exists (use --force to overwrite)")
         sys.exit(0)
 
-    api_key = os.environ.get(args.api_key_env)
+    api_key = os.environ.get("YORISHIRO_OPENAI_API_KEY")
     if not api_key:
-        print(f"Error: environment variable {args.api_key_env!r} is not set", file=sys.stderr)
+        print("Error: YORISHIRO_OPENAI_API_KEY environment variable is not set", file=sys.stderr)
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)

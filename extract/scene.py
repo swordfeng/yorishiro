@@ -247,6 +247,8 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
     - LLM/matching errors resume from the last confirmed scene cut
     - continuity is validated after each scene is appended
     """
+    MAX_RETRIES = 5
+
     total_length = len(chapter_text)
     all_scenes: list[SceneData] = []
     cursor = 0          # always = start of current unfinished scene
@@ -254,6 +256,7 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
     summary = ""
     carry_meta: SceneSegment | None = None
     failed_end_text = ""  # end_text that failed matching last attempt
+    retry_count = 0     # resets on any forward progress
 
     while cursor < total_length:
         chunk = chapter_text[cursor:cursor + chunk_size]
@@ -271,29 +274,21 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
             data: SegmentationResult = result.response  # type: ignore[assignment]
         except Exception as e:
             print(f"  Warning: LLM error at offset {cursor}: {e}", file=sys.stderr)
+            retry_count += 1
+            if retry_count >= MAX_RETRIES:
+                raise RuntimeError(f"LLM kept failing at offset {cursor} after {MAX_RETRIES} retries")
             chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
-            if cursor + chunk_size >= total_length:
-                print(f"  Warning: max chunk reached; forcing final scene to cover remaining text.", file=sys.stderr)
-                try:
-                    _append_scene(all_scenes, cursor, total_length, carry_meta)
-                except ValueError as ve:
-                    print(f"  Warning: {ve}", file=sys.stderr)
-                break
             continue
 
         summary = data.summary
 
         # --- No scenes returned ---
         if not data.scenes:
+            retry_count += 1
+            if retry_count >= MAX_RETRIES:
+                raise RuntimeError(f"LLM returned no scenes at offset {cursor} after {MAX_RETRIES} retries")
             chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
-            if cursor + chunk_size >= total_length:
-                print(f"  Warning: LLM returned no scenes; forcing final scene.", file=sys.stderr)
-                try:
-                    _append_scene(all_scenes, cursor, total_length, carry_meta)
-                except ValueError as ve:
-                    print(f"  Warning: {ve}", file=sys.stderr)
-                break
-            continue  # retry with larger window; cursor stays put
+            continue
 
         # --- Process scenes in batch ---
         batch_cursor = cursor
@@ -342,17 +337,13 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
             cursor = batch_cursor
             chunk_size = INITIAL_CHUNK_SIZE  # reset after progress
             failed_end_text = ""
+            retry_count = 0
         else:
             # No progress — keep cursor, grow chunk so full scene stays in context
+            retry_count += 1
+            if retry_count >= MAX_RETRIES:
+                raise RuntimeError(f"Stalled at offset {cursor} after {MAX_RETRIES} retries with no progress")
             chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
-            if cursor + chunk_size >= total_length:
-                # Entire remaining text is already visible and we're still stuck
-                print(f"  Warning: stalled at offset {cursor}; forcing final scene.", file=sys.stderr)
-                try:
-                    _append_scene(all_scenes, cursor, total_length, carry_meta)
-                except ValueError as ve:
-                    print(f"  Warning: {ve}", file=sys.stderr)
-                reached_end = True
 
         if reached_end:
             break

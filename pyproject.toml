@@ -5,7 +5,10 @@ description = "Fictional character soul document generator and chat system"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "beautifulsoup4>=4.14.3",
     "ebooklib>=0.5", # epub parsing
+    "pyyaml>=6.0.3",
+    "pydantic-ai[openai]>=0.0.14",
 ]
 
 [project.optional-dependencies]

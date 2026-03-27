@@ -177,12 +177,24 @@ def find_end_offset(chapter_text: str, end_text: str, search_from: int) -> int:
     return pos + len(end_text)
 
 
-def build_user_prompt(summary: str, chunk: str, cursor: int, carry_info: str) -> str:
+def build_user_prompt(
+    summary: str,
+    chunk: str,
+    cursor: int,
+    carry_info: str,
+    failed_end_text: str = "",
+) -> str:
     parts = []
     if summary:
         parts.append(f"[Previously processed — summary]\n{summary}")
     if carry_info:
         parts.append(f"[Currently inside a scene]\n{carry_info}\nThe text window below is a continuation of this scene (or may transition to a new one).")
+    if failed_end_text:
+        parts.append(
+            f"[Previous attempt failed]\n"
+            f"The end_text {failed_end_text!r} could not be located in the source text. "
+            f"It was likely hallucinated. Please choose a different end_text that is verbatim from the text above."
+        )
     parts.append(f"[Text window — cursor at character offset {cursor}]\n{chunk}")
     parts.append(
         "[Task]\n"
@@ -232,6 +244,7 @@ async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
     chunk_size = INITIAL_CHUNK_SIZE
     summary = ""
     carry_meta: SceneSegment | None = None
+    failed_end_text = ""  # end_text that failed matching last attempt
 
     while cursor < total_length:
         chunk = chapter_text[cursor:cursor + chunk_size]
@@ -242,7 +255,9 @@ async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
 
         # --- LLM call ---
         try:
-            result = await agent.run(build_user_prompt(summary, chunk, cursor, carry_info))
+            result = await agent.run(
+                build_user_prompt(summary, chunk, cursor, carry_info, failed_end_text)
+            )
             data: SegmentationResult = result.response  # type: ignore[assignment]
         except Exception as e:
             print(f"  Warning: LLM error at offset {cursor}: {e}", file=sys.stderr)
@@ -306,6 +321,7 @@ async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
             except ValueError as e:
                 print(f"  Warning: {e}. Continuing from last good cut.", file=sys.stderr)
                 carry_meta = seg
+                failed_end_text = seg.end_text
                 break
 
             batch_cursor = scene_end
@@ -315,6 +331,7 @@ async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
         if batch_cursor > cursor:
             cursor = batch_cursor
             chunk_size = INITIAL_CHUNK_SIZE  # reset after progress
+            failed_end_text = ""
         else:
             # No progress — keep cursor, grow chunk so full scene stays in context
             chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)

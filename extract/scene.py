@@ -155,7 +155,7 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
     return {}, text
 
 
-def build_agent(model_name: str, base_url: str, api_key: str) -> Agent:
+def build_agent(model_name: str, base_url: str, api_key: str) -> Agent[None, SegmentationResult]:
     provider = OpenAIProvider(base_url=base_url, api_key=api_key)
     model = OpenAIChatModel(model_name, provider=provider)
     return Agent(model=model, output_type=SegmentationResult, system_prompt=SYSTEM_PROMPT)
@@ -193,12 +193,15 @@ def build_user_prompt(
         parts.append(
             f"[Previous attempt failed]\n"
             f"The end_text {failed_end_text!r} could not be located in the source text. "
-            f"It was likely hallucinated. Please choose a different end_text that is verbatim from the text above."
+            f"It was likely hallucinated. Please choose a different end_text that is verbatim from the text inside <novel_text>."
         )
-    parts.append(f"[Text window — cursor at character offset {cursor}]\n{chunk}")
+    parts.append(
+        f"[Text window — cursor at character offset {cursor}]\n"
+        f"<novel_text>\n{chunk}\n</novel_text>"
+    )
     parts.append(
         "[Task]\n"
-        "Identify all scenes in the text window above.\n"
+        "Identify all scenes in the novel_text above.\n"
         "For each complete scene output its metadata and end_text.\n"
         "For the last scene: if it extends beyond this window, set end_text='' and has_more=true."
     )
@@ -230,7 +233,7 @@ def _append_scene(
     ))
 
 
-async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
+async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResult]) -> list[SceneData]:
     """Progressive LLM segmentation. Returns SceneData list with exact codepoint offsets.
 
     - cursor never advances unless a scene boundary is confirmed

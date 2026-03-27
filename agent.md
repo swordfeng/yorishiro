@@ -147,6 +147,28 @@ Changes to `yorishiro.md` Section 5.1 affect all future generation. Consider:
 - Backward compatibility with existing SOUL.md files
 - Migration strategy if needed
 
+### Code Changes - WAIT FOR EXPLICIT INSTRUCTION
+
+**NEVER implement code changes without explicit user instruction.**
+
+- Wait for "go ahead", "implement", "do it" or similar explicit approval
+- Proposing a design is NOT an instruction to code
+- Planning is NOT an instruction to execute
+- Questions are NOT instructions to act
+
+**Correct workflow**:
+1. Discuss and propose designs
+2. Wait for explicit "implement this" or similar
+3. Then and only then write/modify code
+
+**Examples**:
+- ❌ User: "Can you create a function for X?" → Agent writes code immediately
+- ✅ User: "Create a function for X" or "Go ahead and implement" → Agent writes code
+- ❌ User discusses design → Agent starts implementing during discussion
+- ✅ User: "Implement the design we just discussed" → Agent writes code
+
+**Current status**: The user has NOT instructed implementation. Only planning.
+
 ---
 
 ## Open Questions
@@ -159,22 +181,30 @@ Changes to `yorishiro.md` Section 5.1 affect all future generation. Consider:
 
 ## Learnings (Documented Decisions)
 
-### Non-Narrative Chapter Detection
+### Non-Narrative Content Detection
 
-**NEVER implement code-based automatic detection of non-narrative chapters.**
+**NEVER implement code-based (rule/pattern) automatic detection of non-narrative content.**
 
-Non-narrative chapters (cautions, TOCs, colophons, afterwords) are identified by **human decision only**. Code-based detection:
-- Is brittle and error-prone
-- Can misclassify content (e.g., "あとがき" in chapter 011 has meaningful character content)
-- Destroys the workflow logic
+**Why**: Code-based detection (regex patterns, keyword matching) is brittle and error-prone:
+- Can misclassify content (e.g., "あとがき" in chapter 011 has meaningful character information about 桐山なると)
+- Different works use different conventions
+- Text may be in any language
 
-**Correct approach**:
-- Human identifies non-narrative chapters
-- Manifests created manually with proper skip reasoning
-- All narrative chapters must be properly segmented with verified offsets
+**Correct approach - Agent-based Detection**:
+- **Scene Segmentation Agent** automatically identifies non-narrative segments during processing
+- No human pre-marking required in `material.yaml`
+- Agent marks segments as `boundary_type: "non_narrative"` with proper reasoning
+- These segments get `location: "N/A"`, `time: "N/A"`, `characters: []`
+- Character Extraction Pipeline skips non-narrative segments automatically
 
-**Current CPK non-narrative chapters**: ch000 (caution), ch001 (TOC), ch012-015 (colophon/navigation)
-**Note**: ch011 (あとがき/afterword) is classified as narrative - it contains character information about 桐山なると
+**Examples of Non-Narrative Content**:
+- Caution/warning pages
+- Table of contents
+- Colophons and copyright pages
+- Character introduction tables (without narrative context)
+- Pure reference material
+
+**Important**: Some content that appears non-narrative may contain character information (e.g., afterwords with author commentary about characters). Agent uses contextual understanding to distinguish.
 
 ### Codepoint vs Byte Offsets
 

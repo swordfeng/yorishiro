@@ -39,7 +39,8 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 
-CHUNK_SIZE = 8000  # chars per LLM batch
+INITIAL_CHUNK_SIZE = 8000   # chars per LLM batch
+MAX_CHUNK_SIZE = 64000      # grows on stall; covers very long scenes
 
 
 SYSTEM_PROMPT = """You are a professional narrative structure analyst. Your task is to identify scene boundaries in novel chapters.
@@ -192,85 +193,141 @@ def build_user_prompt(summary: str, chunk: str, cursor: int, carry_info: str) ->
     return "\n\n".join(parts)
 
 
+def _append_scene(
+    all_scenes: list[SceneData],
+    start_offset: int,
+    end_offset: int,
+    seg: SceneSegment | None,
+) -> None:
+    """Append a scene with in-loop continuity validation. Raises ValueError on violation."""
+    if end_offset <= start_offset:
+        raise ValueError(f"Empty/inverted scene: start={start_offset}, end={end_offset}")
+    if all_scenes and all_scenes[-1].end_offset != start_offset:
+        raise ValueError(
+            f"Continuity gap: previous scene ends at {all_scenes[-1].end_offset}, "
+            f"new scene starts at {start_offset}"
+        )
+    all_scenes.append(SceneData(
+        scene_index=len(all_scenes),
+        start_offset=start_offset,
+        end_offset=end_offset,
+        location=seg.location if seg else "N/A",
+        time=seg.time if seg else "N/A",
+        characters=seg.characters if seg else [],
+        boundary_type=seg.boundary_type if seg else "chapter_start",
+    ))
+
+
 async def segment_chapter(chapter_text: str, agent: Agent) -> list[SceneData]:
-    """Progressive LLM segmentation. Returns SceneData list with exact codepoint offsets."""
+    """Progressive LLM segmentation. Returns SceneData list with exact codepoint offsets.
+
+    - cursor never advances unless a scene boundary is confirmed
+    - chunk_size grows when no progress is made, keeping the full current scene in context
+    - LLM/matching errors resume from the last confirmed scene cut
+    - continuity is validated after each scene is appended
+    """
     total_length = len(chapter_text)
     all_scenes: list[SceneData] = []
-    cursor = 0
+    cursor = 0          # always = start of current unfinished scene
+    chunk_size = INITIAL_CHUNK_SIZE
     summary = ""
     carry_meta: SceneSegment | None = None
 
     while cursor < total_length:
-        chunk = chapter_text[cursor:cursor + CHUNK_SIZE]
+        chunk = chapter_text[cursor:cursor + chunk_size]
         carry_info = (
             f"location={carry_meta.location!r}, time={carry_meta.time!r}, "
             f"characters={carry_meta.characters}"
         ) if carry_meta else ""
 
-        user_prompt = build_user_prompt(summary, chunk, cursor, carry_info)
-        result = await agent.run(user_prompt)
-        data: SegmentationResult = result.response  # type: ignore[assignment]
-
-        if not data.scenes:
-            # LLM returned nothing — force advance to avoid infinite loop
-            cursor += CHUNK_SIZE // 2
+        # --- LLM call ---
+        try:
+            result = await agent.run(build_user_prompt(summary, chunk, cursor, carry_info))
+            data: SegmentationResult = result.response  # type: ignore[assignment]
+        except Exception as e:
+            print(f"  Warning: LLM error at offset {cursor}: {e}", file=sys.stderr)
+            chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
+            if cursor + chunk_size >= total_length:
+                print(f"  Warning: max chunk reached; forcing final scene to cover remaining text.", file=sys.stderr)
+                try:
+                    _append_scene(all_scenes, cursor, total_length, carry_meta)
+                except ValueError as ve:
+                    print(f"  Warning: {ve}", file=sys.stderr)
+                break
             continue
 
+        summary = data.summary
+
+        # --- No scenes returned ---
+        if not data.scenes:
+            chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
+            if cursor + chunk_size >= total_length:
+                print(f"  Warning: LLM returned no scenes; forcing final scene.", file=sys.stderr)
+                try:
+                    _append_scene(all_scenes, cursor, total_length, carry_meta)
+                except ValueError as ve:
+                    print(f"  Warning: {ve}", file=sys.stderr)
+                break
+            continue  # retry with larger window; cursor stays put
+
+        # --- Process scenes in batch ---
         batch_cursor = cursor
+        reached_end = False
 
         for i, seg in enumerate(data.scenes):
             scene_start = batch_cursor
             is_last = (i == len(data.scenes) - 1)
 
             if is_last and data.has_more:
-                # Scene continues beyond this window; carry metadata to next batch
+                # Scene continues beyond window — carry to next batch
                 carry_meta = seg
                 break
 
             if is_last and not data.has_more:
-                # Last scene of the chapter — always ends at total_length
-                all_scenes.append(SceneData(
-                    scene_index=len(all_scenes),
-                    start_offset=scene_start,
-                    end_offset=total_length,
-                    location=seg.location,
-                    time=seg.time,
-                    characters=seg.characters,
-                    boundary_type=seg.boundary_type,
-                ))
+                # Final scene of the chapter
+                try:
+                    _append_scene(all_scenes, scene_start, total_length, seg)
+                except ValueError as e:
+                    print(f"  Warning: {e}. Stopping at last confirmed cut.", file=sys.stderr)
+                    break
                 batch_cursor = total_length
                 carry_meta = None
+                reached_end = True
                 break
 
-            # Non-last scene — use end_text to find exact boundary
+            # Non-last scene: locate boundary via end_text
             if not seg.end_text:
-                # LLM omitted end_text for a non-last scene; treat as carry
                 carry_meta = seg
                 break
 
-            scene_end = find_end_offset(chapter_text, seg.end_text, batch_cursor)
-            all_scenes.append(SceneData(
-                scene_index=len(all_scenes),
-                start_offset=scene_start,
-                end_offset=scene_end,
-                location=seg.location,
-                time=seg.time,
-                characters=seg.characters,
-                boundary_type=seg.boundary_type,
-            ))
+            try:
+                scene_end = find_end_offset(chapter_text, seg.end_text, batch_cursor)
+                _append_scene(all_scenes, scene_start, scene_end, seg)
+            except ValueError as e:
+                print(f"  Warning: {e}. Continuing from last good cut.", file=sys.stderr)
+                carry_meta = seg
+                break
+
             batch_cursor = scene_end
             carry_meta = None
 
-        # Advance cursor past the last confirmed scene boundary
+        # --- Advance cursor or grow chunk ---
         if batch_cursor > cursor:
             cursor = batch_cursor
+            chunk_size = INITIAL_CHUNK_SIZE  # reset after progress
         else:
-            # No progress in this batch — force advance to avoid infinite loop
-            cursor += max(CHUNK_SIZE // 2, 1)
+            # No progress — keep cursor, grow chunk so full scene stays in context
+            chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
+            if cursor + chunk_size >= total_length:
+                # Entire remaining text is already visible and we're still stuck
+                print(f"  Warning: stalled at offset {cursor}; forcing final scene.", file=sys.stderr)
+                try:
+                    _append_scene(all_scenes, cursor, total_length, carry_meta)
+                except ValueError as ve:
+                    print(f"  Warning: {ve}", file=sys.stderr)
+                reached_end = True
 
-        summary = data.summary
-
-        if not data.has_more:
+        if reached_end:
             break
 
     return all_scenes

@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -37,6 +36,8 @@ import regex as _regex
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
+
+from extract.agent_utils import add_model_args, build_agent, resolve_api_key
 
 
 INITIAL_CHUNK_SIZE = 8000   # chars per LLM batch
@@ -191,46 +192,6 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
             return metadata, content
     return {}, text
 
-
-def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str, thinking: str = "medium", output_mode: str = "tool") -> Agent[None, SegmentationResult]:
-    """Build a pydantic-ai Agent with thinking/reasoning configuration.
-
-    provider_name: any provider name known to pydantic_ai (e.g. openrouter, openai, anthropic).
-    base_url: empty string means use provider default.
-    thinking: reasoning effort level (none, low, medium, high) for models that support it.
-    output_mode: tool (default), native, or prompted.
-    """
-    from pydantic_ai.models import infer_model
-    from pydantic_ai.providers import infer_provider_class
-    from pydantic_ai.capabilities import Thinking
-    from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
-
-    cls = infer_provider_class(provider_name)
-    kwargs: dict = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
-    provider = cls(**kwargs)
-
-    model = infer_model(f"{provider_name}:{model_name}", provider_factory=lambda _: provider)
-
-    # Configure thinking capability if enabled
-    capabilities = []
-    if thinking != "none":
-        capabilities.append(Thinking(effort=thinking))  # type: ignore[arg-type]
-
-    if output_mode == "native":
-        output_type = NativeOutput(SegmentationResult)
-    elif output_mode == "prompted":
-        output_type = PromptedOutput(SegmentationResult)
-    else:
-        output_type = ToolOutput(SegmentationResult)
-
-    return Agent(
-        model=model,
-        output_type=output_type,
-        system_prompt=SYSTEM_PROMPT,
-        capabilities=capabilities,
-    )
 
 
 def find_end_offset(chapter_text: str, end_text: str, search_from: int) -> int:
@@ -513,25 +474,9 @@ def main() -> None:
     parser.add_argument("chapter_file", type=Path, help="YAML frontmatter chapter .txt file")
     parser.add_argument("output_dir", type=Path, nargs="?", default=None,
                         help="Output directory (default: <chapter_file>/../scenes/ch{index:03d}/)")
-    parser.add_argument("--provider",
-                        default=os.environ.get("YORISHIRO_PROVIDER", "openrouter"),
-                        help="Provider name (env: YORISHIRO_PROVIDER, default: openrouter)")
-    parser.add_argument("--model",
-                        default=os.environ.get("YORISHIRO_MODEL", "anthropic/claude-opus-4-6"),
-                        help="Model name (env: YORISHIRO_MODEL, default: anthropic/claude-opus-4-6)")
-    parser.add_argument("--base-url",
-                        default=os.environ.get("YORISHIRO_BASE_URL", ""),
-                        help="API base URL override (env: YORISHIRO_BASE_URL, empty = provider default)")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing output")
-    parser.add_argument("--thinking",
-                        default=os.environ.get("YORISHIRO_THINKING", "medium"),
-                        choices=["none", "low", "medium", "high"],
-                        help="Model thinking/reasoning effort: none, low, medium, high (env: YORISHIRO_THINKING, default: medium)")
-    parser.add_argument("--output-mode",
-                        default=os.environ.get("YORISHIRO_OUTPUT_MODE", "tool"),
-                        choices=["tool", "native", "prompted"],
-                        help="Structured output mode: tool (default), native, prompted (env: YORISHIRO_OUTPUT_MODE)")
+    add_model_args(parser)
     args = parser.parse_args()
 
     chapter_file: Path = args.chapter_file
@@ -552,13 +497,10 @@ def main() -> None:
         print(f"Skipping: {manifest_path} already exists (use --force to overwrite)")
         sys.exit(0)
 
-    api_key = os.environ.get("YORISHIRO_API_KEY")
-    if not api_key:
-        print("Error: YORISHIRO_API_KEY environment variable is not set", file=sys.stderr)
-        sys.exit(1)
+    api_key = resolve_api_key(args)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(args.model, args.provider, api_key, args.base_url, args.thinking, args.output_mode)
+    agent = build_agent(args.model, args.provider, api_key, args.base_url, SegmentationResult, SYSTEM_PROMPT, args.thinking, args.output_mode)
 
     print(f"Segmenting {chapter_file.name} ({total_length} chars) with {args.model} ...")
     try:

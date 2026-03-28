@@ -384,7 +384,7 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
             chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
             continue
 
-        summary = data.summary
+        summary = data.summary if data.summary != '""' else ""
 
         # --- No scenes returned ---
         if not data.scenes:

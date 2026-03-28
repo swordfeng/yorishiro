@@ -9,6 +9,7 @@ dependencies = [
     "ebooklib>=0.5", # epub parsing
     "pyyaml>=6.0.3",
     "pydantic-ai[openai]>=0.0.14",
+    "regex>=2024.0.0",
 ]
 
 [project.optional-dependencies]

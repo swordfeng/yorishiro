@@ -33,6 +33,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import regex as _regex
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
@@ -191,16 +192,18 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
     return {}, text
 
 
-def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str, thinking: str = "medium") -> Agent[None, SegmentationResult]:
+def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str, thinking: str = "medium", output_mode: str = "tool") -> Agent[None, SegmentationResult]:
     """Build a pydantic-ai Agent with thinking/reasoning configuration.
 
     provider_name: any provider name known to pydantic_ai (e.g. openrouter, openai, anthropic).
     base_url: empty string means use provider default.
     thinking: reasoning effort level (none, low, medium, high) for models that support it.
+    output_mode: tool (default), native, or prompted.
     """
     from pydantic_ai.models import infer_model
     from pydantic_ai.providers import infer_provider_class
     from pydantic_ai.capabilities import Thinking
+    from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 
     cls = infer_provider_class(provider_name)
     kwargs: dict = {"api_key": api_key}
@@ -209,15 +212,22 @@ def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str
     provider = cls(**kwargs)
 
     model = infer_model(f"{provider_name}:{model_name}", provider_factory=lambda _: provider)
-    
+
     # Configure thinking capability if enabled
     capabilities = []
     if thinking != "none":
         capabilities.append(Thinking(effort=thinking))  # type: ignore[arg-type]
-    
+
+    if output_mode == "native":
+        output_type = NativeOutput(SegmentationResult)
+    elif output_mode == "prompted":
+        output_type = PromptedOutput(SegmentationResult)
+    else:
+        output_type = ToolOutput(SegmentationResult)
+
     return Agent(
         model=model,
-        output_type=SegmentationResult,
+        output_type=output_type,
         system_prompt=SYSTEM_PROMPT,
         capabilities=capabilities,
     )
@@ -226,20 +236,47 @@ def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str
 def find_end_offset(chapter_text: str, end_text: str, search_from: int) -> int:
     """Find position right after end_text in chapter_text, searching from search_from.
 
-    Whitespace sequences in end_text are treated flexibly (any whitespace matches).
+    Both end_text and the search region are whitespace-stripped for matching;
+    the returned offset is a codepoint position in the original chapter_text.
+    For end_text with >= 10 non-whitespace chars, falls back to fuzzy matching
+    allowing up to floor(len/10) insert/delete/replace edits; the last two chars
+    must always match exactly.
     Returns the offset immediately after end_text (= start of next scene).
     Raises ValueError if end_text is not found.
     """
-    end_text = "".join(end_text.split())
-    pattern = re.compile(r"\s*".join(re.escape(part) for part in end_text))
-    m = pattern.search(chapter_text, search_from)
-    if m is None:
+    end_clean = "".join(end_text.split())
+    pairs = [(search_from + i, c) for i, c in enumerate(chapter_text[search_from:]) if not c.isspace()]
+    norm_str = "".join(c for _, c in pairs)
+
+    # Exact match on whitespace-stripped text
+    pat = re.escape(end_clean)
+    # Special fix for Gemini models - it escapes newline in the string
+    if "\\n" in end_clean:
+        pat = pat + "|" + end_clean.replace("\\n", "")
+    m = re.search(pat, norm_str)
+    if m is not None:
+        return pairs[m.end() - 1][0] + 1
+
+    if len(end_clean) < 10:
         raise ValueError(
             f"Could not locate end_text in chapter (searching from offset {search_from}).\n"
-            f"  end_text = {end_text!r}\n"
+            f"  end_text = {end_clean!r}\n"
             f"  context  = {chapter_text[search_from:search_from + 200]!r}"
         )
-    return m.end()
+
+    # Fuzzy fallback: match body fuzzily, tail exactly
+    max_errors = len(end_clean) // 10
+    body, tail = end_clean[:-2], end_clean[-2:]
+    pat = _regex.compile(rf"(?:{_regex.escape(body)}){{e<={max_errors}}}{_regex.escape(tail)}")
+    fm = pat.search(norm_str)
+    if fm is not None:
+        return pairs[fm.end() - 1][0] + 1
+
+    raise ValueError(
+        f"Could not locate end_text in chapter (searching from offset {search_from}).\n"
+        f"  end_text = {end_clean!r}\n"
+        f"  context  = {chapter_text[search_from:search_from + 200]!r}"
+    )
 
 
 def build_user_prompt(
@@ -491,6 +528,10 @@ def main() -> None:
                         default=os.environ.get("YORISHIRO_THINKING", "medium"),
                         choices=["none", "low", "medium", "high"],
                         help="Model thinking/reasoning effort: none, low, medium, high (env: YORISHIRO_THINKING, default: medium)")
+    parser.add_argument("--output-mode",
+                        default=os.environ.get("YORISHIRO_OUTPUT_MODE", "tool"),
+                        choices=["tool", "native", "prompted"],
+                        help="Structured output mode: tool (default), native, prompted (env: YORISHIRO_OUTPUT_MODE)")
     args = parser.parse_args()
 
     chapter_file: Path = args.chapter_file
@@ -517,7 +558,7 @@ def main() -> None:
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(args.model, args.provider, api_key, args.base_url, args.thinking)
+    agent = build_agent(args.model, args.provider, api_key, args.base_url, args.thinking, args.output_mode)
 
     print(f"Segmenting {chapter_file.name} ({total_length} chars) with {args.model} ...")
     try:

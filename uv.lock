@@ -3568,6 +3568,7 @@ dependencies = [
     { name = "ebooklib" },
     { name = "pydantic-ai" },
     { name = "pyyaml" },
+    { name = "regex" },
 ]
 
 [package.optional-dependencies]
@@ -3583,6 +3584,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pydantic-ai", extras = ["openai"], specifier = ">=0.0.14" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "regex", specifier = ">=2024.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
 ]
 provides-extras = ["dev"]

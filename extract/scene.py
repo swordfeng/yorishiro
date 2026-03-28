@@ -47,6 +47,12 @@ SYSTEM_PROMPT = """You are a professional narrative structure analyst. Your task
 
 ALL metadata (location, time, characters) must use the SAME language as the source material. Detect the language from the text.
 
+## Summarize Previous Context First
+
+Before identifying the scenes, summarize the story BEFORE the cursor. You can combine previous summary with last few scenes before the cursor.
+If none of the text is available before the cursor, leave an empty string "" in the summary.
+Try to keep summary under or around 4000 characters.
+
 ## Scene Definition
 
 A scene is a narrative unit with:
@@ -75,6 +81,8 @@ Identify both ending text of current scene and starting text of next scene, thou
 - At paragraph/section breaks
 - At sentence endings (。 or ！or ？or similar)
 - Before a clear new beginning (indication of new location/time/POV)
+
+Think about 3-4 potential cut point for each scene, and evaluate which one is the best by the rules defined in this document.
 
 **DO NOT** cut in the middle of a flowing sentence or dialogue.
 
@@ -107,11 +115,13 @@ List names EXACTLY as they appear in this scene's text. Do not normalize or tran
 
 For non-narrative sections (caution pages, TOC, colophon, etc.): one scene, boundary_type="non_narrative", location="N/A", time="N/A", characters=[].
 
-## Updating Summary
+## Quality Checklist Before Generating Response
 
-After identifying the scenes, summarize the story BEFORE the cursor. You can combine previous summary with last few scenes before the cursor.
-If none of the text is available before the cursor, leave an empty string "" in the summary.
-Try to keep summary under or around 4000 characters.
+- [ ] All metadata uses source material language
+- [ ] Summary is properly generated
+- [ ] Each split has clear boundary justification
+- [ ] No single scene that is too short or too long (usually indication of non-optimal scene cut)
+- [ ] No text omission or duplication
 """
 
 
@@ -227,6 +237,8 @@ def build_user_prompt(
     is_final_chunk: bool = False,
 ) -> str:
     parts = []
+    if not summary and not previous_chunk:
+        parts.append(f"[This is at START of the chapter — there is NO text before the cursor]")
     if summary:
         parts.append(f"[Previously processed — summary of the story so far]\n{summary}")
     if previous_chunk:

@@ -27,83 +27,12 @@ Source materials are classified by trustworthiness:
 
 **Conflict resolution**: When sources conflict, higher authority sources are preferred.
 
-### Phase 0 Strategy
-
-Phase 0 uses **Agent-assisted + manual review** workflow instead of fully manual or fully automated:
-
-1. LLM performs extraction tasks (scene segmentation, character extraction)
-2. Human spot-checks results for quality
-3. Agent synthesizes SOUL.md
-4. Human evaluates OOC rate
-
-**Why**: Balances speed and quality while validating core assumptions.
-
-### Model Configuration
-
-Models are swappable via `config.yaml`:
-- Extraction tasks → smaller/cheaper models
-- Synthesis tasks → stronger models (Claude Opus recommended)
-- Embedding → separate configurable provider
-
 ### No Vector Database in Phase 0
 
 Phase 0 uses simple JSON/YAML files for extracted data. Vector database (Qdrant) is introduced in Phase 1 when:
 - Scale increases (multiple sources per character)
 - Runtime retrieval is needed
 - Latency requirements become critical
-
----
-
-## Current Phase
-
-**Phase 0**: Core hypothesis validation
-
-- [x] Architecture defined in yorishiro.md
-- [x] README.md created
-- [x] epub parsing pipeline implemented (ebooklib)
-- [x] Chapter splitting (16 chapters)
-- [x] Scene segmentation (16 chapters, 87 scenes, all verified)
-- [x] Coreference resolution (character_aliases.json with 17 canonical characters)
-- [x] Character extraction (彩葉: 77 scene extractions)
-- [ ] SOUL.md synthesis
-- [ ] SOUL.md quality assessed
-
----
-
-## File Structure
-
-```
-yorishiro/
-├── extract/           # Extraction pipelines
-│   ├── __init__.py
-│   ├── epub_pipeline.py
-│   ├── split_chapters.py
-│   ├── scene_segmentation.py
-│   ├── character_extractor.py
-│   ├── generate_prompts.py
-│   └── generate_scene_prompts.py
-├── cli.py            # CLI entry point
-├── main.py           # Main entry point
-├── material/          # Source materials
-│   ├── raw/          # Original source files
-│   │   └── novel/
-│   │       ├── CPK.epub
-│   │       └── CPK_CN.epub
-│   └── processed/     # Processed/extracted content
-│       └── novel/CPK/
-│           ├── chapters/           # Individual chapter JSON files
-│           ├── scenes/            # Scene segmentation
-│           │   ├── ch003/scene_XXX.txt (9 scenes)
-│           │   ├── ch004/scene_XXX.txt (32 scenes)
-│           │   └── ... (117 total scenes)
-│           └── character_notes/    # Character extraction (future)
-├── material.yaml      # Source material metadata (gitignored)
-├── pyproject.toml     # Python project config
-├── uv.lock           # Locked dependencies
-├── yorishiro.md       # Full architecture document
-├── README.md          # Project overview
-└── AGENT.md          # This file - AI agent context
-```
 
 ---
 
@@ -135,18 +64,6 @@ All sources must be registered in `material.yaml` with:
 
 ## Development Guidelines
 
-### Adding New Pipelines
-
-1. Add to `extract/` directory
-2. Register in `config.yaml`
-3. Update this file if architecture changes
-
-### Modifying SOUL.md Template
-
-Changes to `yorishiro.md` Section 5.1 affect all future generation. Consider:
-- Backward compatibility with existing SOUL.md files
-- Migration strategy if needed
-
 ### Code Changes - WAIT FOR EXPLICIT INSTRUCTION
 
 **NEVER implement code changes without explicit user instruction.**
@@ -166,16 +83,6 @@ Changes to `yorishiro.md` Section 5.1 affect all future generation. Consider:
 - ✅ User: "Create a function for X" or "Go ahead and implement" → Agent writes code
 - ❌ User discusses design → Agent starts implementing during discussion
 - ✅ User: "Implement the design we just discussed" → Agent writes code
-
-**Current status**: The user has NOT instructed implementation. Only planning.
-
----
-
-## Open Questions
-
-- [ ] Which character will be used for Phase 0 validation? (Iroha Sakayori recommended as protagonist)
-- [ ] OOC evaluation methodology to be defined
-- [x] epub parsing library choice: ebooklib (works with CPK.epub)
 
 ---
 
@@ -222,12 +129,6 @@ Cuts MUST be at natural boundaries:
 ### Character Name Aliases (Coreference Resolution)
 
 Characters may appear under different names in different scenes. This requires a dedicated resolution pass BEFORE character extraction.
-
-**CPK Character Identity Map:**
-- かぐや = 赤ちゃん = 少女 (same character, different life stages)
-- 八千代 = ヤチヨ (same entity, future identity)
-- 彩葉 = いろＰ = 酒寄 (same character, streaming handle)
-- 芦花, 真実, 帝アキラ, 雷, 乃依, 月人, 黒鬼 (supporting characters)
 
 **Coreference Resolution Method:**
 1. **Read-until-understood**: No language-specific patterns. Read scenes sequentially until you understand who the alias refers to.
@@ -291,7 +192,3 @@ This material is **perfect for testing Yorishiro's split-persona design**:
 - Yachiyo has knowledge Kaguya doesn't (her own future)
 - Iroha is the connection point between both personas
 - Knowledge boundary filtering is critical here
-
-### Story Summary
-
-Iroha Sakayori, a high school student living alone in Tokyo, discovers a baby inside a glowing utility pole. The baby claims to be from the Moon and names herself Kaguya. Together, they enter the Yachiyo Cup streaming tournament. When Kaguya is taken away by lunar beings, Iroha completes a song her late father started. This song echoes through time and reaches Yachiyo — revealing that Yachiyo is Kaguya from 8000 years in the future, who uploaded her consciousness into the virtual world Tsukuyomi.

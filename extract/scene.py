@@ -3,6 +3,7 @@
 Usage:
     uv run python -m extract.scene <chapter_file> [output_dir]
         [--model MODEL] [--base-url URL] [--api-key-env VAR] [--force]
+        [--thinking {none,low,medium,high}]
 
 Example:
     uv run python -m extract.scene material/processed/novel/CPK/chapters/ch003.txt \\
@@ -190,14 +191,16 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
     return {}, text
 
 
-def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str) -> Agent[None, SegmentationResult]:
-    """Build a pydantic-ai Agent using infer_provider_class and infer_model.
+def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str, thinking: str = "medium") -> Agent[None, SegmentationResult]:
+    """Build a pydantic-ai Agent with thinking/reasoning configuration.
 
     provider_name: any provider name known to pydantic_ai (e.g. openrouter, openai, anthropic).
     base_url: empty string means use provider default.
+    thinking: reasoning effort level (none, low, medium, high) for models that support it.
     """
     from pydantic_ai.models import infer_model
     from pydantic_ai.providers import infer_provider_class
+    from pydantic_ai.capabilities import Thinking
 
     cls = infer_provider_class(provider_name)
     kwargs: dict = {"api_key": api_key}
@@ -206,7 +209,18 @@ def build_agent(model_name: str, provider_name: str, api_key: str, base_url: str
     provider = cls(**kwargs)
 
     model = infer_model(f"{provider_name}:{model_name}", provider_factory=lambda _: provider)
-    return Agent(model=model, output_type=SegmentationResult, system_prompt=SYSTEM_PROMPT)
+    
+    # Configure thinking capability if enabled
+    capabilities = []
+    if thinking != "none":
+        capabilities.append(Thinking(effort=thinking))  # type: ignore[arg-type]
+    
+    return Agent(
+        model=model,
+        output_type=SegmentationResult,
+        system_prompt=SYSTEM_PROMPT,
+        capabilities=capabilities,
+    )
 
 
 def find_end_offset(chapter_text: str, end_text: str, search_from: int) -> int:
@@ -473,6 +487,10 @@ def main() -> None:
                         help="API base URL override (env: YORISHIRO_BASE_URL, empty = provider default)")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing output")
+    parser.add_argument("--thinking",
+                        default=os.environ.get("YORISHIRO_THINKING", "medium"),
+                        choices=["none", "low", "medium", "high"],
+                        help="Model thinking/reasoning effort: none, low, medium, high (env: YORISHIRO_THINKING, default: medium)")
     args = parser.parse_args()
 
     chapter_file: Path = args.chapter_file
@@ -499,7 +517,7 @@ def main() -> None:
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(args.model, args.provider, api_key, args.base_url)
+    agent = build_agent(args.model, args.provider, api_key, args.base_url, args.thinking)
 
     print(f"Segmenting {chapter_file.name} ({total_length} chars) with {args.model} ...")
     try:

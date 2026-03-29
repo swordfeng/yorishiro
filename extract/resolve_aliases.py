@@ -50,6 +50,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+from pydantic import ValidationError
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from extract.agent_utils import add_model_args, build_agent, resolve_api_key
 
@@ -306,6 +308,12 @@ by a merge. Leave untouched characters out.
 - `knowledge_summary` is a **complete replacement** — preserve all prior content plus new additions.
 - `known_facts` should be concise bullets; remove duplicates; do not repeat facts in \
 `refuted_beliefs`.
+- **Preserve original-language names**: Use names exactly as they appear in the source text. \
+Do NOT translate, romanize, or convert names to another language or writing system.
+- **Write content in the source language**: All character data fields (`known_facts`, \
+`current_state`, `refuted_beliefs`, `extra_notes`, `merge_notes`, `knowledge_summary`, \
+`batch_notes`) must be written in the same language as the source material (Japanese, Chinese, \
+etc.). Do NOT translate content into English.
 """
 
 RETRY_SYSTEM_PROMPT = """\
@@ -555,6 +563,21 @@ def find_missed(
 # ---------------------------------------------------------------------------
 
 
+async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
+    """Run agent, retrying on ValidationError (model produced invalid schema output)."""
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await agent.run(prompt)
+        except (ValidationError, UnexpectedModelBehavior) as exc:
+            last_exc = exc
+            print(
+                f"  [Output validation error attempt {attempt}/{max_attempts}] {exc} — retrying ...",
+                file=sys.stderr,
+            )
+    raise last_exc  # type: ignore[misc]
+
+
 async def seed_from_soul_docs(
     souls_dir: Path,
     args: argparse.Namespace,
@@ -589,7 +612,7 @@ async def seed_from_soul_docs(
         thinking=args.thinking,
         output_mode=args.output_mode,
     )
-    result = await agent.run(prompt)
+    result = await agent_run_with_retry(agent, prompt)
 
     state = GlobalState()
     for entry in result.output.characters:
@@ -674,7 +697,7 @@ async def process_all_batches(
             thinking=args.thinking,
             output_mode=args.output_mode,
         )
-        result = await agent.run(prompt)
+        result = await agent_run_with_retry(agent, prompt)
         apply_result(result.output, state)
 
         # Retry loop for missed aliases
@@ -697,7 +720,7 @@ async def process_all_batches(
                 thinking=args.thinking,
                 output_mode=args.output_mode,
             )
-            retry_result = await retry_agent.run(retry_prompt)
+            retry_result = await agent_run_with_retry(retry_agent, retry_prompt)
             apply_result(retry_result.output, state)
 
         still_missed = find_missed(result.output, batch, state)

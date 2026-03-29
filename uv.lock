@@ -3569,11 +3569,17 @@ dependencies = [
     { name = "pydantic-ai" },
     { name = "pyyaml" },
     { name = "regex" },
+    { name = "tiktoken" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "ruff" },
+]
+
+[package.dev-dependencies]
+dev = [
     { name = "ruff" },
 ]
 
@@ -3586,8 +3592,12 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "regex", specifier = ">=2024.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "tiktoken", specifier = ">=0.5.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ruff", specifier = ">=0.15.7" }]
 
 [[package]]
 name = "zipp"

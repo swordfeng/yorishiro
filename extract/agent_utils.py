@@ -11,9 +11,20 @@ import os
 import sys
 from typing import TypeVar
 
+import tiktoken
 from pydantic_ai import Agent
 
+_encoding = None
+
 _OutputT = TypeVar("_OutputT")
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count using cl100k_base encoding (GPT-4/3.5 tokenizer)."""
+    global _encoding
+    if _encoding is None:
+        _encoding = tiktoken.get_encoding("cl100k_base")
+    return len(_encoding.encode(text))
 
 
 def add_model_args(parser: argparse.ArgumentParser) -> None:

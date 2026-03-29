@@ -5,7 +5,7 @@ Usage:
         [--model MODEL] [--provider PROVIDER] [--api-key-env VAR]
         [--base-url URL] [--thinking {none,low,medium,high}]
         [--output-mode {tool,native,prompted}]
-        [--batch-tokens N] [--cjk-ratio F]
+        [--batch-tokens N]
         [--souls-dir PATH] [--no-seed] [--force]
 
 Example:
@@ -53,7 +53,7 @@ from pydantic import BaseModel, Field
 from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from extract.agent_utils import add_model_args, build_agent, resolve_api_key
+from extract.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
 
 
 # ---------------------------------------------------------------------------
@@ -381,15 +381,9 @@ def load_all_scenes(scenes_base_dir: Path) -> list[SceneRecord]:
 # ---------------------------------------------------------------------------
 
 
-def estimate_tokens(text: str, cjk_ratio: float) -> int:
-    """Rough token estimate: tokens ≈ len(text) * cjk_ratio."""
-    return int(len(text) * cjk_ratio)
-
-
 def build_batches(
     scenes: list[SceneRecord],
     batch_tokens: int,
-    cjk_ratio: float = 0.65,
 ) -> list[list[SceneRecord]]:
     """Group scenes into batches not exceeding batch_tokens estimated tokens.
 
@@ -401,7 +395,7 @@ def build_batches(
     current_tokens = 0
 
     for scene in scenes:
-        scene_tokens = estimate_tokens(scene.text, cjk_ratio)
+        scene_tokens = estimate_tokens(scene.text)
         if current_batch and current_tokens + scene_tokens > batch_tokens:
             batches.append(current_batch)
             current_batch = []
@@ -580,8 +574,7 @@ async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
 
 async def seed_from_soul_docs(
     souls_dir: Path,
-    args: argparse.Namespace,
-    api_key: str,
+    agent,
 ) -> GlobalState:
     """Parse existing soul docs in souls_dir and return a seeded GlobalState."""
     soul_files = sorted(souls_dir.glob("*.md"))
@@ -602,16 +595,6 @@ async def seed_from_soul_docs(
         f"into CharacterEntry records.\n\n{combined}"
     )
 
-    agent = build_agent(
-        model_name=args.model,
-        provider_name=args.provider,
-        api_key=api_key,
-        base_url=args.base_url,
-        output_type=SeedFromSoulDocsResult,
-        system_prompt=SEED_SYSTEM_PROMPT,
-        thinking=args.thinking,
-        output_mode=args.output_mode,
-    )
     result = await agent_run_with_retry(agent, prompt)
 
     state = GlobalState()
@@ -669,8 +652,8 @@ def format_retry_prompt(
 async def process_all_batches(
     batches: list[list[SceneRecord]],
     initial_state: GlobalState,
-    args: argparse.Namespace,
-    api_key: str,
+    batch_agent,
+    retry_agent,
     max_retries: int = 2,
 ) -> GlobalState:
     """Process all scene batches sequentially, with retry for missed aliases."""
@@ -687,17 +670,14 @@ async def process_all_batches(
         print(f"Processing batch {i}/{total}  ({len(batch)} scenes) ...", file=sys.stderr)
 
         prompt = format_batch_prompt(batch, state, i, total)
-        agent = build_agent(
-            model_name=args.model,
-            provider_name=args.provider,
-            api_key=api_key,
-            base_url=args.base_url,
-            output_type=BatchUpdateResult,
-            system_prompt=BATCH_SYSTEM_PROMPT,
-            thinking=args.thinking,
-            output_mode=args.output_mode,
+        state_chars = len(format_global_state(state))
+        scene_chars = sum(len(s.text) for s in batch)
+        print(
+            f"  Prompt sizes: global_state={state_chars} chars, scenes={scene_chars} chars, "
+            f"total={len(prompt)} chars",
+            file=sys.stderr,
         )
-        result = await agent_run_with_retry(agent, prompt)
+        result = await agent_run_with_retry(batch_agent, prompt)
         apply_result(result.output, state)
 
         # Retry loop for missed aliases
@@ -710,16 +690,6 @@ async def process_all_batches(
                 file=sys.stderr,
             )
             retry_prompt = format_retry_prompt(missed, scene_lookup, state)
-            retry_agent = build_agent(
-                model_name=args.model,
-                provider_name=args.provider,
-                api_key=api_key,
-                base_url=args.base_url,
-                output_type=MissedAliasResolution,
-                system_prompt=RETRY_SYSTEM_PROMPT,
-                thinking=args.thinking,
-                output_mode=args.output_mode,
-            )
             retry_result = await agent_run_with_retry(retry_agent, retry_prompt)
             apply_result(retry_result.output, state)
 
@@ -881,15 +851,6 @@ def main() -> None:
         help="Target token count per scene batch (default: 32000)",
     )
     parser.add_argument(
-        "--cjk-ratio",
-        type=float,
-        default=0.65,
-        help=(
-            "Token estimation ratio: estimated_tokens = len(text) * cjk_ratio. "
-            "Default 0.65 ≈ 1.5 chars per token for CJK text."
-        ),
-    )
-    parser.add_argument(
         "--souls-dir",
         type=Path,
         default=None,
@@ -934,17 +895,44 @@ def main() -> None:
     chapter_count = len({s.chapter for s in all_scenes})
     print(f"  Loaded {len(all_scenes)} scenes from {chapter_count} chapters.")
 
-    batches = build_batches(all_scenes, args.batch_tokens, args.cjk_ratio)
-    print(
-        f"  Split into {len(batches)} batches "
-        f"(target: {args.batch_tokens} tokens each, cjk_ratio: {args.cjk_ratio})."
-    )
+    batches = build_batches(all_scenes, args.batch_tokens)
+    print(f"  Split into {len(batches)} batches (target: {args.batch_tokens} tokens each).")
 
     async def run() -> GlobalState:
+        batch_agent = build_agent(
+            model_name=args.model,
+            provider_name=args.provider,
+            api_key=api_key,
+            base_url=args.base_url,
+            output_type=BatchUpdateResult,
+            system_prompt=BATCH_SYSTEM_PROMPT,
+            thinking=args.thinking,
+            output_mode=args.output_mode,
+        )
+        retry_agent = build_agent(
+            model_name=args.model,
+            provider_name=args.provider,
+            api_key=api_key,
+            base_url=args.base_url,
+            output_type=MissedAliasResolution,
+            system_prompt=RETRY_SYSTEM_PROMPT,
+            thinking=args.thinking,
+            output_mode=args.output_mode,
+        )
         initial_state = GlobalState()
         if not args.no_seed and souls_dir.exists():
-            initial_state = await seed_from_soul_docs(souls_dir, args, api_key)
-        return await process_all_batches(batches, initial_state, args, api_key)
+            seed_agent = build_agent(
+                model_name=args.model,
+                provider_name=args.provider,
+                api_key=api_key,
+                base_url=args.base_url,
+                output_type=SeedFromSoulDocsResult,
+                system_prompt=SEED_SYSTEM_PROMPT,
+                thinking=args.thinking,
+                output_mode=args.output_mode,
+            )
+            initial_state = await seed_from_soul_docs(souls_dir, seed_agent)
+        return await process_all_batches(batches, initial_state, batch_agent, retry_agent)
 
     print(f"Processing with {args.model} ...")
     state = asyncio.run(run())

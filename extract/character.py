@@ -4,7 +4,7 @@ Usage:
     uv run python -m extract.character <scenes_base_dir>
         [--aliases-file PATH] [--output-dir PATH] [--souls-dir PATH]
         [--characters NAME [NAME ...]]
-        [--batch-tokens N] [--cjk-ratio F]
+        [--batch-tokens N]
         [--model MODEL] [--provider PROVIDER] [--api-key-env VAR]
         [--base-url URL] [--thinking {none,low,medium,high}]
         [--output-mode {tool,native,prompted}]
@@ -47,7 +47,7 @@ from pydantic import BaseModel, Field
 from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from extract.agent_utils import add_model_args, build_agent, resolve_api_key
+from extract.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
 
 
 # ---------------------------------------------------------------------------
@@ -361,21 +361,16 @@ async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
 # ---------------------------------------------------------------------------
 
 
-def estimate_tokens(text: str, cjk_ratio: float) -> int:
-    return int(len(text) * cjk_ratio)
-
-
 def build_batches(
     scenes: list[SceneRecord],
     batch_tokens: int,
-    cjk_ratio: float = 0.65,
 ) -> list[list[SceneRecord]]:
     """Group scenes into batches not exceeding batch_tokens estimated tokens."""
     batches: list[list[SceneRecord]] = []
     current_batch: list[SceneRecord] = []
     current_tokens = 0
     for scene in scenes:
-        scene_tokens = estimate_tokens(scene.text, cjk_ratio)
+        scene_tokens = estimate_tokens(scene.text)
         if current_batch and current_tokens + scene_tokens > batch_tokens:
             batches.append(current_batch)
             current_batch = []
@@ -586,8 +581,7 @@ async def process_all_batches(
     target_characters: list[str],
     souls_dir: Path,
     output_dir: Path,
-    args: argparse.Namespace,
-    api_key: str,
+    agent,
 ) -> None:
     total = len(batches)
     # Accumulate notes keyed by (canonical_name, chapter_index)
@@ -605,18 +599,13 @@ async def process_all_batches(
         }
 
         prompt = format_batch_prompt(batch, soul_contexts, i, total)
-
-        agent = build_agent(
-            model_name=args.model,
-            provider_name=args.provider,
-            api_key=api_key,
-            base_url=args.base_url,
-            output_type=BatchExtractionResult,
-            system_prompt=EXTRACTION_SYSTEM_PROMPT,
-            thinking=args.thinking,
-            output_mode=args.output_mode,
+        bg_chars = sum(len(ctx) for ctx in soul_contexts.values())
+        scene_chars = sum(len(s.text) for s in batch)
+        print(
+            f"  Prompt sizes: backgrounds={bg_chars} chars, scenes={scene_chars} chars, "
+            f"total={len(prompt)} chars",
+            file=sys.stderr,
         )
-
         result = await agent_run_with_retry(agent, prompt)
         extraction: BatchExtractionResult = result.output
 
@@ -656,8 +645,7 @@ async def finalize_soul_doc(
     canonical_name: str,
     souls_dir: Path,
     output_dir: Path,
-    args: argparse.Namespace,
-    api_key: str,
+    agent,
 ) -> None:
     """Generate a full structured SOUL.md for one character from all available material."""
     seed_path = souls_dir / f"{canonical_name}.md"
@@ -674,23 +662,19 @@ async def finalize_soul_doc(
             pass
     all_notes.sort(key=lambda n: (n.get("chapter_index", 0), n.get("scene_index", 0)))
 
+    notes_json = json.dumps(all_notes, ensure_ascii=False, indent=2)
     prompt = (
         f"# Character: {canonical_name}\n\n"
         f"## Draft Soul Doc\n\n{seed_doc}\n\n"
         f"## Accumulated Insights\n\n{insights}\n\n"
         f"## All Scene Extraction Notes ({len(all_notes)} scenes)\n\n"
-        + json.dumps(all_notes, ensure_ascii=False, indent=2)
+        + notes_json
     )
-
-    agent = build_agent(
-        model_name=args.model,
-        provider_name=args.provider,
-        api_key=api_key,
-        base_url=args.base_url,
-        output_type=SoulDocOutput,
-        system_prompt=FINALIZATION_SYSTEM_PROMPT,
-        thinking=args.thinking,
-        output_mode=args.output_mode,
+    print(
+        f"  Finalization prompt sizes: seed_doc={len(seed_doc)} chars, "
+        f"insights={len(insights)} chars, notes={len(notes_json)} chars, "
+        f"total={len(prompt)} chars",
+        file=sys.stderr,
     )
 
     result = await agent_run_with_retry(agent, prompt)
@@ -763,12 +747,6 @@ def main() -> None:
         help="Target token count per scene batch (default: 32000)",
     )
     parser.add_argument(
-        "--cjk-ratio",
-        type=float,
-        default=0.65,
-        help="Token estimation ratio: tokens ≈ len(text) × cjk_ratio (default: 0.65)",
-    )
-    parser.add_argument(
         "--no-finalize",
         action="store_true",
         help="Skip the soul doc finalization pass",
@@ -810,28 +788,45 @@ def main() -> None:
     chapter_count = len({s.chapter for s in all_scenes})
     print(f"Loaded {len(all_scenes)} scenes from {chapter_count} chapters.")
 
-    batches = build_batches(all_scenes, args.batch_tokens, args.cjk_ratio)
-    print(
-        f"Split into {len(batches)} batches "
-        f"(target: {args.batch_tokens} tokens, cjk_ratio: {args.cjk_ratio})."
-    )
+    batches = build_batches(all_scenes, args.batch_tokens)
+    print(f"Split into {len(batches)} batches (target: {args.batch_tokens} tokens).")
 
     async def run() -> None:
+        extraction_agent = build_agent(
+            model_name=args.model,
+            provider_name=args.provider,
+            api_key=api_key,
+            base_url=args.base_url,
+            output_type=BatchExtractionResult,
+            system_prompt=EXTRACTION_SYSTEM_PROMPT,
+            thinking=args.thinking,
+            output_mode=args.output_mode,
+        )
+
         await process_all_batches(
             batches=batches,
             target_characters=target_characters,
             souls_dir=souls_dir,
             output_dir=output_dir,
-            args=args,
-            api_key=api_key,
+            agent=extraction_agent,
         )
 
         if not args.no_finalize:
+            finalization_agent = build_agent(
+                model_name=args.model,
+                provider_name=args.provider,
+                api_key=api_key,
+                base_url=args.base_url,
+                output_type=SoulDocOutput,
+                system_prompt=FINALIZATION_SYSTEM_PROMPT,
+                thinking=args.thinking,
+                output_mode=args.output_mode,
+            )
             print("\nFinalizing soul docs ...", file=sys.stderr)
             for canonical_name in target_characters:
                 print(f"  Finalizing 「{canonical_name}」 ...", file=sys.stderr)
                 await finalize_soul_doc(
-                    canonical_name, souls_dir, output_dir, args, api_key
+                    canonical_name, souls_dir, output_dir, finalization_agent
                 )
 
     asyncio.run(run())

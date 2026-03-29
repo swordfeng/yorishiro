@@ -48,6 +48,7 @@ from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from extract.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
+from extract.project import Project, find_project
 
 
 # ---------------------------------------------------------------------------
@@ -163,14 +164,6 @@ class BatchExtractionResult(BaseModel):
     )
 
 
-class SoulDocOutput(BaseModel):
-    """Finalization pass output: a complete structured SOUL.md."""
-
-    content: str = Field(
-        description="Complete SOUL.md document in markdown format.",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Internal data structures
 # ---------------------------------------------------------------------------
@@ -255,198 +248,10 @@ Omit a character from soul_doc_appends if there is genuinely nothing new to add.
 Do NOT translate content into English. Structural labels stay in English.
 """
 
-FINALIZATION_SYSTEM_PROMPT = """\
-You are synthesizing a complete, production-ready character soul document (SOUL.md) for use \
-in AI roleplay simulation. This document must be detailed enough that an AI can accurately \
-simulate this character's behavior across different contexts.
-
-## Input
-
-You will receive for one character:
-1. A draft seed soul doc
-2. Accumulated cross-scene insights
-3. All per-scene extraction notes (CharacterSceneNote records as JSON)
-
-## Output Requirements
-
-1. **Every behavioral claim must have evidence**: Include at least one scene reference (chapter number).
-2. **Include verbatim dialogue**: Preserve exact original-language quotes, never paraphrase.
-3. **Write in the source language**: All content in Japanese/Chinese/etc. Section headings stay in English.
-4. **Do not invent facts**: Only use information from the provided material. Mark uncertain areas.
-5. **Default timeline**: Use the character's state at the END of the story as the default for simulation.
-
-## Output Format
-
-Produce a complete SOUL.md following this structure exactly:
-
----
-
-# {Character Name}
-
-> One-sentence identity summary capturing core drive and current role.
-
-## 1. Core Identity
-Core driving motivation; current life stage/role; what fundamentally animates this character.
-
-## 2. Personality Model
-
-### 2.1 Core Values
-List 3-5 core values with behavioral evidence from scenes.
-
-### 2.2 Motivations & Desires
-- **Surface desire:** What they consciously pursue
-- **Deep desire:** What they secretly want
-- **Ultimate desire:** Their core life goal
-
-### 2.3 Core Fears & Avoidances
-What they fear most and what behaviors they avoid, with scene evidence.
-
-### 2.4 Character Traits
-- **Public persona:** How they present to others
-- **True self:** Who they really are inside
-- **Internal contradictions:** Tensions between these
-
-### 2.5 Cognitive Patterns
-How they think, process information, make decisions.
-
-## 3. Voice & Language
-
-### 3.1 Overall Register
-Typical speech style, formality level, dialect.
-
-### 3.2 Catchphrases & Signature Expressions
-Frequently used phrases with context.
-
-### 3.3 Sentence Style Preferences
-Sentence length, structure preferences, rhetorical patterns.
-
-### 3.4 Humor Style
-How they use humor: self-deprecation, sarcasm, wordplay, etc.
-
-### 3.5 Language Under Emotional Intensity
-How speech changes under stress, anger, joy, grief.
-
-### 3.6 Dialogue Samples
-3-5 key dialogue excerpts with scene context, showing different emotional states.
-
-### 3.7 Interaction Patterns Table
-Create a table showing typical input→response patterns:
-
-| Input Type | Character Response | Source |
-|------------|-------------------|--------|
-| Being praised | ... | chXXX |
-| Being questioned about X | ... | chXXX |
-| Facing Y situation | ... | chXXX |
-
-## 4. Relationships
-
-For each significant relationship, provide:
-- **Nature**: What kind of relationship
-- **Interaction pattern**: How they act around each other
-- **Key turning points**: How the relationship changed
-
-## 5. Behavioral Patterns
-
-### 5.1 Under Pressure / Conflict
-How they behave when stressed or in conflict.
-
-### 5.2 With Intimacy / Trust
-How they behave with people they trust.
-
-### 5.3 Facing Failure / Setbacks
-How they handle failure and setbacks.
-
-### 5.4 Moral Dilemmas
-How they approach ethical decisions.
-
-### 5.5 Workplace / Senior Behavior
-How they act in work/school contexts, as senior or junior.
-
-### 5.6 Habitual Behaviors & Rituals
-Daily habits, coping mechanisms, routines.
-
-## 6. Negative Constraints
-
-CRITICAL for preventing out-of-character behavior. Structure as three tiers:
-
-### Absolutely Never
-Things this character would never do under any circumstances, with reason.
-
-### In X Context Will Not
-Things they won't do in specific situations, with context.
-
-### Contradictions / Traps
-Behaviors that seem contradictory but aren't (e.g., "says X but always does Y").
-
-## 7. Character Arc
-
-**Before writing this section**: Scan all `active_persona` values from the scene notes.
-Identify major timeline phases (e.g., "high school era" vs "10 years later").
-Group scenes by phase before writing the subsections below.
-Mark which phase represents the END state (default for simulation).
-
-### 7.1 Starting State
-Who they are at the beginning.
-
-### 7.2 Key Turning Points
-Major events that changed them, with chapter references.
-
-### 7.3 Ending State
-Who they become by the end.
-
-### 7.4 Stage-by-Stage Personality Differences
-
-Identify major timeline phases from active_persona patterns (e.g., ch002-009 high school, ch010+研究所長).
-Create a comparison table with at least 2 phases:
-
-| Stage | Core Drive | Key Relationships | Language/Register | Behavioral Focus |
-|-------|------------|-------------------|-------------------|------------------|
-| Phase1 (chXXX-YYY) | ... | ... | ... | ... |
-| Phase2 (chXXX-YYY) | ... | ... | ... | ... |
-
-Include at least one scene reference per phase.
-Mark which phase is the DEFAULT (end state) for simulation.
-
-## 8. World Knowledge
-
-### Known Facts
-What they know for certain.
-
-### Unknown to Character
-What the reader knows but they don't.
-
-### Mistaken Beliefs
-Things they believe that are wrong, and when/if corrected.
-
-## 9. Simulation Directives
-
-### 9.1 Default Timeline
-Which story phase to simulate BY DEFAULT — must be the END state / final timeline phase.
-Specify: (1) the phase name, (2) key behavioral characteristics of this phase,
-(3) how to switch to other phases if requested.
-
-### 9.2 Timeline Switching Rules
-How behavior differs across phases; triggers for switching.
-
-### 9.3 Dialogue Style Rules
-Specific rules for speech patterns, formality, catchphrases.
-
-### 9.4 Prohibited Behaviors Checklist
-What not to do when roleplaying this character.
-
-### 9.5 Fallback Strategies
-What to do when uncertain about the character's response.
-
----
-
-Note: This document may be further refined in cross-source alignment passes.
-"""
-
 
 # ---------------------------------------------------------------------------
 # Retry helper
 # ---------------------------------------------------------------------------
-
 
 async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
     """Run agent, retrying on output validation errors."""
@@ -560,21 +365,12 @@ def load_all_scenes(
 # ---------------------------------------------------------------------------
 
 
-def load_soul_context(canonical_name: str, souls_dir: Path, output_dir: Path) -> str:
-    """Return combined soul doc + accumulated insights text for a character."""
-    parts: list[str] = []
-
-    soul_path = souls_dir / f"{canonical_name}.md"
-    if soul_path.exists():
-        parts.append(f"### Soul Doc\n\n{soul_path.read_text(encoding='utf-8')}")
-
-    insights_path = output_dir / canonical_name / "insights.md"
+def load_insight_context(canonical_name: str, characters_dir: Path) -> str:
+    """Return accumulated insights text for a character."""
+    insights_path = characters_dir / canonical_name / "insights.md"
     if insights_path.exists():
-        parts.append(
-            f"### Accumulated Insights\n\n{insights_path.read_text(encoding='utf-8')}"
-        )
-
-    return "\n\n".join(parts) if parts else "(no background available yet)"
+        return f"### Accumulated Insights\n\n{insights_path.read_text(encoding='utf-8')}"
+    return "(no background available yet)"
 
 
 # ---------------------------------------------------------------------------
@@ -686,7 +482,7 @@ def append_insights(
 async def process_all_batches(
     batches: list[list[SceneRecord]],
     target_characters: list[str],
-    souls_dir: Path,
+    characters_dir: Path,
     output_dir: Path,
     agent,
 ) -> None:
@@ -697,16 +493,16 @@ async def process_all_batches(
     for i, batch in enumerate(batches, 1):
         print(f"Processing batch {i}/{total}  ({len(batch)} scenes) ...", file=sys.stderr)
 
-        # Only load soul contexts for target characters appearing in this batch
+        # Only load insight contexts for target characters appearing in this batch
         chars_in_batch = {c.canonical for scene in batch for c in scene.target_characters}
-        soul_contexts = {
-            name: load_soul_context(name, souls_dir, output_dir)
+        insight_contexts = {
+            name: load_insight_context(name, characters_dir)
             for name in target_characters
             if name in chars_in_batch
         }
 
-        prompt = format_batch_prompt(batch, soul_contexts, i, total)
-        bg_chars = sum(len(ctx) for ctx in soul_contexts.values())
+        prompt = format_batch_prompt(batch, insight_contexts, i, total)
+        bg_chars = sum(len(ctx) for ctx in insight_contexts.values())
         scene_chars = sum(len(s.text) for s in batch)
         print(
             f"  Prompt sizes: backgrounds={bg_chars} chars, scenes={scene_chars} chars, "
@@ -744,57 +540,6 @@ async def process_all_batches(
 
 
 # ---------------------------------------------------------------------------
-# Soul doc finalization
-# ---------------------------------------------------------------------------
-
-
-async def finalize_soul_doc(
-    canonical_name: str,
-    souls_dir: Path,
-    output_dir: Path,
-    agent,
-) -> None:
-    """Generate a full structured SOUL.md for one character from all available material."""
-    seed_path = souls_dir / f"{canonical_name}.md"
-    seed_doc = seed_path.read_text(encoding="utf-8") if seed_path.exists() else "(none)"
-
-    insights_path = output_dir / canonical_name / "insights.md"
-    insights = insights_path.read_text(encoding="utf-8") if insights_path.exists() else "(none)"
-
-    all_notes: list[dict] = []
-    for notes_file in sorted((output_dir / canonical_name).glob("ch*.json")):
-        try:
-            all_notes.extend(json.loads(notes_file.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError):
-            pass
-    all_notes.sort(key=lambda n: (n.get("chapter_index", 0), n.get("scene_index", 0)))
-
-    notes_json = json.dumps(all_notes, ensure_ascii=False, indent=2)
-    prompt = (
-        f"# Character: {canonical_name}\n\n"
-        f"## Draft Soul Doc\n\n{seed_doc}\n\n"
-        f"## Accumulated Insights\n\n{insights}\n\n"
-        f"## All Scene Extraction Notes ({len(all_notes)} scenes)\n\n"
-        + notes_json
-    )
-    print(
-        f"  Finalization prompt sizes: seed_doc={len(seed_doc)} chars, "
-        f"insights={len(insights)} chars, notes={len(notes_json)} chars, "
-        f"total={len(prompt)} chars",
-        file=sys.stderr,
-    )
-
-    result = await agent_run_with_retry(agent, prompt)
-    soul_doc_content: str = result.output.content
-
-    souls_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = canonical_name.replace("/", "_").replace("\\", "_").replace("\0", "")
-    out_path = souls_dir / f"{safe_name}.md"
-    out_path.write_text(soul_doc_content, encoding="utf-8")
-    print(f"  Wrote finalized soul doc: {out_path}")
-
-
-# ---------------------------------------------------------------------------
 # Target character resolution
 # ---------------------------------------------------------------------------
 
@@ -807,39 +552,55 @@ async def finalize_soul_doc(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Extract per-scene character notes using batched LLM processing, "
-            "with soul doc accumulation and finalization."
+            "Extract per-scene character notes using batched LLM processing.\n"
+            "Final SOUL.md generation is handled by extract.synthesize."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
+            "  # Legacy mode:\n"
             "  uv run python -m extract.character material/processed/novel/CPK/scenes\n"
             "  uv run python -m extract.character material/processed/novel/CPK/scenes \\\n"
             "      --characters 酒寄彩葉 --model anthropic/claude-opus-4-6\n"
+            "\n"
+            "  # Project mode:\n"
+            "  uv run python -m extract.character --project projects/CPK --source cpk-novel\n"
         ),
     )
+    
+    # Project mode arguments
+    parser.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="Project directory (enables project mode)",
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="Source ID within project (required with --project)",
+    )
+    
+    # Legacy mode arguments
     parser.add_argument(
         "scenes_base_dir",
         type=Path,
-        help="Base directory containing ch{N}/ scene subdirectories",
+        nargs="?",
+        default=None,
+        help="Base directory containing ch{N}/ scene subdirectories (legacy mode)",
     )
     parser.add_argument(
         "--aliases-file",
         type=Path,
         default=None,
-        help="Path to character_aliases.json (default: <scenes_base_dir>/../character_aliases.json)",
+        help="Path to character_aliases.json (default: <scenes_base_dir>/../characters/character_aliases.json)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
         help="Output directory for character notes (default: <scenes_base_dir>/../characters/)",
-    )
-    parser.add_argument(
-        "--souls-dir",
-        type=Path,
-        default=None,
-        help="Soul docs directory (default: <scenes_base_dir>/../souls/)",
     )
     parser.add_argument(
         "--characters",
@@ -853,22 +614,80 @@ def main() -> None:
         default=32000,
         help="Target token count per scene batch (default: 32000)",
     )
-    parser.add_argument(
-        "--no-finalize",
-        action="store_true",
-        help="Skip the soul doc finalization pass",
-    )
     add_model_args(parser)
     args = parser.parse_args()
 
-    scenes_base_dir: Path = args.scenes_base_dir
-    if not scenes_base_dir.is_dir():
-        print(f"Error: {scenes_base_dir} is not a directory", file=sys.stderr)
-        sys.exit(1)
+    # Determine mode and resolve paths
+    project: Project | None = None
+    source_id: str | None = None
+    scenes_base_dir: Path | None = None
+    aliases_file: Path | None = None
+    output_dir: Path | None = None
+    characters_dir: Path | None = None
+    model_name = args.model
+    model_thinking = args.thinking
+    model_output_mode = args.output_mode
 
-    aliases_file: Path = (
-        args.aliases_file or (scenes_base_dir.parent / "character_aliases.json")
-    )
+    if args.project:
+        # Project mode
+        project = Project.load(args.project)
+        
+        if not args.source:
+            print("Error: --source is required when using --project", file=sys.stderr)
+            sys.exit(1)
+        source_id = args.source
+        
+        source_config = project.get_source(source_id)
+        if not source_config:
+            print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
+            sys.exit(1)
+        
+        # Get model config from project
+        model_config = project.model_config("character")
+        if model_config.name:
+            model_name = model_config.name
+        if model_config.thinking:
+            model_thinking = model_config.thinking
+        if model_config.output_mode:
+            model_output_mode = model_config.output_mode
+        
+        scenes_base_dir = project.source_dir(source_id) / "scenes"
+        characters_dir = project.source_dir(source_id) / "characters"
+        aliases_file = characters_dir / "character_aliases.json"
+        output_dir = characters_dir
+        
+    elif args.scenes_base_dir:
+        # Legacy mode
+        scenes_base_dir = args.scenes_base_dir
+        if not scenes_base_dir.is_dir():
+            print(f"Error: {scenes_base_dir} is not a directory", file=sys.stderr)
+            sys.exit(1)
+        
+        aliases_file = args.aliases_file or (scenes_base_dir.parent / "characters" / "character_aliases.json")
+        output_dir = args.output_dir or (scenes_base_dir.parent / "characters")
+        characters_dir = output_dir
+        
+    else:
+        # Try auto-detection
+        project = find_project(Path.cwd())
+        if project and project.sources:
+            source_id = project.sources[0].id
+            scenes_base_dir = project.source_dir(source_id) / "scenes"
+            characters_dir = project.source_dir(source_id) / "characters"
+            aliases_file = characters_dir / "character_aliases.json"
+            output_dir = characters_dir
+            model_config = project.model_config("character")
+            if model_config.name:
+                model_name = model_config.name
+            if model_config.thinking:
+                model_thinking = model_config.thinking
+            if model_config.output_mode:
+                model_output_mode = model_config.output_mode
+            print(f"Auto-detected project: {project.name}")
+            print(f"Using source: {source_id}")
+        else:
+            parser.error("Either --project/--source or scenes_base_dir is required")
+
     if not aliases_file.exists():
         print(
             f"Error: {aliases_file} not found. Run extract.resolve_aliases first.",
@@ -876,19 +695,22 @@ def main() -> None:
         )
         sys.exit(1)
 
-    output_dir: Path = args.output_dir or (scenes_base_dir.parent / "characters")
-    souls_dir: Path = args.souls_dir or (scenes_base_dir.parent / "souls")
-
     aliases = load_aliases(aliases_file)
 
     if args.characters:
         target_characters = args.characters
     else:
         target_characters = list(aliases.keys())
-    api_key = resolve_api_key(args)
+    
+    api_key = resolve_api_key(argparse.Namespace(
+        provider=args.provider,
+        model=model_name,
+        base_url=args.base_url,
+        api_key_env=args.api_key_env,
+    ))
 
     print(f"Target characters: {target_characters}")
-    print(f"Model: {args.model}  (provider: {args.provider})")
+    print(f"Model: {model_name}  (provider: {args.provider})")
     print(f"Output dir: {output_dir}")
 
     all_scenes = load_all_scenes(scenes_base_dir, aliases, target_characters)
@@ -900,41 +722,23 @@ def main() -> None:
 
     async def run() -> None:
         extraction_agent = build_agent(
-            model_name=args.model,
+            model_name=model_name,
             provider_name=args.provider,
             api_key=api_key,
             base_url=args.base_url,
             output_type=BatchExtractionResult,
             system_prompt=EXTRACTION_SYSTEM_PROMPT,
-            thinking=args.thinking,
-            output_mode=args.output_mode,
+            thinking=model_thinking,
+            output_mode=model_output_mode,
         )
 
         await process_all_batches(
             batches=batches,
             target_characters=target_characters,
-            souls_dir=souls_dir,
+            characters_dir=characters_dir,
             output_dir=output_dir,
             agent=extraction_agent,
         )
-
-        if not args.no_finalize:
-            finalization_agent = build_agent(
-                model_name=args.model,
-                provider_name=args.provider,
-                api_key=api_key,
-                base_url=args.base_url,
-                output_type=SoulDocOutput,
-                system_prompt=FINALIZATION_SYSTEM_PROMPT,
-                thinking=args.thinking,
-                output_mode=args.output_mode,
-            )
-            print("\nFinalizing soul docs ...", file=sys.stderr)
-            for canonical_name in target_characters:
-                print(f"  Finalizing 「{canonical_name}」 ...", file=sys.stderr)
-                await finalize_soul_doc(
-                    canonical_name, souls_dir, output_dir, finalization_agent
-                )
 
     asyncio.run(run())
     print("\nDone.")

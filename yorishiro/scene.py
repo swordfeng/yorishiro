@@ -2,21 +2,21 @@
 
 Usage:
     # Legacy mode:
-    uv run python -m extract.scene <chapter_file> [output_dir]
+    uv run python -m yorishiro.scene <chapter_file> [output_dir]
         [--model MODEL] [--base-url URL] [--api-key-env VAR] [--force]
         [--thinking {none,low,medium,high}]
     
     # Project mode:
-    uv run python -m extract.scene --project <project_dir> --source <source_id>
+    uv run python -m yorishiro.scene --project <project_dir> --source <source_id>
         [--chapter <index>] [--model MODEL] [--force]
 
 Example:
-    uv run python -m extract.scene material/processed/novel/CPK/chapters/ch003.txt \\
+    uv run python -m yorishiro.scene material/processed/novel/CPK/chapters/ch003.txt \\
                                     material/processed/novel/CPK/scenes/ch003
-    uv run python -m extract.scene --project projects/CPK --source cpk-novel --chapter 3
+    uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --chapter 3
 
 Input:
-    YAML frontmatter chapter file produced by extract.chapters_epub
+    YAML frontmatter chapter file produced by yorishiro.chapters_epub
 
 Output:
     scenes_manifest.json  -- chapter metadata + scene list with offsets
@@ -43,8 +43,8 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from extract.agent_utils import add_model_args, build_agent, resolve_api_key
-from extract.project import Project, find_project
+from yorishiro.agent_utils import add_model_args, build_agent, resolve_api_key
+from yorishiro.project import Project, find_project
 
 
 INITIAL_CHUNK_SIZE = 8000   # chars per LLM batch
@@ -474,13 +474,13 @@ def main() -> None:
         epilog=(
             "Examples:\n"
             "  # Legacy mode:\n"
-            "  uv run python -m extract.scene ch003.txt\n"
-            "  uv run python -m extract.scene ch003.txt scenes/ch003/ --force\n"
-            "  uv run python -m extract.scene ch003.txt --model openai/gpt-4o\n"
+            "  uv run python -m yorishiro.scene ch003.txt\n"
+            "  uv run python -m yorishiro.scene ch003.txt scenes/ch003/ --force\n"
+            "  uv run python -m yorishiro.scene ch003.txt --model openai/gpt-4o\n"
             "\n"
             "  # Project mode:\n"
-            "  uv run python -m extract.scene --project projects/CPK --source cpk-novel --chapter 3\n"
-            "  uv run python -m extract.scene --project projects/CPK --source cpk-novel --all\n"
+            "  uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --chapter 3\n"
+            "  uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --all\n"
         ),
     )
     

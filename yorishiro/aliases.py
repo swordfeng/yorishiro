@@ -1,7 +1,7 @@
 """Alias resolution pipeline: derive character_aliases.json from scene manifests.
 
 Usage:
-    uv run python -m extract.resolve_aliases <scenes_base_dir> [output_file]
+    uv run python -m yorishiro.aliases <scenes_base_dir> [output_file]
         [--model MODEL] [--provider PROVIDER] [--api-key-env VAR]
         [--base-url URL] [--thinking {none,low,medium,high}]
         [--output-mode {tool,native,prompted}]
@@ -9,7 +9,7 @@ Usage:
         [--souls-dir PATH] [--no-seed] [--force]
 
 Example:
-    uv run python -m extract.resolve_aliases \\
+    uv run python -m yorishiro.aliases \\
         material/processed/novel/CPK/scenes \\
         material/processed/novel/CPK/character_aliases.json \\
         --model anthropic/claude-opus-4-6 --thinking medium
@@ -53,8 +53,8 @@ from pydantic import BaseModel, Field
 from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from extract.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
-from extract.project import Project, find_project
+from yorishiro.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
+from yorishiro.project import Project, find_project
 
 
 # ---------------------------------------------------------------------------
@@ -831,12 +831,12 @@ def main() -> None:
         epilog=(
             "Examples:\n"
             "  # Legacy mode:\n"
-            "  uv run python -m extract.resolve_aliases material/processed/novel/CPK/scenes\n"
-            "  uv run python -m extract.resolve_aliases material/processed/novel/CPK/scenes \\\n"
+            "  uv run python -m yorishiro.aliases material/processed/novel/CPK/scenes\n"
+            "  uv run python -m yorishiro.aliases material/processed/novel/CPK/scenes \\\n"
             "      material/processed/novel/CPK/character_aliases.json --force\n"
             "\n"
             "  # Project mode:\n"
-            "  uv run python -m extract.resolve_aliases --project projects/CPK --source cpk-novel\n"
+            "  uv run python -m yorishiro.aliases --project projects/CPK --source cpk-novel\n"
         ),
     )
     

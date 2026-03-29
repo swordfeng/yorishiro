@@ -1,7 +1,7 @@
 """Per-scene character extraction pipeline: generate character notes and finalize soul docs.
 
 Usage:
-    uv run python -m extract.character <scenes_base_dir>
+    uv run python -m yorishiro.character <scenes_base_dir>
         [--aliases-file PATH] [--output-dir PATH] [--souls-dir PATH]
         [--characters NAME [NAME ...]]
         [--batch-tokens N]
@@ -11,13 +11,13 @@ Usage:
         [--no-finalize]
 
 Example:
-    uv run python -m extract.character material/processed/novel/CPK/scenes \\
+    uv run python -m yorishiro.character material/processed/novel/CPK/scenes \\
         --characters 酒寄彩葉 かぐや --model anthropic/claude-opus-4-6
 
 Input:
-    <scenes_base_dir>/ -- scene text files and manifests (produced by extract.scene)
+    <scenes_base_dir>/ -- scene text files and manifests (produced by yorishiro.scene)
     character_aliases.json -- canonical-name → alias occurrence mapping
-    souls/*.md -- seed soul docs (produced by extract.resolve_aliases)
+    souls/*.md -- seed soul docs (produced by yorishiro.aliases)
 
 Output:
     <output_dir>/{canonical_name}/ch{N:03d}.json -- per-chapter CharacterSceneNote arrays
@@ -47,8 +47,8 @@ from pydantic import BaseModel, Field
 from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from extract.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
-from extract.project import Project, find_project
+from yorishiro.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
+from yorishiro.project import Project, find_project
 
 
 # ---------------------------------------------------------------------------
@@ -553,18 +553,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Extract per-scene character notes using batched LLM processing.\n"
-            "Final SOUL.md generation is handled by extract.synthesize."
+            "Final SOUL.md generation is handled by yorishiro.synthesize."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  # Legacy mode:\n"
-            "  uv run python -m extract.character material/processed/novel/CPK/scenes\n"
-            "  uv run python -m extract.character material/processed/novel/CPK/scenes \\\n"
+            "  uv run python -m yorishiro.character material/processed/novel/CPK/scenes\n"
+            "  uv run python -m yorishiro.character material/processed/novel/CPK/scenes \\\n"
             "      --characters 酒寄彩葉 --model anthropic/claude-opus-4-6\n"
             "\n"
             "  # Project mode:\n"
-            "  uv run python -m extract.character --project projects/CPK --source cpk-novel\n"
+            "  uv run python -m yorishiro.character --project projects/CPK --source cpk-novel\n"
         ),
     )
     
@@ -690,7 +690,7 @@ def main() -> None:
 
     if not aliases_file.exists():
         print(
-            f"Error: {aliases_file} not found. Run extract.resolve_aliases first.",
+            f"Error: {aliases_file} not found. Run yorishiro.aliases first.",
             file=sys.stderr,
         )
         sys.exit(1)

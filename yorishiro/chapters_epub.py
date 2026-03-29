@@ -2,10 +2,10 @@
 
 Usage:
     # Legacy mode (backward compatible):
-    uv run python -m extract.chapters_epub material/raw/CPK.epub [output_dir]
+    uv run python -m yorishiro.chapters_epub material/raw/CPK.epub [output_dir]
     
     # Project mode:
-    uv run python -m extract.chapters_epub --project projects/CPK --source cpk-novel
+    uv run python -m yorishiro.chapters_epub --project projects/CPK --source cpk-novel
 
 Output:
     {output_dir}/
@@ -34,7 +34,7 @@ from typing import Iterator
 
 import yaml
 
-from extract.project import Project, find_project
+from yorishiro.project import Project, find_project
 
 
 @dataclass
@@ -225,11 +225,11 @@ def main():
         epilog=(
             "Examples:\n"
             "  # Legacy mode:\n"
-            "  uv run python -m extract.chapters_epub material/raw/CPK.epub\n"
-            "  uv run python -m extract.chapters_epub material/raw/CPK.epub output/chapters\n"
+            "  uv run python -m yorishiro.chapters_epub material/raw/CPK.epub\n"
+            "  uv run python -m yorishiro.chapters_epub material/raw/CPK.epub output/chapters\n"
             "\n"
             "  # Project mode:\n"
-            "  uv run python -m extract.chapters_epub --project projects/CPK --source cpk-novel\n"
+            "  uv run python -m yorishiro.chapters_epub --project projects/CPK --source cpk-novel\n"
         ),
     )
     

@@ -1,8 +1,8 @@
 """Synthesize final SOUL.md documents from accumulated character data.
 
 Usage:
-    uv run python -m extract.synthesize --project projects/CPK
-    uv run python -m extract.synthesize --project projects/CPK --character 酒寄彩葉
+    uv run python -m yorishiro.synthesize --project projects/CPK
+    uv run python -m yorishiro.synthesize --project projects/CPK --character 酒寄彩葉
 
 Input:
     For each character, from all sources:
@@ -24,8 +24,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from extract.agent_utils import add_model_args, build_agent, resolve_api_key
-from extract.project import Project, find_project
+from yorishiro.agent_utils import add_model_args, build_agent, resolve_api_key
+from yorishiro.project import Project, find_project
 
 
 FINALIZATION_SYSTEM_PROMPT = """\
@@ -304,8 +304,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  uv run python -m extract.synthesize --project projects/CPK\n"
-            "  uv run python -m extract.synthesize --project projects/CPK --character 酒寄彩葉\n"
+            "  uv run python -m yorishiro.synthesize --project projects/CPK\n"
+            "  uv run python -m yorishiro.synthesize --project projects/CPK --character 酒寄彩葉\n"
         ),
     )
     

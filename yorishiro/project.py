@@ -1,7 +1,7 @@
 """Project configuration and path management for Yorishiro.
 
 Usage:
-    from extract.project import Project
+    from yorishiro.project import Project
     
     project = Project.load(Path("projects/CPK"))
     source_dir = project.source_dir("cpk-novel")

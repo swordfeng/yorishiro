@@ -54,6 +54,7 @@ from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from extract.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
+from extract.project import Project, find_project
 
 
 # ---------------------------------------------------------------------------
@@ -572,26 +573,26 @@ async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
     raise last_exc  # type: ignore[misc]
 
 
-async def seed_from_soul_docs(
-    souls_dir: Path,
+async def seed_from_insight_drafts(
+    characters_dir: Path,
     agent,
 ) -> GlobalState:
-    """Parse existing soul docs in souls_dir and return a seeded GlobalState."""
-    soul_files = sorted(souls_dir.glob("*.md"))
-    if not soul_files:
+    """Parse existing insight drafts in characters_dir/*/insights.md and return a seeded GlobalState."""
+    insight_files = sorted(characters_dir.glob("*/insights.md"))
+    if not insight_files:
         return GlobalState()
 
     print(
-        f"Seeding from {len(soul_files)} soul docs in {souls_dir} ...",
+        f"Seeding from {len(insight_files)} insight drafts in {characters_dir} ...",
         file=sys.stderr,
     )
 
     doc_sections = [
-        f"=== {f.name} ===\n{f.read_text(encoding='utf-8')}" for f in soul_files
+        f"=== {f.parent.name} ===\n{f.read_text(encoding='utf-8')}" for f in insight_files
     ]
     combined = "\n\n".join(doc_sections)
     prompt = (
-        f"Parse the following {len(soul_files)} character soul documents "
+        f"Parse the following {len(insight_files)} character insight drafts "
         f"into CharacterEntry records.\n\n{combined}"
     )
 
@@ -602,7 +603,7 @@ async def seed_from_soul_docs(
         state.characters[entry.canonical_name] = entry
 
     print(
-        f"  Seeded {len(state.characters)} characters from soul docs.",
+        f"  Seeded {len(state.characters)} characters from insight drafts.",
         file=sys.stderr,
     )
     return state
@@ -753,17 +754,20 @@ def write_character_aliases(
     )
 
 
-def write_soul_docs(state: GlobalState, souls_dir: Path) -> None:
-    """Write initial seed soul docs for each character in souls_dir."""
-    souls_dir.mkdir(parents=True, exist_ok=True)
+def write_insight_drafts(state: GlobalState, characters_dir: Path) -> None:
+    """Write initial insight drafts for each character in characters_dir/{name}/insights.md."""
+    characters_dir.mkdir(parents=True, exist_ok=True)
 
     for canonical_name, entry in state.characters.items():
         safe_name = (
             canonical_name.replace("/", "_").replace("\\", "_").replace("\0", "")
         )
-        doc_path = souls_dir / f"{safe_name}.md"
+        char_dir = characters_dir / safe_name
+        char_dir.mkdir(parents=True, exist_ok=True)
+        doc_path = char_dir / "insights.md"
 
-        lines: list[str] = [f"# {canonical_name}\n"]
+        lines: list[str] = [f"# {canonical_name} — Insight Draft\n"]
+        lines.append("> Auto-generated from alias resolution. To be enriched by character extraction.\n")
 
         other_aliases = [a for a in entry.aliases if a != canonical_name]
         if other_aliases:
@@ -807,7 +811,7 @@ def write_soul_docs(state: GlobalState, souls_dir: Path) -> None:
         doc_path.write_text("\n".join(lines), encoding="utf-8")
 
     print(
-        f"Wrote {len(state.characters)} soul doc seeds to {souls_dir}",
+        f"Wrote {len(state.characters)} insight drafts to {characters_dir}",
         file=sys.stderr,
     )
 
@@ -826,23 +830,46 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
+            "  # Legacy mode:\n"
             "  uv run python -m extract.resolve_aliases material/processed/novel/CPK/scenes\n"
             "  uv run python -m extract.resolve_aliases material/processed/novel/CPK/scenes \\\n"
             "      material/processed/novel/CPK/character_aliases.json --force\n"
+            "\n"
+            "  # Project mode:\n"
+            "  uv run python -m extract.resolve_aliases --project projects/CPK --source cpk-novel\n"
         ),
     )
+    
+    # Project mode arguments
+    parser.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="Project directory (enables project mode)",
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="Source ID within project (required with --project)",
+    )
+    
+    # Legacy mode arguments
     parser.add_argument(
         "scenes_base_dir",
         type=Path,
-        help="Base directory containing ch{N}/ scene subdirectories",
+        nargs="?",
+        default=None,
+        help="Base directory containing ch{N}/ scene subdirectories (legacy mode)",
     )
     parser.add_argument(
         "output_file",
         type=Path,
         nargs="?",
         default=None,
-        help="Output JSON file (default: <scenes_base_dir>/../character_aliases.json)",
+        help="Output JSON file (legacy mode)",
     )
+    
     parser.add_argument("--force", action="store_true", help="Overwrite existing output file")
     parser.add_argument(
         "--batch-tokens",
@@ -851,37 +878,90 @@ def main() -> None:
         help="Target token count per scene batch (default: 32000)",
     )
     parser.add_argument(
-        "--souls-dir",
-        type=Path,
-        default=None,
-        help=(
-            "Directory for soul doc seeds "
-            "(default: <output_file_dir>/souls/)"
-        ),
-    )
-    parser.add_argument(
         "--no-seed",
         action="store_true",
-        help="Skip seeding from existing soul docs even if souls-dir exists",
+        help="Skip seeding from existing insight drafts",
     )
     add_model_args(parser)
     args = parser.parse_args()
 
-    scenes_base_dir: Path = args.scenes_base_dir
-    if not scenes_base_dir.is_dir():
-        print(f"Error: {scenes_base_dir} is not a directory", file=sys.stderr)
-        sys.exit(1)
+    # Determine mode and resolve paths
+    project: Project | None = None
+    source_id: str | None = None
+    scenes_base_dir: Path | None = None
+    output_path: Path | None = None
+    characters_dir: Path | None = None
+    model_name = args.model
+    model_thinking = args.thinking
+    model_output_mode = args.output_mode
 
-    output_path: Path = (
-        args.output_file or (scenes_base_dir.parent / "character_aliases.json")
-    )
-    souls_dir: Path = args.souls_dir or (output_path.parent / "souls")
+    if args.project:
+        # Project mode
+        project = Project.load(args.project)
+        
+        if not args.source:
+            print("Error: --source is required when using --project", file=sys.stderr)
+            sys.exit(1)
+        source_id = args.source
+        
+        source_config = project.get_source(source_id)
+        if not source_config:
+            print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
+            sys.exit(1)
+        
+        # Get model config from project
+        model_config = project.model_config("resolve_aliases")
+        if model_config.name:
+            model_name = model_config.name
+        if model_config.thinking:
+            model_thinking = model_config.thinking
+        if model_config.output_mode:
+            model_output_mode = model_config.output_mode
+        
+        scenes_base_dir = project.source_dir(source_id) / "scenes"
+        output_path = project.source_dir(source_id) / "characters" / "character_aliases.json"
+        characters_dir = project.source_dir(source_id) / "characters"
+        
+    elif args.scenes_base_dir:
+        # Legacy mode
+        scenes_base_dir = args.scenes_base_dir
+        if not scenes_base_dir.is_dir():
+            print(f"Error: {scenes_base_dir} is not a directory", file=sys.stderr)
+            sys.exit(1)
+        
+        output_path = args.output_file or (scenes_base_dir.parent / "character_aliases.json")
+        characters_dir = output_path.parent / "characters"
+        
+    else:
+        # Try auto-detection
+        project = find_project(Path.cwd())
+        if project and project.sources:
+            source_id = project.sources[0].id
+            scenes_base_dir = project.source_dir(source_id) / "scenes"
+            output_path = project.source_dir(source_id) / "characters" / "character_aliases.json"
+            characters_dir = project.source_dir(source_id) / "characters"
+            model_config = project.model_config("resolve_aliases")
+            if model_config.name:
+                model_name = model_config.name
+            if model_config.thinking:
+                model_thinking = model_config.thinking
+            if model_config.output_mode:
+                model_output_mode = model_config.output_mode
+            print(f"Auto-detected project: {project.name}")
+            print(f"Using source: {source_id}")
+        else:
+            parser.error("Either --project/--source or scenes_base_dir is required")
 
     if output_path.exists() and not args.force:
         print(f"Skipping: {output_path} already exists (use --force to overwrite)")
         sys.exit(0)
 
-    api_key = resolve_api_key(args)
+    api_key = resolve_api_key(argparse.Namespace(
+        provider=args.provider,
+        model=model_name,
+        base_url=args.base_url,
+        api_key_env=args.api_key_env,
+    ))
 
     print(f"Loading scenes from {scenes_base_dir} ...")
     all_scenes = load_all_scenes(scenes_base_dir)
@@ -900,41 +980,41 @@ def main() -> None:
 
     async def run() -> GlobalState:
         batch_agent = build_agent(
-            model_name=args.model,
+            model_name=model_name,
             provider_name=args.provider,
             api_key=api_key,
             base_url=args.base_url,
             output_type=BatchUpdateResult,
             system_prompt=BATCH_SYSTEM_PROMPT,
-            thinking=args.thinking,
-            output_mode=args.output_mode,
+            thinking=model_thinking,
+            output_mode=model_output_mode,
         )
         retry_agent = build_agent(
-            model_name=args.model,
+            model_name=model_name,
             provider_name=args.provider,
             api_key=api_key,
             base_url=args.base_url,
             output_type=MissedAliasResolution,
             system_prompt=RETRY_SYSTEM_PROMPT,
-            thinking=args.thinking,
-            output_mode=args.output_mode,
+            thinking=model_thinking,
+            output_mode=model_output_mode,
         )
         initial_state = GlobalState()
-        if not args.no_seed and souls_dir.exists():
+        if not args.no_seed and characters_dir.exists():
             seed_agent = build_agent(
-                model_name=args.model,
+                model_name=model_name,
                 provider_name=args.provider,
                 api_key=api_key,
                 base_url=args.base_url,
                 output_type=SeedFromSoulDocsResult,
                 system_prompt=SEED_SYSTEM_PROMPT,
-                thinking=args.thinking,
-                output_mode=args.output_mode,
+                thinking=model_thinking,
+                output_mode=model_output_mode,
             )
-            initial_state = await seed_from_soul_docs(souls_dir, seed_agent)
+            initial_state = await seed_from_insight_drafts(characters_dir, seed_agent)
         return await process_all_batches(batches, initial_state, batch_agent, retry_agent)
 
-    print(f"Processing with {args.model} ...")
+    print(f"Processing with {model_name} ...")
     state = asyncio.run(run())
 
     print(f"\nFinal registry: {len(state.characters)} characters")
@@ -948,8 +1028,8 @@ def main() -> None:
     print(f"\nWriting {output_path} ...")
     write_character_aliases(state, output_path)
 
-    print(f"Writing soul doc seeds to {souls_dir} ...")
-    write_soul_docs(state, souls_dir)
+    print(f"Writing insight drafts to {characters_dir} ...")
+    write_insight_drafts(state, characters_dir)
 
     print("Done.")
 

@@ -1,10 +1,14 @@
 """Extract chapters from EPUB to YAML frontmatter files.
 
 Usage:
-    uv run python -m extract.chapters_epub material/raw/CPK.epub [material/processed/novel/CPK/chapters]
+    # Legacy mode (backward compatible):
+    uv run python -m extract.chapters_epub material/raw/CPK.epub [output_dir]
+    
+    # Project mode:
+    uv run python -m extract.chapters_epub --project projects/CPK --source cpk-novel
 
 Output:
-    material/processed/novel/CPK/chapters/
+    {output_dir}/
     ├── ch000.txt
     ├── ch001.txt
     └── ...
@@ -22,12 +26,15 @@ File format (YAML frontmatter):
 
 from __future__ import annotations
 
+import argparse
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
 import yaml
+
+from extract.project import Project, find_project
 
 
 @dataclass
@@ -212,19 +219,50 @@ def extract_title_from_html(html: str) -> str | None:
 
 def main():
     """CLI entry point."""
-    import argparse
-
     parser = argparse.ArgumentParser(
-        description="Extract chapters from EPUB to YAML frontmatter files."
+        description="Extract chapters from EPUB to YAML frontmatter files.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  # Legacy mode:\n"
+            "  uv run python -m extract.chapters_epub material/raw/CPK.epub\n"
+            "  uv run python -m extract.chapters_epub material/raw/CPK.epub output/chapters\n"
+            "\n"
+            "  # Project mode:\n"
+            "  uv run python -m extract.chapters_epub --project projects/CPK --source cpk-novel\n"
+        ),
     )
-    parser.add_argument("epub_path", type=Path, help="Path to the EPUB file")
+    
+    # Project mode arguments
+    parser.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="Project directory (enables project mode)",
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="Source ID within project (required if --project is used)",
+    )
+    
+    # Legacy mode arguments (positional)
+    parser.add_argument(
+        "epub_path",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="Path to the EPUB file (legacy mode)",
+    )
     parser.add_argument(
         "output_dir",
         type=Path,
         nargs="?",
         default=None,
-        help="Output directory (default: epub_path.parent/chapters)",
+        help="Output directory (legacy mode, default: epub_path.parent/chapters)",
     )
+    
     parser.add_argument(
         "--keep-furigana",
         action="store_true",
@@ -233,9 +271,41 @@ def main():
     )
     args = parser.parse_args()
 
-    epub_path: Path = args.epub_path
-    output_dir: Path = args.output_dir or epub_path.parent / "chapters"
-    remove_furigana: bool = not args.keep_furigana
+    # Determine mode
+    if args.project:
+        # Project mode
+        project = Project.load(args.project)
+        
+        if not args.source:
+            print("Error: --source is required when using --project", file=sys.stderr)
+            sys.exit(1)
+        
+        source = project.get_source(args.source)
+        if not source:
+            print(f"Error: Source '{args.source}' not found in project", file=sys.stderr)
+            sys.exit(1)
+        
+        epub_path = project.get_source_path(args.source)
+        output_dir = project.source_dir(args.source) / "chapters"
+        
+    elif args.epub_path:
+        # Legacy mode
+        epub_path = args.epub_path
+        output_dir = args.output_dir or epub_path.parent / "chapters"
+        
+    else:
+        # Try to auto-detect project
+        project = find_project(Path.cwd())
+        if project and project.sources:
+            source = project.sources[0]
+            epub_path = project.get_source_path(source.id)
+            output_dir = project.source_dir(source.id) / "chapters"
+            print(f"Auto-detected project: {project.name}")
+            print(f"Using source: {source.id}")
+        else:
+            parser.error("Either --project/--source or epub_path is required")
+    
+    remove_furigana = not args.keep_furigana
 
     try:
         saved_files = extract_chapters(epub_path, output_dir, remove_furigana=remove_furigana)

@@ -1,13 +1,19 @@
 """Automated LLM-based scene segmentation for novel chapters.
 
 Usage:
+    # Legacy mode:
     uv run python -m extract.scene <chapter_file> [output_dir]
         [--model MODEL] [--base-url URL] [--api-key-env VAR] [--force]
         [--thinking {none,low,medium,high}]
+    
+    # Project mode:
+    uv run python -m extract.scene --project <project_dir> --source <source_id>
+        [--chapter <index>] [--model MODEL] [--force]
 
 Example:
     uv run python -m extract.scene material/processed/novel/CPK/chapters/ch003.txt \\
-                                   material/processed/novel/CPK/scenes/ch003
+                                    material/processed/novel/CPK/scenes/ch003
+    uv run python -m extract.scene --project projects/CPK --source cpk-novel --chapter 3
 
 Input:
     YAML frontmatter chapter file produced by extract.chapters_epub
@@ -38,6 +44,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from extract.agent_utils import add_model_args, build_agent, resolve_api_key
+from extract.project import Project, find_project
 
 
 INITIAL_CHUNK_SIZE = 8000   # chars per LLM batch
@@ -466,20 +473,162 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
+            "  # Legacy mode:\n"
             "  uv run python -m extract.scene ch003.txt\n"
             "  uv run python -m extract.scene ch003.txt scenes/ch003/ --force\n"
             "  uv run python -m extract.scene ch003.txt --model openai/gpt-4o\n"
+            "\n"
+            "  # Project mode:\n"
+            "  uv run python -m extract.scene --project projects/CPK --source cpk-novel --chapter 3\n"
+            "  uv run python -m extract.scene --project projects/CPK --source cpk-novel --all\n"
         ),
     )
-    parser.add_argument("chapter_file", type=Path, help="YAML frontmatter chapter .txt file")
+    
+    # Project mode arguments
+    parser.add_argument("--project", type=Path, default=None,
+                        help="Project directory (enables project mode)")
+    parser.add_argument("--source", type=str, default=None,
+                        help="Source ID within project (required with --project)")
+    parser.add_argument("--chapter", type=int, default=None,
+                        help="Chapter index to process (0-based, use with --project)")
+    parser.add_argument("--all", action="store_true",
+                        help="Process all chapters (use with --project)")
+    
+    # Legacy mode arguments
+    parser.add_argument("chapter_file", type=Path, nargs="?", default=None,
+                        help="YAML frontmatter chapter .txt file (legacy mode)")
     parser.add_argument("output_dir", type=Path, nargs="?", default=None,
-                        help="Output directory (default: <chapter_file>/../scenes/ch{index:03d}/)")
+                        help="Output directory (legacy mode)")
+    
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing output")
     add_model_args(parser)
     args = parser.parse_args()
 
-    chapter_file: Path = args.chapter_file
+    # Determine mode and resolve paths
+    project: Project | None = None
+    source_id: str | None = None
+    chapter_file: Path | None = None
+    output_dir: Path | None = None
+    model_name = args.model
+    model_thinking = args.thinking
+    model_output_mode = args.output_mode
+
+    if args.project:
+        # Project mode
+        project = Project.load(args.project)
+        
+        if not args.source:
+            print("Error: --source is required when using --project", file=sys.stderr)
+            sys.exit(1)
+        source_id = args.source
+        
+        source_config = project.get_source(source_id)
+        if not source_config:
+            print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
+            sys.exit(1)
+        
+        # Get model config from project
+        model_config = project.model_config("scene")
+        if model_config.name:
+            model_name = model_config.name
+        if model_config.thinking:
+            model_thinking = model_config.thinking
+        if model_config.output_mode:
+            model_output_mode = model_config.output_mode
+        
+        chapters_dir = project.source_dir(source_id) / "chapters"
+        
+        if args.all:
+            # Process all chapters
+            chapter_indices = project.list_chapters(source_id)
+            if not chapter_indices:
+                print(f"Error: No chapters found in {chapters_dir}", file=sys.stderr)
+                sys.exit(1)
+            
+            for idx in chapter_indices:
+                process_chapter(
+                    chapters_dir / f"ch{idx:03d}.txt",
+                    project.source_dir(source_id) / "scenes" / f"ch{idx:03d}",
+                    args.force,
+                    args.provider,
+                    model_name,
+                    model_thinking,
+                    model_output_mode,
+                    args.base_url,
+                )
+            return
+        
+        if args.chapter is not None:
+            # Process specific chapter
+            chapter_file = chapters_dir / f"ch{args.chapter:03d}.txt"
+            output_dir = project.source_dir(source_id) / "scenes" / f"ch{args.chapter:03d}"
+        else:
+            # Find first unprocessed chapter
+            chapter_indices = project.list_chapters(source_id)
+            for idx in chapter_indices:
+                manifest_path = project.source_dir(source_id) / "scenes" / f"ch{idx:03d}" / "scenes_manifest.json"
+                if not manifest_path.exists():
+                    chapter_file = chapters_dir / f"ch{idx:03d}.txt"
+                    output_dir = project.source_dir(source_id) / "scenes" / f"ch{idx:03d}"
+                    break
+            if not chapter_file:
+                print("All chapters already processed", file=sys.stderr)
+                sys.exit(0)
+    
+    elif args.chapter_file:
+        # Legacy mode
+        chapter_file = args.chapter_file
+        if not chapter_file.exists():
+            print(f"Error: {chapter_file} not found", file=sys.stderr)
+            sys.exit(1)
+        
+        chapter_meta, _ = parse_chapter_file(chapter_file)
+        chapter_index = chapter_meta.get("index", 0)
+        output_dir = args.output_dir or (
+            chapter_file.parent.parent / "scenes" / f"ch{chapter_index:03d}"
+        )
+    
+    else:
+        # Try auto-detection
+        project = find_project(Path.cwd())
+        if project and project.sources:
+            source_id = project.sources[0].id
+            chapter_indices = project.list_chapters(source_id)
+            if chapter_indices:
+                chapter_file = project.source_dir(source_id) / "chapters" / f"ch{chapter_indices[0]:03d}.txt"
+                output_dir = project.source_dir(source_id) / "scenes" / f"ch{chapter_indices[0]:03d}"
+                print(f"Auto-detected project: {project.name}")
+                print(f"Processing chapter {chapter_indices[0]}")
+            else:
+                print("Error: No chapters found", file=sys.stderr)
+                sys.exit(1)
+        else:
+            parser.error("Either --project/--source or chapter_file is required")
+
+    process_chapter(
+        chapter_file,
+        output_dir,
+        args.force,
+        args.provider,
+        model_name,
+        model_thinking,
+        model_output_mode,
+        args.base_url,
+    )
+
+
+def process_chapter(
+    chapter_file: Path,
+    output_dir: Path,
+    force: bool,
+    provider: str,
+    model: str,
+    thinking: str,
+    output_mode: str,
+    base_url: str,
+) -> None:
+    """Process a single chapter file."""
     if not chapter_file.exists():
         print(f"Error: {chapter_file} not found", file=sys.stderr)
         sys.exit(1)
@@ -488,21 +637,22 @@ def main() -> None:
     chapter_index = chapter_meta.get("index", 0)
     total_length = len(chapter_text)
 
-    output_dir: Path = args.output_dir or (
-        chapter_file.parent.parent / "scenes" / f"ch{chapter_index:03d}"
-    )
-
     manifest_path = output_dir / "scenes_manifest.json"
-    if manifest_path.exists() and not args.force:
+    if manifest_path.exists() and not force:
         print(f"Skipping: {manifest_path} already exists (use --force to overwrite)")
-        sys.exit(0)
+        return
 
-    api_key = resolve_api_key(args)
+    api_key = resolve_api_key(argparse.Namespace(
+        provider=provider,
+        model=model,
+        base_url=base_url,
+        api_key_env="YORISHIRO_API_KEY",
+    ))
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(args.model, args.provider, api_key, args.base_url, SegmentationResult, SYSTEM_PROMPT, args.thinking, args.output_mode)
+    agent = build_agent(model, provider, api_key, base_url, SegmentationResult, SYSTEM_PROMPT, thinking, output_mode)
 
-    print(f"Segmenting {chapter_file.name} ({total_length} chars) with {args.model} ...")
+    print(f"Segmenting {chapter_file.name} ({total_length} chars) with {model} ...")
     try:
         scenes = asyncio.run(segment_chapter(chapter_text, agent))
     except ValueError as e:

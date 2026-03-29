@@ -5,6 +5,9 @@
 # Material metadata (contains paths and may be local)
 /material.yaml
 
+# Projects folder
+/projects/
+
 # Build outputs
 /build/
 /dist/

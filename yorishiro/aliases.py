@@ -572,7 +572,7 @@ async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
     for attempt in range(1, max_attempts + 1):
         try:
             return await agent.run(prompt)
-        except (ValidationError, UnexpectedModelBehavior) as exc:
+        except (ValidationError, UnexpectedModelBehavior, json.JSONDecodeError) as exc:
             last_exc = exc
             print(
                 f"  [Output validation error attempt {attempt}/{max_attempts}] {exc} — retrying ...",

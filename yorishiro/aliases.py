@@ -275,8 +275,9 @@ specific scene. The same string (e.g. "the girl", "彼女") may refer to differe
 different scenes — always resolve from context, never assume globally.
 
 2. **Merge with high confidence**: If two registry entries unmistakably refer to the same \
-person/persona, merge them. Put the synthesized merged entry in `updated_characters` under \
-`keep`'s name; add a `MergeInstruction` declaring which entry to absorb.
+person/persona *with consistent cognition and behavior*, merge them. Put the synthesized merged \
+entry in `updated_characters` under `keep`'s name; add a `MergeInstruction` declaring which \
+entry to absorb.
 
 3. **Flag possible merges (low confidence)**: If two names might be the same person but you're \
 not certain, add the other canonical name to `possible_merge_candidates` with a note — do NOT \
@@ -315,6 +316,13 @@ Do NOT translate, romanize, or convert names to another language or writing syst
 `current_state`, `refuted_beliefs`, `extra_notes`, `merge_notes`, `knowledge_summary`, \
 `batch_notes`) must be written in the same language as the source material (Japanese, Chinese, \
 etc.). Do NOT translate content into English.
+- **Merge criterion is cognitive/behavioral consistency, not shared physical identity**: \
+Even if two identities belong to the same physical person, keep them as **separate entries** \
+if they display fundamentally different cognition or behavioral patterns (e.g. past/future \
+timeline selves, reincarnations, split personalities/alters, possession states). Record the \
+relationship in `extra_notes` on both entries and add the counterpart to \
+`possible_merge_candidates` with a note. Only merge when both entries show consistent memory, \
+personality, and behavior — i.e. the same character operating as themselves.
 """
 
 RETRY_SYSTEM_PROMPT = """\

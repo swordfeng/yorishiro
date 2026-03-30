@@ -1,7 +1,12 @@
 {
-  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
   "features": {
     "ghcr.io/stu-bell/devcontainer-features/open-code:0": {},
-    "ghcr.io/stu-bell/devcontainer-features/claude-code:0": {}
-  }
+    "ghcr.io/stu-bell/devcontainer-features/claude-code:0": {},
+    "ghcr.io/devcontainers/features/git-lfs:1": {
+      "autoPull": true,
+      "version": "latest"
+    }
+  },
+  "postCreateCommand": ".devcontainer/create-script.sh"
 }

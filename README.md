@@ -1,3 +1,5 @@
+**注：施工现场中👷 | Note: Work In Progress**
+
 # Yorishiro（依り代）
 
 ### Fictional Character Soul Document Generator & Chat System

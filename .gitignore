@@ -22,6 +22,7 @@ venv/
 .venv/
 *.egg-info/
 .eggs/
+.ruff_cache/
 
 # Environment
 .env
@@ -32,6 +33,9 @@ venv/
 .idea/
 *.swp
 *.swo
+
+.opencode/
+.claude/
 
 # OS
 .DS_Store

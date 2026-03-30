@@ -1,0 +1,41 @@
+[
+  {
+    "character": "使はるゝ人々",
+    "chapter_index": 0,
+    "scene_index": 8,
+    "source": "novel",
+    "active_persona": "姫に近侍する者たちの集団",
+    "dialogue_samples": [
+      "「赫映姫例も月を哀れがり給ひけれども、この比となりては、たゞ事にも侍らざめり。いみじく思し歎く事あるべし。よく／＼見奉らせ給へ」"
+    ],
+    "language_traits": "内々の異変を慎重に上申する。主人への観察が細やか。",
+    "emotional_state": "不安、のち別離の悲嘆",
+    "inferred_motivation": "姫の異変を見過ごさず、翁に知らせて何とかしたい",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "身近に仕える相手への深い情",
+        "shift": "異変の観察者から、別れを嘆く者へ"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "主人へ上申する立場",
+        "shift": "姫の月見の異変を伝える"
+      }
+    ],
+    "actions_taken": "赫映姫の月を見る様子と涙を見て、翁に異変を告げた。帰月の告白後は飲食もできぬほど悲しんだ。",
+    "actions_avoided": "ただの気まぐれとして見過ごすことをしなかった。",
+    "decision_logic": "近侍者として日常の変化を最も早く察知し、家の長へ知らせるのが務めと判断した。",
+    "arc_marker": "脇役集団ながら、赫映姫が周囲からどれほど愛されていたかを示す。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "近侍たちは赫映姫の異変に早く気づいた",
+        "告白後、別れを深く悲しんだ"
+      ],
+      "facts_hidden": [
+        "迎えの具体的な阻止不能性"
+      ]
+    }
+  }
+]

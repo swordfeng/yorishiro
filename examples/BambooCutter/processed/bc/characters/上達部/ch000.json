@@ -1,0 +1,40 @@
+[
+  {
+    "character": "上達部",
+    "chapter_index": 0,
+    "scene_index": 10,
+    "source": "novel",
+    "active_persona": "朝議に参与する上級貴族集団",
+    "dialogue_samples": [
+      "「駿河の國にある山なむ、この都も近く、天も近く侍る」"
+    ],
+    "language_traits": "奏上らしい簡潔で公的な言い方。",
+    "emotional_state": "厳粛・服従的",
+    "inferred_motivation": "帝の問いに実務的な答えを返す",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "奏上する臣下",
+        "shift": "天に近い山として駿河の山を示す"
+      },
+      {
+        "target": "大臣",
+        "dynamic": "同席する朝臣",
+        "shift": "共に議に参与する"
+      }
+    ],
+    "actions_taken": "天に近い山として駿河の国の山を奏上した。",
+    "actions_avoided": "曖昧な返答をすることをしなかった。",
+    "decision_logic": "帝の意図に沿う実際的な地理回答を出す必要があったため。",
+    "arc_marker": "『富士』命名譚へ接続する一言を担う。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "駿河の山が天に近いと奏上された"
+      ],
+      "facts_hidden": [
+        "帝がそこへ薬を焼かせる決意の私的意味"
+      ]
+    }
+  }
+]

@@ -1,0 +1,48 @@
+[
+  {
+    "character": "少將高野大國",
+    "chapter_index": 0,
+    "scene_index": 9,
+    "source": "novel",
+    "active_persona": "警護の指揮官",
+    "dialogue_samples": [],
+    "language_traits": "直接の台詞はない。配置と人数で職責が示される。",
+    "emotional_state": "任務遂行の緊張",
+    "inferred_motivation": "帝命により赫映姫の連れ去りを防ぐ",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "勅使として命を受ける",
+        "shift": "防衛任務を与えられる"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "警護を提供する側",
+        "shift": "翁の家を守る"
+      },
+      {
+        "target": "六衞の司",
+        "dynamic": "指揮対象の兵",
+        "shift": "二千人を率いて配置する"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "守るべき対象",
+        "shift": "守るはずが守れない相手となる"
+      }
+    ],
+    "actions_taken": "勅使として派遣され、六衞の司とともに竹取の家を厳重に守らせた。",
+    "actions_avoided": "防備を緩めることをしなかった。",
+    "decision_logic": "物理的に隙なく囲めば迎えを阻止できると考えられたため、最大級の警固を敷いた。",
+    "arc_marker": "人間側の公権力の頂点的防衛が、なお無力であることを示す。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "少將高野大國が警護指揮の勅使として派遣された"
+      ],
+      "facts_hidden": [
+        "天人の出現で自分たちが無力化されること"
+      ]
+    }
+  }
+]

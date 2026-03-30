@@ -1,0 +1,92 @@
+[
+  {
+    "character": "右大臣阿倍御主人",
+    "chapter_index": 0,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "高位の求婚者",
+    "dialogue_samples": [
+      "「よき事なり」"
+    ],
+    "language_traits": "この場では発言少なく、身分の高さより執着が目立つ。",
+    "emotional_state": "執心・期待",
+    "inferred_motivation": "赫映姫を娶るために志を示したい",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "求婚者として試される相手",
+        "shift": "火鼠の裘を求められる"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "取次ぎ役に依存する",
+        "shift": "翁から条件を受け入れる"
+      }
+    ],
+    "actions_taken": "通い続け、条件を受諾した。",
+    "actions_avoided": "断念して退くことをしなかった。",
+    "decision_logic": "希少物を手に入れれば婚姻に近づけると判断した。",
+    "arc_marker": "求婚が具体的探索に切り替わる。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫から火鼠の裘を求められた"
+      ],
+      "facts_hidden": [
+        "裘は偽物で焼けること"
+      ]
+    }
+  },
+  {
+    "character": "右大臣阿倍御主人",
+    "chapter_index": 0,
+    "scene_index": 4,
+    "source": "novel",
+    "active_persona": "財力で難題を解こうとする大臣",
+    "dialogue_samples": [
+      "「火鼠の裘といふなるもの買ひておこせよ」",
+      "「何思す。いま金少しの事にこそあなれ。必ず送るべき物にこそあなれ。嬉しくして遣せたる哉」",
+      "限りなき思ひに燒けぬ裘袂乾きて今日こそは見め",
+      "「この皮は唐土にも無かりけるを、辛うじて覓め尋ね得たるなり。何の疑かあらむ。」"
+    ],
+    "language_traits": "財力と権威を前提にした命令口調。恋情は和歌で華美に表現するが、真贋判断では自信過剰。",
+    "emotional_state": "期待と高揚、のち狼狽と屈辱",
+    "inferred_motivation": "財力と外部ネットワークを用いて希少品を入手し、赫映姫との婚姻を実現したい",
+    "internal_conflict": "真物か自分でも確証は薄いが、費やした金と労力ゆえに本物だと信じたい。",
+    "relationships": [
+      {
+        "target": "小野房守",
+        "dynamic": "使者として派遣する主従",
+        "shift": "房守の帰着で期待を強める"
+      },
+      {
+        "target": "王卿",
+        "dynamic": "取引相手",
+        "shift": "金を介した調達関係が成立する"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "求婚対象",
+        "shift": "裘を見せて迫るが、焼験で拒まれる"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "取次ぎを頼る相手",
+        "shift": "翁に受け入れを促されるが、試験で崩れる"
+      }
+    ],
+    "actions_taken": "王卿へ書状と金を送り、小野房守を添えて火鼠の裘を調達させた。帰着後は金の追加支払いも惜しまず、華美な箱と歌を添えて裘を持参した。焼いて試すよう求められると応じた。",
+    "actions_avoided": "自ら真偽を十分検証すること、試験を拒むこと、条件そのものを断念することをしなかった。",
+    "decision_logic": "唐土でも稀少で高価な品なら、本物である可能性が高いと見なし、金銭と権威で難題を突破できると考えた。",
+    "arc_marker": "財力による解決が赫映姫の検証基準には通じず、権勢の限界が露呈する。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "火鼠の裘を唐土側に調達させた",
+        "赫映姫の前で火にくべると燃えた"
+      ],
+      "facts_hidden": [
+        "王卿自身も現物を確信していなかった可能性"
+      ]
+    }
+  }
+]

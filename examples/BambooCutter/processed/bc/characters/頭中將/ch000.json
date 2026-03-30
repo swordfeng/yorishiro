@@ -1,0 +1,38 @@
+[
+  {
+    "character": "頭中將",
+    "chapter_index": 0,
+    "scene_index": 10,
+    "source": "novel",
+    "active_persona": "昇天の報告者",
+    "dialogue_samples": [],
+    "language_traits": "台詞はないが、細々と奏上する官人としての実務性が示される。",
+    "emotional_state": "任務後の重苦しさ",
+    "inferred_motivation": "赫映姫を留められなかった経緯を正確に奏上する",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "報告する臣下",
+        "shift": "赫映姫の文と薬を届け、詳細を奏上する"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "最後の伝達を受けた相手",
+        "shift": "文と薬を帝へつなぐ媒介となる"
+      }
+    ],
+    "actions_taken": "人々を率いて帰参し、赫映姫を留められなかったことを詳しく奏上し、文と薬を帝に差し出した。",
+    "actions_avoided": "失敗をぼかすことをしなかった。",
+    "decision_logic": "昇天の一部始終と遺された物の引き渡しは自分の責務だから。",
+    "arc_marker": "地上と天上の境目を証言する官人。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "頭中將が赫映姫の文と薬を帝へ渡した"
+      ],
+      "facts_hidden": [
+        "帝が薬をどう処分するかはこの時点では未定"
+      ]
+    }
+  }
+]

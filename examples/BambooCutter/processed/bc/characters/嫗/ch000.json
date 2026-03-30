@@ -1,0 +1,199 @@
+[
+  {
+    "character": "嫗",
+    "chapter_index": 0,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "養母",
+    "dialogue_samples": [],
+    "language_traits": "この場面では台詞なし。受容と世話によって役割を示す。",
+    "emotional_state": "突然の授かりものへの戸惑いを含む受容",
+    "inferred_motivation": "翁に託された幼子を守り育てる",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "夫の判断を受けて共に養育する伴侶",
+        "shift": "夫婦で姫の養育者となる"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "預かり育てる養母",
+        "shift": "保護対象から愛娘への関係が始まる"
+      }
+    ],
+    "actions_taken": "翁から託された幼子を預かり、籠に入れて養育した。",
+    "actions_avoided": "素性不明の子を拒絶すること、育児を避けることをしなかった。",
+    "decision_logic": "夫が授かった子として連れ帰った以上、家庭の内で育てるのが当然だと受け止めた。",
+    "arc_marker": "赫映姫の養母としての役割が始まる導入。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "翁が見つけた幼子を養い始めた"
+      ],
+      "facts_hidden": [
+        "その子が人間ではなく月の都に属する存在であること"
+      ]
+    }
+  },
+  {
+    "character": "嫗",
+    "chapter_index": 0,
+    "scene_index": 7,
+    "source": "novel",
+    "active_persona": "取り次ぎを担う養母",
+    "dialogue_samples": [
+      "「さらば斯くと申し侍らむ」",
+      "「はやかの御使に對面し給へ」",
+      "「うたても宣ふかな。帝の御使をばいかでか疎かにせむ」",
+      "「口惜しくこの幼き者は、強く侍る者にて、對面すまじきと申す」"
+    ],
+    "language_traits": "家庭内の実務を担う現実的な説得口調。帝の使者には恐縮を示す。",
+    "emotional_state": "困惑・心配・板挟み",
+    "inferred_motivation": "帝の使者に失礼なく応じつつ、赫映姫にも従わせたい",
+    "internal_conflict": "宮中への礼と、赫映姫の頑固な意思の板挟み。",
+    "relationships": [
+      {
+        "target": "内侍中臣のふさ子",
+        "dynamic": "取り次ぎ相手",
+        "shift": "説得するが失敗する"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "娘を説得する養母",
+        "shift": "頑強な拒否に押し返される"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "同じく帝対応をする伴侶",
+        "shift": "宮中とのやりとりを支える"
+      }
+    ],
+    "actions_taken": "内侍の来訪を取り次ぎ、赫映姫に対面を勧めたが、拒否されたためその旨をふさ子に伝えた。",
+    "actions_avoided": "無理やり対面させること、使者を門前払いすることをしなかった。",
+    "decision_logic": "帝の使者を粗略には扱えないため説得したが、赫映姫の強い意志の前に押し切れなかった。",
+    "arc_marker": "嫗もまた赫映姫の拒絶を動かせないことが明確になる。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "嫗がふさ子と赫映姫の間を取り次いだ",
+        "赫映姫が頑として会わなかった"
+      ],
+      "facts_hidden": [
+        "帝が後に直接現れること"
+      ]
+    }
+  },
+  {
+    "character": "嫗",
+    "chapter_index": 0,
+    "scene_index": 8,
+    "source": "novel",
+    "active_persona": "別れを聞かされる養母",
+    "dialogue_samples": [],
+    "language_traits": "この場面では台詞はないが、親としての嘆きが動作で示される。",
+    "emotional_state": "深い悲嘆",
+    "inferred_motivation": "赫映姫を失いたくない",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "育てた娘との別れ",
+        "shift": "月の都の人だと知り、失う現実に直面する"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "悲しみを共にする伴侶",
+        "shift": "二人で同じ喪失に打たれる"
+      }
+    ],
+    "actions_taken": "親たちの一人として赫映姫の告白を聞き、共に激しく泣いた。",
+    "actions_avoided": "冷静に割り切ることをしなかった。",
+    "decision_logic": "長年育てた娘の別離を、理屈より感情で受け止めた。",
+    "arc_marker": "養母としての愛着がはっきり可視化される場面。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "嫗も赫映姫の帰月を知った"
+      ],
+      "facts_hidden": [
+        "迎えの日に何が起こるかの具体相"
+      ]
+    }
+  },
+  {
+    "character": "嫗",
+    "chapter_index": 0,
+    "scene_index": 9,
+    "source": "novel",
+    "active_persona": "身を挺して抱き守る養母",
+    "dialogue_samples": [],
+    "language_traits": "台詞はないが、抱きかかえる動作に母性が集約される。",
+    "emotional_state": "恐怖、必死さ、悲嘆",
+    "inferred_motivation": "赫映姫を腕の中に囲って守り抜きたい",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "抱いて守る養母",
+        "shift": "最後の瞬間まで身体的に離さないが、引き離される"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "共同防衛をする伴侶",
+        "shift": "一緒に塗籠で守る"
+      },
+      {
+        "target": "天人",
+        "dynamic": "娘を奪う存在",
+        "shift": "抵抗できない相手として現れる"
+      }
+    ],
+    "actions_taken": "塗籠の内で赫映姫を抱きかかえて守った。戸が開くと外へ出てしまう姫を留められず、見上げて泣いた。",
+    "actions_avoided": "逃げること、赫映姫を一人にすることをしなかった。",
+    "decision_logic": "母として最後まで自分の身体で囲うのが最善だとした。",
+    "arc_marker": "養母の保護が超常の前で無効化される場面。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "嫗は塗籠の中で赫映姫を抱いて守った",
+        "天人来訪時に留められなかった"
+      ],
+      "facts_hidden": [
+        "赫映姫の文の全文や帝への文の内容の全て"
+      ]
+    }
+  },
+  {
+    "character": "嫗",
+    "chapter_index": 0,
+    "scene_index": 10,
+    "source": "novel",
+    "active_persona": "喪失で病み伏す養母",
+    "dialogue_samples": [],
+    "language_traits": "台詞はないが、翁と同質の嘆きが描かれる。",
+    "emotional_state": "深い悲嘆、衰弱",
+    "inferred_motivation": "該当なし",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "共に娘を失った伴侶",
+        "shift": "ともに病み臥す"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "失った娘",
+        "shift": "形見だけが残る"
+      }
+    ],
+    "actions_taken": "翁とともに血の涙を流して惑い、病み臥した。",
+    "actions_avoided": "現実を切り替えて生を立て直すことをしなかった。",
+    "decision_logic": "娘を失った悲しみが身体を支配したため。",
+    "arc_marker": "養母としての悲嘆の終着。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "嫗も赫映姫を失って病み臥した"
+      ],
+      "facts_hidden": [
+        "帝の後処理"
+      ]
+    }
+  }
+]

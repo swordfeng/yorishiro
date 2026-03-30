@@ -1,0 +1,38 @@
+[
+  {
+    "character": "調の岩笠",
+    "chapter_index": 0,
+    "scene_index": 10,
+    "source": "novel",
+    "active_persona": "勅命を執行する使者",
+    "dialogue_samples": [],
+    "language_traits": "台詞はない。命令を忠実に執行する官人的機能。",
+    "emotional_state": "職務的厳粛さ",
+    "inferred_motivation": "帝の命の通り、文と薬を山頂で焼く",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "勅命を受ける臣下",
+        "shift": "薬と文の処分を委ねられる"
+      },
+      {
+        "target": "兵士ども",
+        "dynamic": "率いる兵",
+        "shift": "山登りを指揮する"
+      }
+    ],
+    "actions_taken": "帝の勅使として不死の薬の壺と御文を賜り、駿河の山頂へ持って行って焼いた。",
+    "actions_avoided": "形見を秘かに残すこと、命令を遅らせることをしなかった。",
+    "decision_logic": "帝の悲しみを込めた命令をそのまま実現するのが任務だから。",
+    "arc_marker": "帝の私情を国家的儀式として実行に移す最後の手。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "調の岩笠が山頂で薬と文を焼く勅使となった"
+      ],
+      "facts_hidden": [
+        "赫映姫個人との関係性はない"
+      ]
+    }
+  }
+]

@@ -1,0 +1,38 @@
+[
+  {
+    "character": "兵士ども",
+    "chapter_index": 0,
+    "scene_index": 10,
+    "source": "novel",
+    "active_persona": "勅使に従う兵の集団",
+    "dialogue_samples": [],
+    "language_traits": "台詞なし。集団行動で役目を果たす。",
+    "emotional_state": "職務的",
+    "inferred_motivation": "勅命に従って山頂まで護送し焼却を補助する",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "調の岩笠",
+        "dynamic": "従う兵",
+        "shift": "山登りに同行する"
+      },
+      {
+        "target": "帝",
+        "dynamic": "間接的な命令主",
+        "shift": "勅命執行の一部となる"
+      }
+    ],
+    "actions_taken": "多く従って山へ登り、薬と文を焼く任務に加わった。",
+    "actions_avoided": "命令違反をしなかった。",
+    "decision_logic": "兵として勅命に従うため。",
+    "arc_marker": "帝の哀悼が集団的行為として完遂される締め。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "兵士どもが山に登って焼却に参加した"
+      ],
+      "facts_hidden": [
+        "帝の内心の細部"
+      ]
+    }
+  }
+]

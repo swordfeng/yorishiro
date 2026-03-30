@@ -1,0 +1,33 @@
+# Yorishiro Project Configuration
+# See docs/architecture.md for schema documentation
+
+project:
+  name: "竹取物語"
+  code: "BambooCutter"
+
+sources:
+  - id: "bc"
+    type: novel
+    path: "raw/BambooCutter.md"
+    authority: PRIMARY
+    language: ja
+    title: "竹取物語"
+    year: N/A
+
+model:
+  default:
+    provider: openrouter
+    # name: anthropic/claude-sonnet-4.6
+    name: openai/gpt-5.4
+    thinking: medium
+    output_mode: tool
+    api_key_env: YORISHIRO_API_KEY_OPENROUTER
+  
+  steps:
+    character:
+      thinking: high
+    synthesize:
+      thinking: high
+
+runtime:
+  batch_tokens: 32000

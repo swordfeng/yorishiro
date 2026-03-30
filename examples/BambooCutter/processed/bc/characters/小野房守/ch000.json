@@ -1,0 +1,39 @@
+[
+  {
+    "character": "小野房守",
+    "chapter_index": 0,
+    "scene_index": 4,
+    "source": "novel",
+    "active_persona": "忠実な使者",
+    "dialogue_samples": [],
+    "language_traits": "直接の台詞はなく、迅速な行動で忠勤を示す。",
+    "emotional_state": "任務遂行の緊張と急ぎ",
+    "inferred_motivation": "主の命を果たし、裘と文を無事に届ける",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "右大臣阿倍御主人",
+        "dynamic": "主命を受ける使者",
+        "shift": "遠隔調達を成功させて帰参する"
+      },
+      {
+        "target": "王卿",
+        "dynamic": "交渉相手",
+        "shift": "金を渡し、文書のやり取りを媒介する"
+      }
+    ],
+    "actions_taken": "王卿のもとへ赴き金を渡し、唐土船来着後は馬を飛ばして急ぎ上洛し、文と裘を届けた。",
+    "actions_avoided": "調達失敗を理由に逗留すること、報告を遅らせることをしなかった。",
+    "decision_logic": "希少品ほど報告の鮮度と速度が重要であり、主の期待に即応すべきと判断した。",
+    "arc_marker": "阿倍御主人の財力を実務面で支える人物として機能。",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "王卿との取引の実務を担った",
+        "裘と文を急ぎ届けた"
+      ],
+      "facts_hidden": [
+        "現物の真偽"
+      ]
+    }
+  }
+]

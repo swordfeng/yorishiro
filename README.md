@@ -151,6 +151,12 @@ yorishiro/
 | [SOUL.md Format](./yorishiro.md#_5) | SOUL.md specification |
 | [MCP Integration](./yorishiro.md#_65) | MCP server usage |
 
+## Examples | 示例
+
+| Example | Description |
+|---------|-------------|
+| [BambooCutter](./examples/BambooCutter/) | 竹取物语 (Tale of the Bamboo Cutter) example project |
+
 ---
 
 ## Model Configuration | 模型配置

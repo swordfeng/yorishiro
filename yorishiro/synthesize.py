@@ -24,7 +24,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from yorishiro.agent_utils import add_model_args, build_agent, resolve_api_key
+from yorishiro.agent_utils import add_model_args, build_agent_from_args
 from yorishiro.project import Project, find_project
 
 
@@ -235,7 +235,8 @@ async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
                 f"  [Output validation error attempt {attempt}/{max_attempts}] {exc} — retrying ...",
                 file=sys.stderr,
             )
-    raise last_exc  # type: ignore[misc]
+    assert last_exc is not None
+    raise last_exc
 
 
 def load_all_notes(characters_dir: Path, character_name: str) -> list[dict]:
@@ -362,10 +363,7 @@ def main() -> None:
         sys.exit(1)
     
     # Get model config
-    model_config = project.model_config("synthesize")
-    model_name = model_config.name or args.model
-    model_thinking = model_config.thinking or args.thinking
-    model_output_mode = model_config.output_mode or args.output_mode
+    config = project.resolved_model_config("synthesize")
     
     # Resolve characters to process
     if args.character:
@@ -397,25 +395,15 @@ def main() -> None:
         print("No characters to process.", file=sys.stderr)
         sys.exit(0)
     
-    api_key = resolve_api_key(argparse.Namespace(
-        provider=args.provider,
-        model=model_name,
-        base_url=args.base_url,
-        api_key_env=args.api_key_env,
-    ))
-    
-    agent = build_agent(
-        model_name=model_name,
-        provider_name=args.provider,
-        api_key=api_key,
-        base_url=args.base_url,
+    agent = build_agent_from_args(
+        args,
         output_type=SoulDocOutput,
         system_prompt=FINALIZATION_SYSTEM_PROMPT,
-        thinking=model_thinking,
-        output_mode=model_output_mode,
+        config=config,
     )
     
-    print(f"Synthesizing {len(target_characters)} characters with {model_name} ...")
+    model_display = args.model or (config.name if config else "unknown")
+    print(f"Synthesizing {len(target_characters)} characters with {model_display} ...")
     
     async def run() -> None:
         for name in target_characters:

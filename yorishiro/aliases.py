@@ -53,8 +53,8 @@ from pydantic import BaseModel, Field
 from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from yorishiro.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
-from yorishiro.project import Project, find_project
+from yorishiro.agent_utils import add_model_args, build_agent_from_args, estimate_tokens
+from yorishiro.project import ModelConfig, Project, find_project
 
 
 # ---------------------------------------------------------------------------
@@ -570,7 +570,8 @@ async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
                 f"  [Output validation error attempt {attempt}/{max_attempts}] {exc} — retrying ...",
                 file=sys.stderr,
             )
-    raise last_exc  # type: ignore[misc]
+    assert last_exc is not None
+    raise last_exc
 
 
 async def seed_from_insight_drafts(
@@ -891,9 +892,7 @@ def main() -> None:
     scenes_base_dir: Path | None = None
     output_path: Path | None = None
     characters_dir: Path | None = None
-    model_name = args.model
-    model_thinking = args.thinking
-    model_output_mode = args.output_mode
+    config: ModelConfig | None = None
 
     if args.project:
         # Project mode
@@ -909,14 +908,7 @@ def main() -> None:
             print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
             sys.exit(1)
         
-        # Get model config from project
-        model_config = project.model_config("resolve_aliases")
-        if model_config.name:
-            model_name = model_config.name
-        if model_config.thinking:
-            model_thinking = model_config.thinking
-        if model_config.output_mode:
-            model_output_mode = model_config.output_mode
+        config = project.resolved_model_config("resolve_aliases")
         
         scenes_base_dir = project.source_dir(source_id) / "scenes"
         output_path = project.source_dir(source_id) / "characters" / "character_aliases.json"
@@ -937,16 +929,10 @@ def main() -> None:
         project = find_project(Path.cwd())
         if project and project.sources:
             source_id = project.sources[0].id
+            config = project.resolved_model_config("resolve_aliases")
             scenes_base_dir = project.source_dir(source_id) / "scenes"
             output_path = project.source_dir(source_id) / "characters" / "character_aliases.json"
             characters_dir = project.source_dir(source_id) / "characters"
-            model_config = project.model_config("resolve_aliases")
-            if model_config.name:
-                model_name = model_config.name
-            if model_config.thinking:
-                model_thinking = model_config.thinking
-            if model_config.output_mode:
-                model_output_mode = model_config.output_mode
             print(f"Auto-detected project: {project.name}")
             print(f"Using source: {source_id}")
         else:
@@ -955,13 +941,6 @@ def main() -> None:
     if output_path.exists() and not args.force:
         print(f"Skipping: {output_path} already exists (use --force to overwrite)")
         sys.exit(0)
-
-    api_key = resolve_api_key(argparse.Namespace(
-        provider=args.provider,
-        model=model_name,
-        base_url=args.base_url,
-        api_key_env=args.api_key_env,
-    ))
 
     print(f"Loading scenes from {scenes_base_dir} ...")
     all_scenes = load_all_scenes(scenes_base_dir)
@@ -979,42 +958,31 @@ def main() -> None:
     print(f"  Split into {len(batches)} batches (target: {args.batch_tokens} tokens each).")
 
     async def run() -> GlobalState:
-        batch_agent = build_agent(
-            model_name=model_name,
-            provider_name=args.provider,
-            api_key=api_key,
-            base_url=args.base_url,
+        batch_agent = build_agent_from_args(
+            args,
             output_type=BatchUpdateResult,
             system_prompt=BATCH_SYSTEM_PROMPT,
-            thinking=model_thinking,
-            output_mode=model_output_mode,
+            config=config,
         )
-        retry_agent = build_agent(
-            model_name=model_name,
-            provider_name=args.provider,
-            api_key=api_key,
-            base_url=args.base_url,
+        retry_agent = build_agent_from_args(
+            args,
             output_type=MissedAliasResolution,
             system_prompt=RETRY_SYSTEM_PROMPT,
-            thinking=model_thinking,
-            output_mode=model_output_mode,
+            config=config,
         )
         initial_state = GlobalState()
         if not args.no_seed and characters_dir.exists():
-            seed_agent = build_agent(
-                model_name=model_name,
-                provider_name=args.provider,
-                api_key=api_key,
-                base_url=args.base_url,
+            seed_agent = build_agent_from_args(
+                args,
                 output_type=SeedFromSoulDocsResult,
                 system_prompt=SEED_SYSTEM_PROMPT,
-                thinking=model_thinking,
-                output_mode=model_output_mode,
+                config=config,
             )
             initial_state = await seed_from_insight_drafts(characters_dir, seed_agent)
         return await process_all_batches(batches, initial_state, batch_agent, retry_agent)
 
-    print(f"Processing with {model_name} ...")
+    model_display = args.model or (config.name if config else "unknown")
+    print(f"Processing with {model_display} ...")
     state = asyncio.run(run())
 
     print(f"\nFinal registry: {len(state.characters)} characters")

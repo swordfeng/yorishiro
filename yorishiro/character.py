@@ -47,8 +47,8 @@ from pydantic import BaseModel, Field
 from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from yorishiro.agent_utils import add_model_args, build_agent, estimate_tokens, resolve_api_key
-from yorishiro.project import Project, find_project
+from yorishiro.agent_utils import add_model_args, build_agent_from_args, estimate_tokens
+from yorishiro.project import ModelConfig, Project, find_project
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +265,8 @@ async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
                 f"  [Output validation error attempt {attempt}/{max_attempts}] {exc} — retrying ...",
                 file=sys.stderr,
             )
-    raise last_exc  # type: ignore[misc]
+    assert last_exc is not None
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -624,9 +625,7 @@ def main() -> None:
     aliases_file: Path | None = None
     output_dir: Path | None = None
     characters_dir: Path | None = None
-    model_name = args.model
-    model_thinking = args.thinking
-    model_output_mode = args.output_mode
+    config: ModelConfig | None = None
 
     if args.project:
         # Project mode
@@ -642,14 +641,7 @@ def main() -> None:
             print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
             sys.exit(1)
         
-        # Get model config from project
-        model_config = project.model_config("character")
-        if model_config.name:
-            model_name = model_config.name
-        if model_config.thinking:
-            model_thinking = model_config.thinking
-        if model_config.output_mode:
-            model_output_mode = model_config.output_mode
+        config = project.resolved_model_config("character")
         
         scenes_base_dir = project.source_dir(source_id) / "scenes"
         characters_dir = project.source_dir(source_id) / "characters"
@@ -672,17 +664,11 @@ def main() -> None:
         project = find_project(Path.cwd())
         if project and project.sources:
             source_id = project.sources[0].id
+            config = project.resolved_model_config("character")
             scenes_base_dir = project.source_dir(source_id) / "scenes"
             characters_dir = project.source_dir(source_id) / "characters"
             aliases_file = characters_dir / "character_aliases.json"
             output_dir = characters_dir
-            model_config = project.model_config("character")
-            if model_config.name:
-                model_name = model_config.name
-            if model_config.thinking:
-                model_thinking = model_config.thinking
-            if model_config.output_mode:
-                model_output_mode = model_config.output_mode
             print(f"Auto-detected project: {project.name}")
             print(f"Using source: {source_id}")
         else:
@@ -701,16 +687,11 @@ def main() -> None:
         target_characters = args.characters
     else:
         target_characters = list(aliases.keys())
-    
-    api_key = resolve_api_key(argparse.Namespace(
-        provider=args.provider,
-        model=model_name,
-        base_url=args.base_url,
-        api_key_env=args.api_key_env,
-    ))
 
+    model_display = args.model or (config.name if config else "unknown")
+    provider_display = args.provider or (config.provider if config else "unknown")
     print(f"Target characters: {target_characters}")
-    print(f"Model: {model_name}  (provider: {args.provider})")
+    print(f"Model: {model_display}  (provider: {provider_display})")
     print(f"Output dir: {output_dir}")
 
     all_scenes = load_all_scenes(scenes_base_dir, aliases, target_characters)
@@ -721,15 +702,11 @@ def main() -> None:
     print(f"Split into {len(batches)} batches (target: {args.batch_tokens} tokens).")
 
     async def run() -> None:
-        extraction_agent = build_agent(
-            model_name=model_name,
-            provider_name=args.provider,
-            api_key=api_key,
-            base_url=args.base_url,
+        extraction_agent = build_agent_from_args(
+            args,
             output_type=BatchExtractionResult,
             system_prompt=EXTRACTION_SYSTEM_PROMPT,
-            thinking=model_thinking,
-            output_mode=model_output_mode,
+            config=config,
         )
 
         await process_all_batches(

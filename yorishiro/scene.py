@@ -43,8 +43,8 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from yorishiro.agent_utils import add_model_args, build_agent, resolve_api_key
-from yorishiro.project import Project, find_project
+from yorishiro.agent_utils import add_model_args, build_agent_from_args
+from yorishiro.project import ModelConfig, Project, find_project
 
 
 INITIAL_CHUNK_SIZE = 8000   # chars per LLM batch
@@ -257,7 +257,7 @@ def build_user_prompt(
 ) -> str:
     parts = []
     if not summary and not previous_chunk:
-        parts.append(f"[This is at START of the chapter — there is NO text before the cursor]")
+        parts.append("[This is at START of the chapter — there is NO text before the cursor]")
     if summary:
         parts.append(f"[Previously processed — summary of the story so far]\n{summary}")
     if previous_chunk:
@@ -510,9 +510,7 @@ def main() -> None:
     source_id: str | None = None
     chapter_file: Path | None = None
     output_dir: Path | None = None
-    model_name = args.model
-    model_thinking = args.thinking
-    model_output_mode = args.output_mode
+    config: ModelConfig | None = None
 
     if args.project:
         # Project mode
@@ -528,14 +526,7 @@ def main() -> None:
             print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
             sys.exit(1)
         
-        # Get model config from project
-        model_config = project.model_config("scene")
-        if model_config.name:
-            model_name = model_config.name
-        if model_config.thinking:
-            model_thinking = model_config.thinking
-        if model_config.output_mode:
-            model_output_mode = model_config.output_mode
+        config = project.resolved_model_config("scene")
         
         chapters_dir = project.source_dir(source_id) / "chapters"
         
@@ -551,11 +542,8 @@ def main() -> None:
                     chapters_dir / f"ch{idx:03d}.txt",
                     project.source_dir(source_id) / "scenes" / f"ch{idx:03d}",
                     args.force,
-                    args.provider,
-                    model_name,
-                    model_thinking,
-                    model_output_mode,
-                    args.base_url,
+                    args,
+                    config,
                 )
             return
         
@@ -594,6 +582,7 @@ def main() -> None:
         project = find_project(Path.cwd())
         if project and project.sources:
             source_id = project.sources[0].id
+            config = project.resolved_model_config("scene")
             chapter_indices = project.list_chapters(source_id)
             if chapter_indices:
                 chapter_file = project.source_dir(source_id) / "chapters" / f"ch{chapter_indices[0]:03d}.txt"
@@ -606,15 +595,14 @@ def main() -> None:
         else:
             parser.error("Either --project/--source or chapter_file is required")
 
+    assert chapter_file is not None
+    assert output_dir is not None
     process_chapter(
         chapter_file,
         output_dir,
         args.force,
-        args.provider,
-        model_name,
-        model_thinking,
-        model_output_mode,
-        args.base_url,
+        args,
+        config,
     )
 
 
@@ -622,11 +610,8 @@ def process_chapter(
     chapter_file: Path,
     output_dir: Path,
     force: bool,
-    provider: str,
-    model: str,
-    thinking: str,
-    output_mode: str,
-    base_url: str,
+    args: argparse.Namespace,
+    config: ModelConfig | None,
 ) -> None:
     """Process a single chapter file."""
     if not chapter_file.exists():
@@ -634,7 +619,6 @@ def process_chapter(
         sys.exit(1)
 
     chapter_meta, chapter_text = parse_chapter_file(chapter_file)
-    chapter_index = chapter_meta.get("index", 0)
     total_length = len(chapter_text)
 
     manifest_path = output_dir / "scenes_manifest.json"
@@ -642,24 +626,29 @@ def process_chapter(
         print(f"Skipping: {manifest_path} already exists (use --force to overwrite)")
         return
 
-    api_key = resolve_api_key(argparse.Namespace(
-        provider=provider,
-        model=model,
-        base_url=base_url,
-        api_key_env="YORISHIRO_API_KEY",
-    ))
-
     output_dir.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(model, provider, api_key, base_url, SegmentationResult, SYSTEM_PROMPT, thinking, output_mode)
+    
+    try:
+        agent = build_agent_from_args(
+            args,
+            output_type=SegmentationResult,
+            system_prompt=SYSTEM_PROMPT,
+            config=config,
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    print(f"Segmenting {chapter_file.name} ({total_length} chars) with {model} ...")
+    model_display = args.model or (config.name if config else "unknown")
+    print(f"Segmenting {chapter_file.name} ({total_length} chars) with {model_display} ...")
+    
     try:
         scenes = asyncio.run(segment_chapter(chapter_text, agent))
     except ValueError as e:
         print(f"Error during segmentation: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Verifying offsets ...")
+    print("Verifying offsets ...")
     try:
         verify_coverage(scenes, total_length)
     except ValueError as e:
@@ -670,7 +659,7 @@ def process_chapter(
     write_scene_files(output_dir, chapter_text, scenes)
     write_manifest(output_dir, chapter_meta, scenes)
 
-    print(f"Done.")
+    print("Done.")
     for s in scenes:
         chars_label = f"[{s.start_offset}:{s.end_offset}]"
         print(f"  scene_{s.scene_index:03d}.txt  {chars_label:20s}  {s.location} / {s.time}")

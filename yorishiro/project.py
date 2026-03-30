@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+ThinkingEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
 import yaml
 
@@ -35,19 +37,30 @@ class ModelConfig:
     """Model configuration for a processing step."""
     provider: str | None = None
     name: str | None = None
-    thinking: str | None = None
+    thinking: ThinkingEffort | None = None
     output_mode: str | None = None
+    base_url: str | None = None
     api_key_env: str | None = None
     
     def merge(self, other: ModelConfig) -> ModelConfig:
-        """Merge with another config, with other taking precedence."""
+        """Merge with another config. Values in `other` take precedence over `self`."""
         return ModelConfig(
             provider=other.provider or self.provider,
             name=other.name or self.name,
             thinking=other.thinking or self.thinking,
             output_mode=other.output_mode or self.output_mode,
+            base_url=other.base_url or self.base_url,
             api_key_env=other.api_key_env or self.api_key_env,
         )
+
+
+# Fallback defaults for optional fields
+FALLBACK_CONFIG = ModelConfig(
+    thinking="medium",
+    output_mode="tool",
+    base_url=None,  # None means use provider default
+    api_key_env="YORISHIRO_API_KEY",
+)
 
 
 @dataclass
@@ -98,6 +111,7 @@ class Project:
             name=default_model.get("name"),
             thinking=default_model.get("thinking"),
             output_mode=default_model.get("output_mode"),
+            base_url=default_model.get("base_url"),
             api_key_env=default_model.get("api_key_env"),
         )
         
@@ -109,6 +123,7 @@ class Project:
                 name=step_config.get("name"),
                 thinking=step_config.get("thinking"),
                 output_mode=step_config.get("output_mode"),
+                base_url=step_config.get("base_url"),
                 api_key_env=step_config.get("api_key_env"),
             )
         
@@ -152,13 +167,28 @@ class Project:
             return path
         return self.root / path
     
-    def model_config(self, step: str) -> ModelConfig:
+    def resolved_model_config(self, step: str | None = None) -> ModelConfig:
         """Get model configuration for a processing step.
         
-        Returns step-specific config merged with defaults.
+        Precedence: step > default > fallback.
+        
+        Returns a ModelConfig with all fields resolved (thinking, output_mode, 
+        base_url, api_key_env have fallback values; provider and name may still 
+        be None if not configured anywhere).
         """
-        step_config = self.model_steps.get(step, ModelConfig())
-        return self.model_default.merge(step_config)
+        # Start with fallback
+        result = FALLBACK_CONFIG
+        # Apply default config (default > fallback)
+        result = result.merge(self.model_default)
+        # Apply step config if specified (step > default > fallback)
+        if step and step in self.model_steps:
+            result = result.merge(self.model_steps[step])
+        return result
+    
+    # Backwards compatibility alias
+    def model_config(self, step: str) -> ModelConfig:
+        """Deprecated: Use resolved_model_config instead."""
+        return self.resolved_model_config(step)
     
     def list_characters(self, source_id: str) -> list[str]:
         """List all characters from a source's character_aliases.json."""

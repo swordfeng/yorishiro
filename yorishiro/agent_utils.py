@@ -1,7 +1,7 @@
 """Shared utilities for pydantic-ai agent construction and CLI argument setup.
 
-All Yorishiro extraction pipeline scripts share the same provider/model/key wiring.
-Import add_model_args, resolve_api_key, and build_agent from here instead of duplicating them.
+All Yorishiro pipeline scripts share the same provider/model/key wiring.
+Import add_model_args and build_agent_from_args from here instead of duplicating them.
 """
 
 from __future__ import annotations
@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import tiktoken
 from pydantic_ai import Agent
+
+from yorishiro.project import ModelConfig, ThinkingEffort
 
 _encoding = None
 
@@ -28,50 +30,44 @@ def estimate_tokens(text: str) -> int:
 
 
 def add_model_args(parser: argparse.ArgumentParser) -> None:
-    """Add standard model/provider CLI arguments to an ArgumentParser."""
+    """Add standard model/provider CLI arguments to an ArgumentParser.
+    
+    All arguments default to None. Values should come from project.yaml 
+    or be specified explicitly on the command line.
+    """
     parser.add_argument(
         "--provider",
-        default=os.environ.get("YORISHIRO_PROVIDER", "openrouter"),
-        help="Provider name (env: YORISHIRO_PROVIDER, default: openrouter)",
+        default=None,
+        help="Provider name (e.g., openrouter, openai)",
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("YORISHIRO_MODEL", "anthropic/claude-opus-4-6"),
-        help="Model name (env: YORISHIRO_MODEL, default: anthropic/claude-opus-4-6)",
+        default=None,
+        help="Model name (e.g., anthropic/claude-opus-4-6)",
     )
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("YORISHIRO_BASE_URL", ""),
-        help="API base URL override (env: YORISHIRO_BASE_URL, empty = provider default)",
+        default=None,
+        help="API base URL override (optional)",
     )
     parser.add_argument(
         "--api-key-env",
-        default="YORISHIRO_API_KEY",
-        help="Name of the env var holding the API key (default: YORISHIRO_API_KEY)",
+        default=None,
+        help="Name of the env var holding the API key",
     )
     parser.add_argument(
         "--thinking",
-        default=os.environ.get("YORISHIRO_THINKING", "medium"),
+        default=None,
         choices=["none", "low", "medium", "high"],
-        help="Model thinking/reasoning effort (env: YORISHIRO_THINKING, default: medium)",
+        help="Model thinking/reasoning effort",
     )
     parser.add_argument(
         "--output-mode",
-        default=os.environ.get("YORISHIRO_OUTPUT_MODE", "tool"),
+        default=None,
         choices=["tool", "native", "prompted"],
-        help="Structured output mode: tool (default), native, prompted (env: YORISHIRO_OUTPUT_MODE)",
+        help="Structured output mode",
     )
-
-
-def resolve_api_key(args: argparse.Namespace) -> str:
-    """Read API key from the env var named by args.api_key_env. Exits on missing."""
-    env_var = getattr(args, "api_key_env", "YORISHIRO_API_KEY")
-    key = os.environ.get(env_var)
-    if not key:
-        print(f"Error: {env_var} environment variable is not set", file=sys.stderr)
-        sys.exit(1)
-    return key
-
+    
 
 def build_agent(
     model_name: str,
@@ -80,7 +76,7 @@ def build_agent(
     base_url: str,
     output_type: type[_OutputT],
     system_prompt: str,
-    thinking: str = "medium",
+    thinking: ThinkingEffort = "medium",
     output_mode: str = "tool",
     tools: list | None = None,
 ) -> Agent[None, _OutputT]:
@@ -104,7 +100,7 @@ def build_agent(
 
     capabilities = []
     if thinking != "none":
-        capabilities.append(Thinking(effort=thinking))  # type: ignore[arg-type]
+        capabilities.append(Thinking(effort=thinking))
 
     if output_mode == "native":
         wrapped_output = NativeOutput(output_type)
@@ -113,13 +109,87 @@ def build_agent(
     else:
         wrapped_output = ToolOutput(output_type)
 
-    agent_kwargs: dict = {
-        "model": model,
-        "output_type": wrapped_output,
-        "system_prompt": system_prompt,
-        "capabilities": capabilities,
-    }
-    if tools:
-        agent_kwargs["tools"] = tools
+    agent = Agent(
+        model=model,
+        output_type=wrapped_output,
+        system_prompt=system_prompt,
+        capabilities=capabilities,
+        tools=tools or [],
+    )
+    # pydantic-ai's NativeOutput/PromptedOutput/ToolOutput constructors are typed via
+    # TypeAliasType with type_params, which ty cannot unify back to OutputDataT, so the
+    # agent is inferred as Agent[None, str]. The actual output type is _OutputT since
+    # the wrappers are constructed with output_type: type[_OutputT].
+    return cast(Agent[None, _OutputT], agent)
 
-    return Agent(**agent_kwargs)
+
+def build_agent_from_args(
+    args: argparse.Namespace,
+    output_type: type[_OutputT],
+    system_prompt: str,
+    config: ModelConfig | None = None,
+    tools: list | None = None,
+) -> Agent[None, _OutputT]:
+    """Build a pydantic-ai Agent from CLI arguments and optional config.
+    
+    Precedence: args > config > fallback.
+    
+    Config should come from Project.resolved_model_config() which includes
+    fallbacks for optional fields.
+    
+    Args:
+        args: Argument namespace from argparse (all fields default to None).
+        output_type: A Pydantic model class for structured output.
+        system_prompt: The system prompt for the agent.
+        config: Optional ModelConfig from project.yaml (with fallbacks applied).
+        tools: Optional list of plain Python functions to register as agent tools.
+    
+    Returns:
+        Configured Agent instance.
+    
+    Raises:
+        ValueError: If provider or model not specified.
+    """
+    # Resolve with precedence: args > config > fallback
+    provider = args.provider or (config.provider if config else None)
+    model_name = args.model or (config.name if config else None)
+    thinking = args.thinking or (config.thinking if config else None)
+    output_mode = args.output_mode or (config.output_mode if config else None)
+    base_url = args.base_url or (config.base_url if config else None)
+    api_key_env = args.api_key_env or (config.api_key_env if config else None)
+    
+    # Apply final fallbacks for optional fields
+    thinking = thinking or "medium"
+    output_mode = output_mode or "tool"
+    api_key_env = api_key_env or "YORISHIRO_API_KEY"
+    
+    # Validate required fields
+    if provider is None:
+        raise ValueError(
+            "No provider specified. Use --provider CLI argument or "
+            "set 'model.default.provider' in project.yaml"
+        )
+    if model_name is None:
+        raise ValueError(
+            "No model specified. Use --model CLI argument or "
+            "set 'model.default.name' in project.yaml"
+        )
+    
+    # Resolve API key
+    key_env = api_key_env or "YORISHIRO_API_KEY"
+    api_key = os.environ.get(key_env)
+    if not api_key:
+        print(f"Error: {key_env} environment variable is not set", file=sys.stderr)
+        sys.exit(1)
+    
+    return build_agent(
+        model_name=model_name,
+        provider_name=provider,
+        api_key=api_key,
+        base_url=base_url or "",
+        output_type=output_type,
+        system_prompt=system_prompt,
+        thinking=thinking,
+        output_mode=output_mode,
+        tools=tools,
+    )

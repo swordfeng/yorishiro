@@ -201,7 +201,10 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
 
 
 
-def find_end_offset(chapter_text: str, end_text: str, search_from: int) -> int:
+def find_end_offset(
+    chapter_text: str, end_text: str, search_from: int,
+    search_limit: int | None = None,
+) -> int:
     """Find position right after end_text in chapter_text, searching from search_from.
 
     Both end_text and the search region are whitespace-stripped for matching;
@@ -211,9 +214,13 @@ def find_end_offset(chapter_text: str, end_text: str, search_from: int) -> int:
     must always match exactly.
     Returns the offset immediately after end_text (= start of next scene).
     Raises ValueError if end_text is not found.
+
+    search_limit: if given, cap the search to this many original characters after
+    search_from.  Keeps fuzzy matching fast by avoiding scanning the whole chapter.
     """
     end_clean = "".join(end_text.split())
-    pairs = [(search_from + i, c) for i, c in enumerate(chapter_text[search_from:]) if not c.isspace()]
+    end = (search_from + search_limit) if search_limit is not None else len(chapter_text)
+    pairs = [(search_from + i, c) for i, c in enumerate(chapter_text[search_from:end]) if not c.isspace()]
     norm_str = "".join(c for _, c in pairs)
 
     # Exact match on whitespace-stripped text
@@ -390,7 +397,10 @@ async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResu
                 break
 
             try:
-                scene_end = find_end_offset(chapter_text, seg.end_text, batch_cursor)
+                scene_end = find_end_offset(
+                    chapter_text, seg.end_text, batch_cursor,
+                    search_limit=chunk_size + len(seg.end_text) + 500,
+                )
                 _append_scene(all_scenes, scene_start, scene_end, seg)
                 _append_scene(last_scenes, scene_start, scene_end, seg)
             except ValueError as e:

@@ -111,7 +111,7 @@ This design ensures:
 |------|--------|
 | **Version** | 0.3 |
 | **State** | Draft |
-| **Phase** | Phase 0 (Core Hypothesis Validation) |
+| **Phase** | Phase 1 (Extraction — Novel ✅, Film next) |
 
 For full architecture details, see [yorishiro.md](./yorishiro.md).
 
@@ -147,9 +147,8 @@ yorishiro/
 
 | Document | Description |
 |----------|-------------|
-| [yorishiro.md](./yorishiro.md) | Full architecture document (Chinese) |
-| [SOUL.md Format](./yorishiro.md#_5) | SOUL.md specification |
-| [MCP Integration](./yorishiro.md#_65) | MCP server usage |
+| [docs/requirements.md](./docs/requirements.md) | Product goals, SOUL.md format spec, roadmap (Chinese) |
+| [docs/design.md](./docs/design.md) | Technical design, tool choices, schemas, prompt templates (Chinese) |
 
 ## Examples | 示例
 

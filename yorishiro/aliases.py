@@ -1,17 +1,15 @@
 """Alias resolution pipeline: derive character_aliases.json from scene manifests.
 
 Usage:
-    uv run python -m yorishiro.aliases <scenes_base_dir> [output_file]
+    uv run python -m yorishiro.aliases --project <project_dir> --source <source_id>
         [--model MODEL] [--provider PROVIDER] [--api-key-env VAR]
         [--base-url URL] [--thinking {none,low,medium,high}]
         [--output-mode {tool,native,prompted}]
         [--batch-tokens N]
-        [--souls-dir PATH] [--no-seed] [--force]
+        [--no-seed] [--force]
 
 Example:
-    uv run python -m yorishiro.aliases \\
-        material/processed/novel/CPK/scenes \\
-        material/processed/novel/CPK/character_aliases.json \\
+    uv run python -m yorishiro.aliases --project projects/CPK --source cpk-novel \\
         --model anthropic/claude-opus-4-6 --thinking medium
 
 Input:
@@ -54,7 +52,9 @@ from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from yorishiro.agent_utils import add_model_args, build_agent_from_args, estimate_tokens
-from yorishiro.project import ModelConfig, Project, find_project
+from yorishiro.backup import ProjectBackup
+from yorishiro.project import Project
+from yorishiro.utils import is_output_stale
 
 
 # ---------------------------------------------------------------------------
@@ -839,47 +839,26 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  # Legacy mode:\n"
-            "  uv run python -m yorishiro.aliases material/processed/novel/CPK/scenes\n"
-            "  uv run python -m yorishiro.aliases material/processed/novel/CPK/scenes \\\n"
-            "      material/processed/novel/CPK/character_aliases.json --force\n"
-            "\n"
-            "  # Project mode:\n"
             "  uv run python -m yorishiro.aliases --project projects/CPK --source cpk-novel\n"
+            "  uv run python -m yorishiro.aliases --source cpk-novel  # uses cwd as project\n"
         ),
     )
     
-    # Project mode arguments
     parser.add_argument(
         "--project",
         type=Path,
         default=None,
-        help="Project directory (enables project mode)",
+        help="Project directory (default: current directory)",
     )
     parser.add_argument(
         "--source",
         type=str,
-        default=None,
-        help="Source ID within project (required with --project)",
-    )
-    
-    # Legacy mode arguments
-    parser.add_argument(
-        "scenes_base_dir",
-        type=Path,
-        nargs="?",
-        default=None,
-        help="Base directory containing ch{N}/ scene subdirectories (legacy mode)",
-    )
-    parser.add_argument(
-        "output_file",
-        type=Path,
-        nargs="?",
-        default=None,
-        help="Output JSON file (legacy mode)",
+        required=True,
+        help="Source ID within project",
     )
     
     parser.add_argument("--force", action="store_true", help="Overwrite existing output file")
+    parser.add_argument("--no-backup", action="store_true", help="Skip backup snapshot after processing")
     parser.add_argument(
         "--batch-tokens",
         type=int,
@@ -894,60 +873,22 @@ def main() -> None:
     add_model_args(parser)
     args = parser.parse_args()
 
-    # Determine mode and resolve paths
-    project: Project | None = None
-    source_id: str | None = None
-    scenes_base_dir: Path | None = None
-    output_path: Path | None = None
-    characters_dir: Path | None = None
-    config: ModelConfig | None = None
+    project_path = args.project if args.project else Path.cwd()
+    project = Project.load(project_path)
+    
+    source_config = project.get_source(args.source)
+    if not source_config:
+        print(f"Error: Source '{args.source}' not found in project", file=sys.stderr)
+        sys.exit(1)
 
-    if args.project:
-        # Project mode
-        project = Project.load(args.project)
-        
-        if not args.source:
-            print("Error: --source is required when using --project", file=sys.stderr)
-            sys.exit(1)
-        source_id = args.source
-        
-        source_config = project.get_source(source_id)
-        if not source_config:
-            print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
-            sys.exit(1)
-        
-        config = project.resolved_model_config("resolve_aliases")
-        
-        scenes_base_dir = project.source_dir(source_id) / "scenes"
-        output_path = project.source_dir(source_id) / "characters" / "character_aliases.json"
-        characters_dir = project.source_dir(source_id) / "characters"
-        
-    elif args.scenes_base_dir:
-        # Legacy mode
-        scenes_base_dir = args.scenes_base_dir
-        if not scenes_base_dir.is_dir():
-            print(f"Error: {scenes_base_dir} is not a directory", file=sys.stderr)
-            sys.exit(1)
-        
-        output_path = args.output_file or (scenes_base_dir.parent / "character_aliases.json")
-        characters_dir = output_path.parent / "characters"
-        
-    else:
-        # Try auto-detection
-        project = find_project(Path.cwd())
-        if project and project.sources:
-            source_id = project.sources[0].id
-            config = project.resolved_model_config("resolve_aliases")
-            scenes_base_dir = project.source_dir(source_id) / "scenes"
-            output_path = project.source_dir(source_id) / "characters" / "character_aliases.json"
-            characters_dir = project.source_dir(source_id) / "characters"
-            print(f"Auto-detected project: {project.name}")
-            print(f"Using source: {source_id}")
-        else:
-            parser.error("Either --project/--source or scenes_base_dir is required")
+    config = project.resolved_model_config("resolve_aliases")
+    scenes_base_dir = project.source_dir(args.source) / "scenes"
+    output_path = project.source_dir(args.source) / "characters" / "character_aliases.json"
+    characters_dir = project.source_dir(args.source) / "characters"
 
-    if output_path.exists() and not args.force:
-        print(f"Skipping: {output_path} already exists (use --force to overwrite)")
+    scene_manifests = sorted(scenes_base_dir.rglob("scenes_manifest.json")) if scenes_base_dir.exists() else []
+    if not args.force and not is_output_stale(output_path, scene_manifests):
+        print(f"Skipping: {output_path} is up to date")
         sys.exit(0)
 
     print(f"Loading scenes from {scenes_base_dir} ...")
@@ -989,7 +930,7 @@ def main() -> None:
             initial_state = await seed_from_insight_drafts(characters_dir, seed_agent)
         return await process_all_batches(batches, initial_state, batch_agent, retry_agent)
 
-    model_display = args.model or (config.name if config else "unknown")
+    model_display = args.model or config.name or "unknown"
     print(f"Processing with {model_display} ...")
     state = asyncio.run(run())
 
@@ -1006,6 +947,10 @@ def main() -> None:
 
     print(f"Writing insight drafts to {characters_dir} ...")
     write_insight_drafts(state, characters_dir)
+
+    if not args.no_backup:
+        backup = ProjectBackup(project.root)
+        backup.snapshot(f"aliases-{args.source}")
 
     print("Done.")
 

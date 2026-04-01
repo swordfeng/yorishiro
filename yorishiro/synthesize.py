@@ -25,7 +25,9 @@ from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from yorishiro.agent_utils import add_model_args, build_agent_from_args
-from yorishiro.project import Project, find_project
+from yorishiro.backup import ProjectBackup
+from yorishiro.project import Project
+from yorishiro.utils import is_output_stale
 
 
 FINALIZATION_SYSTEM_PROMPT = """\
@@ -305,17 +307,22 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  uv run python -m yorishiro.synthesize --project projects/CPK\n"
-            "  uv run python -m yorishiro.synthesize --project projects/CPK --character 酒寄彩葉\n"
+            "  uv run python -m yorishiro.synthesize --project projects/CPK --source cpk-novel\n"
+            "  uv run python -m yorishiro.synthesize --source cpk-novel --character 酒寄彩葉\n"
         ),
     )
     
-    # Project mode arguments
     parser.add_argument(
         "--project",
         type=Path,
         default=None,
-        help="Project directory (enables project mode)",
+        help="Project directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        required=True,
+        help="Source ID within project",
     )
     parser.add_argument(
         "--character",
@@ -324,38 +331,16 @@ def main() -> None:
         default=None,
         help="Character name(s) to synthesize (default: all characters)",
     )
-    parser.add_argument(
-        "--source",
-        type=str,
-        default=None,
-        help="Source ID to process (default: first source in project)",
-    )
     parser.add_argument("--force", action="store_true", help="Overwrite existing SOUL.md files")
+    parser.add_argument("--no-backup", action="store_true", help="Skip backup snapshot after processing")
     add_model_args(parser)
     args = parser.parse_args()
 
-    # Resolve project
-    project: Project | None = None
-    if args.project:
-        project = Project.load(args.project)
-    else:
-        project = find_project(Path.cwd())
-    
-    if not project:
-        print("Error: No project found. Use --project or run from within a project directory.", file=sys.stderr)
-        sys.exit(1)
-    
-    # Get source configuration
-    source_id = args.source
-    if not source_id:
-        if project.sources:
-            source_id = project.sources[0].id
-        else:
-            print("Error: No sources defined in project.", file=sys.stderr)
-            sys.exit(1)
+    project_path = args.project if args.project else Path.cwd()
+    project = Project.load(project_path)
     
     # Resolve paths
-    characters_dir = project.source_dir(source_id) / "characters"
+    characters_dir = project.source_dir(args.source) / "characters"
     souls_dir = project.souls_dir()
     
     if not characters_dir.exists():
@@ -379,14 +364,17 @@ def main() -> None:
             print(f"Error: No character data found in {characters_dir}", file=sys.stderr)
             sys.exit(1)
     
-    # Filter out characters that already have SOUL.md unless --force
+    # Filter out characters with up-to-date SOUL.md unless --force
     if not args.force:
         pending = []
         for name in target_characters:
             safe_name = name.replace("/", "_").replace("\\", "_").replace("\0", "")
             soul_path = souls_dir / f"{safe_name}.md"
-            if soul_path.exists():
-                print(f"Skipping: {soul_path} already exists (use --force to overwrite)")
+            char_dir = characters_dir / name
+            source_paths = [char_dir / "insights.md"]
+            source_paths.extend(char_dir.glob("ch*.json"))
+            if not is_output_stale(soul_path, source_paths):
+                print(f"Skipping: {soul_path} is up-to-date (use --force to overwrite)")
             else:
                 pending.append(name)
         target_characters = pending
@@ -402,15 +390,20 @@ def main() -> None:
         config=config,
     )
     
-    model_display = args.model or (config.name if config else "unknown")
+    model_display = args.model or config.name or "unknown"
     print(f"Synthesizing {len(target_characters)} characters with {model_display} ...")
-    
+
     async def run() -> None:
         for name in target_characters:
             print(f"\nSynthesizing 「{name}」 ...", file=sys.stderr)
             await synthesize_character(name, characters_dir, souls_dir, agent)
-    
+
     asyncio.run(run())
+
+    if not args.no_backup:
+        backup = ProjectBackup(project.root)
+        backup.snapshot("synthesize")
+
     print("\nDone.")
 
 

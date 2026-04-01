@@ -33,6 +33,14 @@
 - ❌ User discusses design → Agent starts implementing during discussion
 - ✅ User: "Implement the design we just discussed" → Agent writes code
 
+### Code Quality Checks
+
+After making any code changes, always run checks before considering the task complete:
+- `uv run ruff check` - linting
+- `uv run ty check` - type checking
+
+Fix all errors before reporting completion.
+
 ---
 
 ## Learnings (Documented Decisions)

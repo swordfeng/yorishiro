@@ -1,11 +1,8 @@
 """Extract chapters from EPUB to YAML frontmatter files.
 
 Usage:
-    # Legacy mode (backward compatible):
-    uv run python -m yorishiro.chapters_epub material/raw/CPK.epub [output_dir]
-    
-    # Project mode:
-    uv run python -m yorishiro.chapters_epub --project projects/CPK --source cpk-novel
+    uv run python -m yorishiro.chapters_epub --project <project_dir> --source <source_id>
+    uv run python -m yorishiro.chapters_epub --source <source_id>  # uses cwd as project
 
 Output:
     {output_dir}/
@@ -34,7 +31,9 @@ from typing import Iterator
 
 import yaml
 
-from yorishiro.project import Project, find_project
+from yorishiro.backup import ProjectBackup
+from yorishiro.project import Project
+from yorishiro.utils import is_output_stale
 
 
 @dataclass
@@ -69,12 +68,15 @@ def extract_chapters(
         output_dir = epub_path.parent / "chapters"
     
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    chapters_list = list(parse_epub(epub_path, remove_furigana=remove_furigana))
+    digits = max(3, len(str(len(chapters_list))))
     saved_files = []
-    
-    for chapter in parse_epub(epub_path, remove_furigana=remove_furigana):
-        output_path = save_chapter(chapter, output_dir, epub_path.name)
+
+    for chapter in chapters_list:
+        output_path = save_chapter(chapter, output_dir, epub_path.name, digits=digits)
         saved_files.append(output_path)
-    
+
     return saved_files
 
 
@@ -108,9 +110,10 @@ def save_chapter(
     chapter: Chapter,
     output_dir: Path,
     source_file: str,
+    digits: int = 3,
 ) -> Path:
     """Save a chapter to a YAML frontmatter file."""
-    filename = f"ch{chapter.index:03d}.txt"
+    filename = f"ch{chapter.index:0{digits}d}.txt"
     output_path = output_dir / filename
     
     # Build frontmatter
@@ -224,92 +227,68 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  # Legacy mode:\n"
-            "  uv run python -m yorishiro.chapters_epub material/raw/CPK.epub\n"
-            "  uv run python -m yorishiro.chapters_epub material/raw/CPK.epub output/chapters\n"
-            "\n"
-            "  # Project mode:\n"
             "  uv run python -m yorishiro.chapters_epub --project projects/CPK --source cpk-novel\n"
+            "  uv run python -m yorishiro.chapters_epub --source cpk-novel  # uses cwd as project\n"
         ),
     )
     
-    # Project mode arguments
     parser.add_argument(
         "--project",
         type=Path,
         default=None,
-        help="Project directory (enables project mode)",
+        help="Project directory (default: current directory)",
     )
     parser.add_argument(
         "--source",
         type=str,
-        default=None,
-        help="Source ID within project (required if --project is used)",
+        required=True,
+        help="Source ID within project",
     )
-    
-    # Legacy mode arguments (positional)
-    parser.add_argument(
-        "epub_path",
-        type=Path,
-        nargs="?",
-        default=None,
-        help="Path to the EPUB file (legacy mode)",
-    )
-    parser.add_argument(
-        "output_dir",
-        type=Path,
-        nargs="?",
-        default=None,
-        help="Output directory (legacy mode, default: epub_path.parent/chapters)",
-    )
-    
     parser.add_argument(
         "--keep-furigana",
         action="store_true",
         default=False,
         help="Keep ruby/furigana annotations (default: remove them)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing chapter files",
+    )
+    parser.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Skip backup snapshot after processing",
+    )
     args = parser.parse_args()
 
-    # Determine mode
-    if args.project:
-        # Project mode
-        project = Project.load(args.project)
-        
-        if not args.source:
-            print("Error: --source is required when using --project", file=sys.stderr)
-            sys.exit(1)
-        
-        source = project.get_source(args.source)
-        if not source:
-            print(f"Error: Source '{args.source}' not found in project", file=sys.stderr)
-            sys.exit(1)
-        
-        epub_path = project.get_source_path(args.source)
-        output_dir = project.source_dir(args.source) / "chapters"
-        
-    elif args.epub_path:
-        # Legacy mode
-        epub_path = args.epub_path
-        output_dir = args.output_dir or epub_path.parent / "chapters"
-        
-    else:
-        # Try to auto-detect project
-        project = find_project(Path.cwd())
-        if project and project.sources:
-            source = project.sources[0]
-            epub_path = project.get_source_path(source.id)
-            output_dir = project.source_dir(source.id) / "chapters"
-            print(f"Auto-detected project: {project.name}")
-            print(f"Using source: {source.id}")
-        else:
-            parser.error("Either --project/--source or epub_path is required")
+    project_path = args.project if args.project else Path.cwd()
+    project = Project.load(project_path)
     
+    source = project.get_source(args.source)
+    if not source:
+        print(f"Error: Source '{args.source}' not found in project", file=sys.stderr)
+        sys.exit(1)
+    
+    epub_path = project.get_source_path(args.source)
+    output_dir = project.source_dir(args.source) / "chapters"
     remove_furigana = not args.keep_furigana
+    
+    if not args.force and output_dir.exists():
+        chapter_files = list(output_dir.glob("ch*.txt"))
+        if chapter_files and not is_output_stale(output_dir / ".chapters_done", [epub_path]):
+            print(f"Skipping: {output_dir} already has {len(chapter_files)} chapters (use --force to re-extract)")
+            sys.exit(0)
 
     try:
         saved_files = extract_chapters(epub_path, output_dir, remove_furigana=remove_furigana)
-        
+
+        (output_dir / ".chapters_done").touch()
+
+        if not args.no_backup:
+            backup = ProjectBackup(project.root)
+            backup.snapshot(f"chapters-{args.source}")
+
         print(f"Extracted {len(saved_files)} chapters from {epub_path.name}")
         print(f"Output: {output_dir}")
         for path in saved_files[:5]:

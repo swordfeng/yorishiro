@@ -1,17 +1,15 @@
 """Per-scene character extraction pipeline: generate character notes and finalize soul docs.
 
 Usage:
-    uv run python -m yorishiro.character <scenes_base_dir>
-        [--aliases-file PATH] [--output-dir PATH] [--souls-dir PATH]
+    uv run python -m yorishiro.character --project <project_dir> --source <source_id>
         [--characters NAME [NAME ...]]
         [--batch-tokens N]
         [--model MODEL] [--provider PROVIDER] [--api-key-env VAR]
         [--base-url URL] [--thinking {none,low,medium,high}]
         [--output-mode {tool,native,prompted}]
-        [--no-finalize]
 
 Example:
-    uv run python -m yorishiro.character material/processed/novel/CPK/scenes \\
+    uv run python -m yorishiro.character --project projects/CPK --source cpk-novel \\
         --characters 酒寄彩葉 かぐや --model anthropic/claude-opus-4-6
 
 Input:
@@ -35,6 +33,7 @@ Processing:
 """
 
 from __future__ import annotations
+from pydantic_ai import Agent
 
 import argparse
 import asyncio
@@ -48,7 +47,8 @@ from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from yorishiro.agent_utils import add_model_args, build_agent_from_args, estimate_tokens
-from yorishiro.project import ModelConfig, Project, find_project
+from yorishiro.backup import ProjectBackup
+from yorishiro.project import Project
 
 
 # ---------------------------------------------------------------------------
@@ -66,11 +66,12 @@ class KnowledgeScope(BaseModel):
     facts_revealed: list[str]
     facts_hidden: list[str]
 
-
 class CharacterSceneNote(BaseModel):
     """Structured extraction of one character's information in one scene."""
 
-    character: str
+    character: str = Field(
+        description="Canonical name of the character (must match a target character).",
+    )
     chapter_index: int
     scene_index: int
     source: str = "novel"
@@ -86,7 +87,6 @@ class CharacterSceneNote(BaseModel):
     decision_logic: str
     arc_marker: str
     knowledge_scope: KnowledgeScope
-
 
 class SoulDocAppend(BaseModel):
     """Per-character synthesized insights from a batch, for soul doc accumulation."""
@@ -142,7 +142,6 @@ class SoulDocAppend(BaseModel):
             "(3) key turning points between phases."
         ),
     )
-
 
 class BatchExtractionResult(BaseModel):
     """LLM output for one scene batch."""
@@ -233,6 +232,15 @@ simulation directives, relationship history, personality synthesis, arc developm
 3. Are **not** already present in the character's soul doc or accumulated insights
 
 Omit a character from soul_doc_appends if there is genuinely nothing new to add.
+
+**Traceability**: Append scene identifiers to each insight showing which scenes it came from:
+- "Never directly states feelings (ch003/s02, ch003/s05)"
+- "Uses formal speech with strangers (ch001/s01, ch003/s02)"
+
+**Deduplication**: Do NOT repeat the same insight multiple times. If multiple scenes in this \
+batch show the same behavioral pattern, combine them into one insight listing all relevant scenes:
+- GOOD: "Uses formal speech with strangers (ch001/s01, ch003/s02)"
+- BAD: Two separate lines with identical content
 
 ## Critical Rules
 
@@ -423,15 +431,16 @@ def format_batch_prompt(
 def write_chapter_notes(
     output_dir: Path,
     canonical_name: str,
-    chapter_index: int,
+    chapter_stem: str,
     notes: list[dict],
-) -> None:
-    out_path = output_dir / canonical_name / f"ch{chapter_index:03d}.json"
+) -> Path:
+    out_path = output_dir / canonical_name / f"{chapter_stem}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     notes_sorted = sorted(notes, key=lambda n: n.get("scene_index", 0))
     out_path.write_text(
         json.dumps(notes_sorted, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    return out_path
 
 
 def append_insights(
@@ -485,9 +494,15 @@ async def process_all_batches(
     target_characters: list[str],
     characters_dir: Path,
     output_dir: Path,
-    agent,
+    agent: Agent[None, BatchExtractionResult],
 ) -> None:
     total = len(batches)
+    # chapter_index (int) → chapter directory stem (str), e.g. 3 → "ch003"
+    chapter_index_to_stem: dict[int, str] = {
+        scene.chapter_index: scene.chapter
+        for batch in batches
+        for scene in batch
+    }
     # Accumulate notes keyed by (canonical_name, chapter_index)
     all_notes: dict[tuple[str, int], list[dict]] = {}
 
@@ -511,7 +526,7 @@ async def process_all_batches(
             file=sys.stderr,
         )
         result = await agent_run_with_retry(agent, prompt)
-        extraction: BatchExtractionResult = result.output
+        extraction = result.output
 
         for note in extraction.notes:
             key = (note.character, note.chapter_index)
@@ -536,8 +551,9 @@ async def process_all_batches(
 
     print("\nWriting character notes ...", file=sys.stderr)
     for (canonical_name, chapter_index), notes in sorted(all_notes.items()):
-        write_chapter_notes(output_dir, canonical_name, chapter_index, notes)
-        print(f"  {canonical_name} / ch{chapter_index:03d}: {len(notes)} notes")
+        chapter_stem = chapter_index_to_stem.get(chapter_index, f"ch{chapter_index:03d}")
+        write_chapter_notes(output_dir, canonical_name, chapter_stem, notes)
+        print(f"  {canonical_name} / {chapter_stem}: {len(notes)} notes")
 
 
 # ---------------------------------------------------------------------------
@@ -559,49 +575,23 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  # Legacy mode:\n"
-            "  uv run python -m yorishiro.character material/processed/novel/CPK/scenes\n"
-            "  uv run python -m yorishiro.character material/processed/novel/CPK/scenes \\\n"
-            "      --characters 酒寄彩葉 --model anthropic/claude-opus-4-6\n"
-            "\n"
-            "  # Project mode:\n"
             "  uv run python -m yorishiro.character --project projects/CPK --source cpk-novel\n"
+            "  uv run python -m yorishiro.character --source cpk-novel \\\n"
+            "      --characters 酒寄彩葉 --model anthropic/claude-opus-4-6\n"
         ),
     )
     
-    # Project mode arguments
     parser.add_argument(
         "--project",
         type=Path,
         default=None,
-        help="Project directory (enables project mode)",
+        help="Project directory (default: current directory)",
     )
     parser.add_argument(
         "--source",
         type=str,
-        default=None,
-        help="Source ID within project (required with --project)",
-    )
-    
-    # Legacy mode arguments
-    parser.add_argument(
-        "scenes_base_dir",
-        type=Path,
-        nargs="?",
-        default=None,
-        help="Base directory containing ch{N}/ scene subdirectories (legacy mode)",
-    )
-    parser.add_argument(
-        "--aliases-file",
-        type=Path,
-        default=None,
-        help="Path to character_aliases.json (default: <scenes_base_dir>/../characters/character_aliases.json)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Output directory for character notes (default: <scenes_base_dir>/../characters/)",
+        required=True,
+        help="Source ID within project",
     )
     parser.add_argument(
         "--characters",
@@ -615,65 +605,29 @@ def main() -> None:
         default=32000,
         help="Target token count per scene batch (default: 32000)",
     )
+    parser.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Skip backup snapshot after processing",
+    )
     add_model_args(parser)
     args = parser.parse_args()
 
-    # Determine mode and resolve paths
-    project: Project | None = None
-    source_id: str | None = None
-    scenes_base_dir: Path | None = None
-    aliases_file: Path | None = None
-    output_dir: Path | None = None
-    characters_dir: Path | None = None
-    config: ModelConfig | None = None
-
-    if args.project:
-        # Project mode
-        project = Project.load(args.project)
-        
-        if not args.source:
-            print("Error: --source is required when using --project", file=sys.stderr)
-            sys.exit(1)
-        source_id = args.source
-        
-        source_config = project.get_source(source_id)
-        if not source_config:
-            print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
-            sys.exit(1)
-        
-        config = project.resolved_model_config("character")
-        
-        scenes_base_dir = project.source_dir(source_id) / "scenes"
-        characters_dir = project.source_dir(source_id) / "characters"
-        aliases_file = characters_dir / "character_aliases.json"
-        output_dir = characters_dir
-        
-    elif args.scenes_base_dir:
-        # Legacy mode
-        scenes_base_dir = args.scenes_base_dir
-        if not scenes_base_dir.is_dir():
-            print(f"Error: {scenes_base_dir} is not a directory", file=sys.stderr)
-            sys.exit(1)
-        
-        aliases_file = args.aliases_file or (scenes_base_dir.parent / "characters" / "character_aliases.json")
-        output_dir = args.output_dir or (scenes_base_dir.parent / "characters")
-        characters_dir = output_dir
-        
-    else:
-        # Try auto-detection
-        project = find_project(Path.cwd())
-        if project and project.sources:
-            source_id = project.sources[0].id
-            config = project.resolved_model_config("character")
-            scenes_base_dir = project.source_dir(source_id) / "scenes"
-            characters_dir = project.source_dir(source_id) / "characters"
-            aliases_file = characters_dir / "character_aliases.json"
-            output_dir = characters_dir
-            print(f"Auto-detected project: {project.name}")
-            print(f"Using source: {source_id}")
-        else:
-            parser.error("Either --project/--source or scenes_base_dir is required")
-
+    project_path = args.project if args.project else Path.cwd()
+    project = Project.load(project_path)
+    
+    source_config = project.get_source(args.source)
+    if not source_config:
+        print(f"Error: Source '{args.source}' not found in project", file=sys.stderr)
+        sys.exit(1)
+    
+    config = project.resolved_model_config("character")
+    
+    scenes_base_dir = project.source_dir(args.source) / "scenes"
+    characters_dir = project.source_dir(args.source) / "characters"
+    aliases_file = characters_dir / "character_aliases.json"
+    output_dir = characters_dir
+    
     if not aliases_file.exists():
         print(
             f"Error: {aliases_file} not found. Run yorishiro.aliases first.",
@@ -688,8 +642,8 @@ def main() -> None:
     else:
         target_characters = list(aliases.keys())
 
-    model_display = args.model or (config.name if config else "unknown")
-    provider_display = args.provider or (config.provider if config else "unknown")
+    model_display = args.model or config.name or "unknown"
+    provider_display = args.provider or config.provider or "unknown"
     print(f"Target characters: {target_characters}")
     print(f"Model: {model_display}  (provider: {provider_display})")
     print(f"Output dir: {output_dir}")
@@ -700,6 +654,8 @@ def main() -> None:
 
     batches = build_batches(all_scenes, args.batch_tokens)
     print(f"Split into {len(batches)} batches (target: {args.batch_tokens} tokens).")
+
+    backup = ProjectBackup(project.root)
 
     async def run() -> None:
         extraction_agent = build_agent_from_args(
@@ -718,6 +674,10 @@ def main() -> None:
         )
 
     asyncio.run(run())
+
+    if not args.no_backup:
+        backup.snapshot(f"character-{args.source}")
+
     print("\nDone.")
 
 

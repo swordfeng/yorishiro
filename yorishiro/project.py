@@ -10,14 +10,14 @@ Usage:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-ThinkingEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
-
 import yaml
 
+ThinkingEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
 AUTHORITY_LEVELS = ("PRIMARY", "SECONDARY", "RUMOR")
 
@@ -200,27 +200,13 @@ class Project:
         data = json.loads(aliases_path.read_text(encoding="utf-8"))
         return [k for k in data.keys() if k != "UNRESOLVED"]
     
-    def list_chapters(self, source_id: str) -> list[int]:
-        """List chapter indices for a source."""
+    def list_chapters(self, source_id: str) -> list[Path]:
+        """Return sorted list of chapter file paths in the chapters directory."""
         chapters_dir = self.source_dir(source_id) / "chapters"
         if not chapters_dir.exists():
             return []
-        
-        indices = []
-        for f in chapters_dir.glob("ch*.txt"):
-            try:
-                idx = int(f.stem[2:])
-                indices.append(idx)
-            except ValueError:
-                pass
-        return sorted(indices)
-
-
-def find_project(start: Path) -> Project | None:
-    """Find project by walking up from start directory."""
-    current = start.resolve()
-    while current != current.parent:
-        if (current / "project.yaml").exists():
-            return Project.load(current)
-        current = current.parent
-    return None
+        chapters = list(chapters_dir.glob("ch*.txt"))
+        return sorted(
+            chapters,
+            key=lambda p: int(match.group()) if (match := re.search(r"\d+", p.stem)) else 0,
+        )

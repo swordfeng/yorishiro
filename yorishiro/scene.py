@@ -1,18 +1,10 @@
 """Automated LLM-based scene segmentation for novel chapters.
 
 Usage:
-    # Legacy mode:
-    uv run python -m yorishiro.scene <chapter_file> [output_dir]
-        [--model MODEL] [--base-url URL] [--api-key-env VAR] [--force]
-        [--thinking {none,low,medium,high}]
-    
-    # Project mode:
     uv run python -m yorishiro.scene --project <project_dir> --source <source_id>
         [--chapter <index>] [--model MODEL] [--force]
 
 Example:
-    uv run python -m yorishiro.scene material/processed/novel/CPK/chapters/ch003.txt \\
-                                    material/processed/novel/CPK/scenes/ch003
     uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --chapter 3
 
 Input:
@@ -44,7 +36,9 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from yorishiro.agent_utils import add_model_args, build_agent_from_args
-from yorishiro.project import ModelConfig, Project, find_project
+from yorishiro.backup import ProjectBackup
+from yorishiro.project import ModelConfig, Project
+from yorishiro.utils import is_output_stale
 
 
 INITIAL_CHUNK_SIZE = 8000   # chars per LLM batch
@@ -447,9 +441,10 @@ def verify_coverage(scenes: list[SceneData], total_length: int) -> None:
         )
 
 
-def write_manifest(output_dir: Path, chapter_meta: dict, scenes: list[SceneData]) -> Path:
+def write_manifest(output_dir: Path, chapter_meta: dict, scenes: list[SceneData], chapter_stem: str = "") -> Path:
     manifest = {
         "chapter_index": chapter_meta.get("index", 0),
+        "chapter_stem": chapter_stem,
         "chapter_title": chapter_meta.get("title", ""),
         "total_length": scenes[-1].end_offset if scenes else 0,
         "scene_count": len(scenes),
@@ -483,137 +478,88 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  # Legacy mode:\n"
-            "  uv run python -m yorishiro.scene ch003.txt\n"
-            "  uv run python -m yorishiro.scene ch003.txt scenes/ch003/ --force\n"
-            "  uv run python -m yorishiro.scene ch003.txt --model openai/gpt-4o\n"
-            "\n"
-            "  # Project mode:\n"
             "  uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --chapter 3\n"
             "  uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --all\n"
+            "  uv run python -m yorishiro.scene --source cpk-novel --chapter 3  # uses cwd as project\n"
         ),
     )
     
-    # Project mode arguments
     parser.add_argument("--project", type=Path, default=None,
-                        help="Project directory (enables project mode)")
-    parser.add_argument("--source", type=str, default=None,
-                        help="Source ID within project (required with --project)")
+                        help="Project directory (default: current directory)")
+    parser.add_argument("--source", type=str, required=True,
+                        help="Source ID within project")
     parser.add_argument("--chapter", type=int, default=None,
-                        help="Chapter index to process (0-based, use with --project)")
+                        help="Chapter index to process (0-based)")
     parser.add_argument("--all", action="store_true",
-                        help="Process all chapters (use with --project)")
-    
-    # Legacy mode arguments
-    parser.add_argument("chapter_file", type=Path, nargs="?", default=None,
-                        help="YAML frontmatter chapter .txt file (legacy mode)")
-    parser.add_argument("output_dir", type=Path, nargs="?", default=None,
-                        help="Output directory (legacy mode)")
-    
+                        help="Process all chapters")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing output")
+    parser.add_argument("--no-backup", action="store_true",
+                        help="Skip backup snapshot after processing")
     add_model_args(parser)
     args = parser.parse_args()
 
-    # Determine mode and resolve paths
-    project: Project | None = None
-    source_id: str | None = None
-    chapter_file: Path | None = None
-    output_dir: Path | None = None
-    config: ModelConfig | None = None
-
-    if args.project:
-        # Project mode
-        project = Project.load(args.project)
-        
-        if not args.source:
-            print("Error: --source is required when using --project", file=sys.stderr)
-            sys.exit(1)
-        source_id = args.source
-        
-        source_config = project.get_source(source_id)
-        if not source_config:
-            print(f"Error: Source '{source_id}' not found in project", file=sys.stderr)
-            sys.exit(1)
-        
-        config = project.resolved_model_config("scene")
-        
-        chapters_dir = project.source_dir(source_id) / "chapters"
-        
-        if args.all:
-            # Process all chapters
-            chapter_indices = project.list_chapters(source_id)
-            if not chapter_indices:
-                print(f"Error: No chapters found in {chapters_dir}", file=sys.stderr)
-                sys.exit(1)
-            
-            for idx in chapter_indices:
-                process_chapter(
-                    chapters_dir / f"ch{idx:03d}.txt",
-                    project.source_dir(source_id) / "scenes" / f"ch{idx:03d}",
-                    args.force,
-                    args,
-                    config,
-                )
-            return
-        
-        if args.chapter is not None:
-            # Process specific chapter
-            chapter_file = chapters_dir / f"ch{args.chapter:03d}.txt"
-            output_dir = project.source_dir(source_id) / "scenes" / f"ch{args.chapter:03d}"
-        else:
-            # Find first unprocessed chapter
-            chapter_indices = project.list_chapters(source_id)
-            for idx in chapter_indices:
-                manifest_path = project.source_dir(source_id) / "scenes" / f"ch{idx:03d}" / "scenes_manifest.json"
-                if not manifest_path.exists():
-                    chapter_file = chapters_dir / f"ch{idx:03d}.txt"
-                    output_dir = project.source_dir(source_id) / "scenes" / f"ch{idx:03d}"
-                    break
-            if not chapter_file:
-                print("All chapters already processed", file=sys.stderr)
-                sys.exit(0)
+    project_path = args.project if args.project else Path.cwd()
+    project = Project.load(project_path)
     
-    elif args.chapter_file:
-        # Legacy mode
-        chapter_file = args.chapter_file
-        if not chapter_file.exists():
-            print(f"Error: {chapter_file} not found", file=sys.stderr)
-            sys.exit(1)
-        
-        chapter_meta, _ = parse_chapter_file(chapter_file)
-        chapter_index = chapter_meta.get("index", 0)
-        output_dir = args.output_dir or (
-            chapter_file.parent.parent / "scenes" / f"ch{chapter_index:03d}"
-        )
+    source_config = project.get_source(args.source)
+    if not source_config:
+        print(f"Error: Source '{args.source}' not found in project", file=sys.stderr)
+        sys.exit(1)
     
+    config = project.resolved_model_config("scene")
+    chapters_dir = project.source_dir(args.source) / "chapters"
+    
+    if args.chapter is not None:
+        chapter_paths = [
+            p for p in project.list_chapters(args.source)
+            if (match := re.search(r"\d+", p.stem)) and int(match.group()) == args.chapter
+        ]
+        if not chapter_paths:
+            print(f"Error: chapter {args.chapter} not found", file=sys.stderr)
+            sys.exit(1)
     else:
-        # Try auto-detection
-        project = find_project(Path.cwd())
-        if project and project.sources:
-            source_id = project.sources[0].id
-            config = project.resolved_model_config("scene")
-            chapter_indices = project.list_chapters(source_id)
-            if chapter_indices:
-                chapter_file = project.source_dir(source_id) / "chapters" / f"ch{chapter_indices[0]:03d}.txt"
-                output_dir = project.source_dir(source_id) / "scenes" / f"ch{chapter_indices[0]:03d}"
-                print(f"Auto-detected project: {project.name}")
-                print(f"Processing chapter {chapter_indices[0]}")
-            else:
-                print("Error: No chapters found", file=sys.stderr)
-                sys.exit(1)
-        else:
-            parser.error("Either --project/--source or chapter_file is required")
+        chapter_paths = project.list_chapters(args.source)
+        if not chapter_paths:
+            print(f"Error: No chapters found in {chapters_dir}", file=sys.stderr)
+            sys.exit(1)
 
-    assert chapter_file is not None
-    assert output_dir is not None
-    process_chapter(
-        chapter_file,
-        output_dir,
-        args.force,
-        args,
-        config,
-    )
+    backup = ProjectBackup(project.root)
+    scenes_dir = project.source_dir(args.source) / "scenes"
+    valid_stems = {p.stem for p in chapter_paths}
+    cleanup_stale_scene_dirs(scenes_dir, valid_stems, [project.root / "material.yaml"])
+
+    processed_any = False
+    for chapter_path in chapter_paths:
+        output_dir = project.source_dir(args.source) / "scenes" / chapter_path.stem
+        if process_chapter(chapter_path, output_dir, args.force, args, config,
+                           material_yaml=project.root / "material.yaml"):
+            processed_any = True
+
+    if processed_any and not args.no_backup:
+        backup.snapshot(f"scene-{args.source}")
+
+
+def cleanup_stale_scene_dirs(
+    scenes_dir: Path,
+    valid_stems: set[str],
+    source_files: list[Path],
+) -> None:
+    """Remove output directories whose chapter source no longer exists."""
+    import shutil
+    if not scenes_dir.exists():
+        return
+    for child in scenes_dir.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name in valid_stems:
+            continue
+        manifest = child / "scenes_manifest.json"
+        if is_output_stale(manifest, source_files):
+            print(f"Cleaning up stale output: {child}")
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            print(f"Warning: {child} is not in current chapter set but appears fresh — skipping cleanup")
 
 
 def process_chapter(
@@ -621,8 +567,9 @@ def process_chapter(
     output_dir: Path,
     force: bool,
     args: argparse.Namespace,
-    config: ModelConfig | None,
-) -> None:
+    config: ModelConfig,
+    material_yaml: Path | None = None,
+) -> bool:
     """Process a single chapter file."""
     if not chapter_file.exists():
         print(f"Error: {chapter_file} not found", file=sys.stderr)
@@ -632,9 +579,12 @@ def process_chapter(
     total_length = len(chapter_text)
 
     manifest_path = output_dir / "scenes_manifest.json"
-    if manifest_path.exists() and not force:
-        print(f"Skipping: {manifest_path} already exists (use --force to overwrite)")
-        return
+    source_files = [chapter_file]
+    if material_yaml is not None:
+        source_files.append(material_yaml)
+    if not force and not is_output_stale(manifest_path, source_files):
+        print(f"Skipping {chapter_file.name}: output is up to date")
+        return False
 
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -649,7 +599,7 @@ def process_chapter(
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    model_display = args.model or (config.name if config else "unknown")
+    model_display = args.model or config.name or "unknown"
     print(f"Segmenting {chapter_file.name} ({total_length} chars) with {model_display} ...")
     
     try:
@@ -667,12 +617,13 @@ def process_chapter(
 
     print(f"Writing {len(scenes)} scenes to {output_dir} ...")
     write_scene_files(output_dir, chapter_text, scenes)
-    write_manifest(output_dir, chapter_meta, scenes)
+    write_manifest(output_dir, chapter_meta, scenes, chapter_stem=chapter_file.stem)
 
     print("Done.")
     for s in scenes:
         chars_label = f"[{s.start_offset}:{s.end_offset}]"
         print(f"  scene_{s.scene_index:03d}.txt  {chars_label:20s}  {s.location} / {s.time}")
+    return True
 
 
 if __name__ == "__main__":

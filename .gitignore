@@ -8,6 +8,9 @@
 # Projects folder
 /projects/
 
+# Automatic backup snapshots (stored inside each project directory)
+**/.yorishiro_backups/
+
 # Build outputs
 /build/
 /dist/

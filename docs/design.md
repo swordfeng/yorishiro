@@ -10,33 +10,130 @@
 
 ### 1.1 影片处理链路
 
+**核心概念区分**: PySceneDetect 检测的是**分镜** (shot, 镜头切换单元), 而非叙事**场景** (scene)。一场对话可能包含数十个正反打分镜。需要单独的 LLM 步骤将分镜合并为叙事场景。
+
 ```
 影片文件
-  ├─ 场景切分 ──────────── PySceneDetect / FFmpeg scenecut
-  ├─ 关键帧提取 ─────────── 每场景 3-5 帧 (首/中/尾 + 表情变化帧)
-  │    └─ 帧选取策略: CLIP embedding 差异 or frame-diff 阈值
-  ├─ 语音转文字 ─────────── Whisper large-v3 (保留时间戳)
-  │    └─ 说话人分离: pyannote-audio (可选, 多角色场景需要)
-  └─ 多模态总结 ─────────── 关键帧 + 字幕 → VLM
-       ├─ 场景总结 (事件/地点/氛围)
-       └─ 角色级提取 (见 §1.4)
+  │
+  ├─ Layer 0A: 视频处理 (非LLM, 纯Python)
+  │   ├─ 分镜检测 ─────── PySceneDetect detect-adaptive → 分镜列表 + 时间戳
+  │   └─ 关键帧提取 ───── CLIP embedding 选帧
+  │        ├─ Step 1 用: 每分镜 1 帧 (代表帧, 控制 token)
+  │        └─ Step 2 用: 每场景 3-5 帧 (余弦距离选最大语义变化帧)
+  │
+  ├─ Layer 0B: 音频分析 (非LLM / 轻量本地模型)
+  │   ├─ SpeechPipeline
+  │   │    ├─ VAD ──────── Silero-VAD, 切出语音段, 过滤静音/音乐段
+  │   │    ├─ 说话人分离 ─ pyannote-audio 3.x → 局部 SP_A/SP_B
+  │   │    ├─ Speaker Bank 提取 d-vector, 全局聚类 → 一致 SPKR_XXX
+  │   │    ├─ STT ─────── per-segment 转录 (比整流更准确, 避免重叠干扰)
+  │   │    └─ 情绪/语调 ── per-句话: 情绪类别 + pitch + 语速 + 音量
+  │   ├─ SoundEventDetector
+  │   │    └─ CLAP 零样本检测: 非语音人声 + 环境音 + 音效
+  │   └─ MusicAnalyzer
+  │        ├─ Demucs ───── 人声/伴奏分离
+  │        ├─ 音乐段检测 ─ BGM vs 插入曲 (有无歌词)
+  │        ├─ 歌词提取 ─── Whisper 对人声轨道单独处理
+  │        └─ 特征分析 ─── BPM / 调性 / 乐器 / valence / arousal
+  │
+  ├─ Step 1: 分镜合并 Agent (LLM, 小批量渐进式)
+  │   输入: 每批 10-15 分镜 + 每镜 1 帧 + 每镜音频摘要
+  │   判断依据: 视觉连续性 / 音频连续性 / 叙事逻辑 (正反打等剪辑结构)
+  │   输出: scene_groupings (哪些分镜属于同一叙事场景)
+  │
+  └─ Step 2: VLM 场景分析 Agent
+       输入: 合并后场景 + 3-5 帧关键帧 + 完整音频分析
+       输出: scene_metadata.json (source_type: "film") + scene_fs_XXX.txt
 ```
 
-**工具选择**:
+**所有模型均可配置**, 支持本地和云端切换:
 
-| 环节 | 推荐工具 | 备选 | 备注 |
-|------|---------|------|------|
-| 场景切分 | PySceneDetect (`detect-adaptive`) | FFmpeg `scenecut` | PySceneDetect 可调阈值,更灵活 |
-| 关键帧选取 | CLIP embedding + 余弦距离 | 帧差分 | CLIP 对语义变化更敏感 |
-| STT | Whisper large-v3 | faster-whisper | faster-whisper 推理速度快 3-4x |
-| 说话人分离 | pyannote-audio 3.x | — | 需要 HuggingFace token |
-| 多模态总结 | Claude Sonnet (批量) / Opus (复杂场景) | GPT-4o | 按 cost 选择 workload 分配 |
+| 环节 | 本地默认 | 云端备选 | 备注 |
+|------|---------|---------|------|
+| 分镜检测 | PySceneDetect detect-adaptive | — | 阈值可调 |
+| 关键帧 embedding | CLIP ViT-L/14 | — | 或 ViT-B/32 |
+| VAD | Silero-VAD | — | |
+| 说话人分离 | pyannote/speaker-diarization-3.1 | — | 需 HF token |
+| Speaker Embedding | pyannote SpeakerEmbedding | Resemblyzer | 用于跨场景声纹 |
+| STT | faster-whisper large-v3 | Deepgram Nova-3 | 云端对背景音更鲁棒 |
+| 情绪分析 | emotion2vec_plus_large | — | 中日文效果好 |
+| 声音事件检测 | CLAP larger_clap_general | — | 零样本 |
+| 音乐分离 | Demucs htdemucs | — | |
+| 音乐特征 | Essentia | — | BPM/调性/乐器 |
+| 分镜合并 LLM | claude-sonnet-4-6 | gemini-2.0-flash / gpt-4o | |
+| 场景分析 VLM | claude-opus-4-6 | gemini-2.0-flash / gpt-4o | 多模态 |
 
-**关键帧选取细节**:
-- 每场景固定取首帧、尾帧
-- 中间帧用 CLIP 编码后计算相邻帧余弦距离, 取 top-N 变化最大的帧
-- 特别关注: 面部表情变化帧 (可选用 face detection + emotion classifier 辅助)
-- 每场景帧数上限: 5 (控制下游 VLM 成本)
+**Layer 0B 音频分析详解**:
+
+*SpeechPipeline — 跨场景声纹联系*:
+- pyannote 输出局部说话人 ID (每场景独立), 无法直接跨场景关联
+- 为每个说话人段提取 d-vector, 维护全局 Speaker Bank
+- 余弦相似度匹配: 高于阈值 (默认 0.75, 可配置) → 合并为已有 SPKR_XXX; 否则新建
+- Step 2 VLM 场景分析建立 `SPKR_XXX → 角色名` 映射; 已确认映射在后续场景作为 prior
+
+*SoundEventDetector — 检测范围*:
+- 非语音人声: 哭泣、笑声、叹气、喘气、呼吸、心跳、呻吟
+- 环境音: 机械音、电子音、人群、自然音 (雨/风/水)
+- 音效: 武器、爆炸、玻璃破碎、门开关
+
+*MusicAnalyzer — 为什么重要*:
+- 日系作品插入曲往往标志角色关键情感节点
+- 影片的情绪氛围信号大量承载于音乐而非文字, 对角色提取具有重要参考价值
+
+**Step 1 分镜合并 — 小批量渐进式**:
+
+与小说场景切分 Agent 对应。分镜已有 ID, 无需文本匹配定位:
+- 每批传入 10-15 个分镜 (每镜 1 帧 + 音频摘要) 和已处理内容摘要
+- Agent 判断分组, `is_complete: false` 表示批次边界截断, 下批以 `partial_group` 续接
+- 已处理部分用摘要代替, 保持叙事上下文连贯性
+
+**Step 2 输出格式 (`scene_fs_XXX.txt`)**:
+
+```
+# scene_fs003.txt
+# Source: movie.mkv
+# Scene ID: fs003
+# Timestamp: 00:05:32.100 - 00:07:45.800
+# Location: 地球-东京-室内某处
+# Characters: 辉夜, 彩叶
+# ---
+
+[视觉描述]
+昏暗的室内空间。辉夜背对窗户站立, 逆光使表情难以辨认。彩叶坐在沙发上, 双手交握, 目光直视辉夜。
+
+[音乐]
+00:05:32-00:07:45 | BGM | 钢琴独奏, BPM 58, 情绪: 压抑与等待, valence 低, arousal 低
+
+[对话与声音]
+00:05:38 彩叶 [平静, 音量低]: "你早就知道了, 对吧。"
+00:05:44 [非语音: 辉夜短促吸气]
+00:05:47 辉夜 [克制, 声线微颤]: "……知道又怎样。"
+00:05:52 [环境音: 窗外远处车声, 低频持续]
+00:06:03 彩叶 [情绪: 悲伤转平静]: "我只是想让你亲口说出来。"
+00:06:11 [非语音: 长时间沉默, 约8秒]
+00:06:19 辉夜 [极低声, 近耳语]: "……对不起。"
+```
+
+格式规则: 时间戳精确到毫秒; `[非语音]`/`[环境音]` 与对话行按时序混排; 音乐段全局描述置于对话区块之前, 场景内切换时在对话行中插入标注行。
+
+Scene ID 格式: `fs{全局索引:03d}` (影片无章节结构, 使用平铺索引)。
+
+**缓存策略**: Layer 0 全部输出持久化, 缓存 key 为 `sha256(mtime + filesize)`:
+
+```
+processed/film/{video_hash}/
+    ├── shots.json              # 分镜边界
+    ├── frames/                 # 关键帧 JPEG (Step 1 代表帧 + Step 2 选取帧)
+    ├── clip_embeddings.npz     # 所有帧的 CLIP embedding (按 shot_id 索引)
+    ├── frame_index.json        # shot_id → 帧路径 (轻量索引, 不含 embedding)
+    ├── transcript.json         # STT + 分离 + 情绪 (含全局 SPKR_XXX)
+    ├── speaker_embeddings.npz  # 全局 Speaker Bank
+    ├── speaker_map.json        # SPKR_XXX → 角色名 (Step 2 逐步建立)
+    ├── sound_events.json       # 声音事件检测结果
+    └── music_analysis.json     # BGM/插入曲分析结果
+```
+
+各模块缓存独立可单独跳过; `--force` 强制全量重跑 (与小说 pipeline 一致)。
 
 ### 1.2 小说处理链路
 

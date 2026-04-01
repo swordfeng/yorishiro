@@ -33,7 +33,6 @@ Processing:
 """
 
 from __future__ import annotations
-from pydantic_ai import Agent
 
 import argparse
 import asyncio
@@ -41,8 +40,9 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
@@ -143,24 +143,64 @@ class SoulDocAppend(BaseModel):
         ),
     )
 
-class BatchExtractionResult(BaseModel):
-    """LLM output for one scene batch."""
 
-    notes: list[CharacterSceneNote] = Field(
-        description=(
-            "One CharacterSceneNote per (target character × scene) where the character "
-            "actually appears. Identified by character + chapter_index + scene_index. "
-            "Omit entirely for characters not present in a scene."
-        )
+def make_extraction_models(canonical_names: list[str]) -> tuple[type[BaseModel], type[BaseModel]]:
+    """Create dynamically constrained CharacterSceneNote and BatchExtractionResult models.
+    
+    Returns a tuple of (CharacterSceneNote, BatchExtractionResult) with the character
+    field constrained to valid canonical names via JSON schema enum.
+    """
+    # Create CharacterSceneNote with constrained character field
+    character_field = Field(
+        description="Canonical name of the character (must match a target character).",
+        json_schema_extra={"enum": canonical_names},
     )
-    soul_doc_appends: list[SoulDocAppend] = Field(
-        default_factory=list,
-        description=(
-            "One SoulDocAppend per target character with genuinely new insights from "
-            "this batch. Only include characters with something new to add. "
-            "Do NOT repeat content already in the character's soul doc or insights."
-        ),
+    
+    DynamicCharacterSceneNote = create_model(
+        "CharacterSceneNote",
+        character=(str, character_field),
+        chapter_index=(int, ...),
+        scene_index=(int, ...),
+        source=(str, "novel"),
+        active_persona=(str, ...),
+        dialogue_samples=(list[str], ...),
+        language_traits=(str, ...),
+        emotional_state=(str, ...),
+        inferred_motivation=(str, ...),
+        internal_conflict=(str, ...),
+        relationships=(list[Relationship], ...),
+        actions_taken=(str, ...),
+        actions_avoided=(str, ...),
+        decision_logic=(str, ...),
+        arc_marker=(str, ...),
+        knowledge_scope=(KnowledgeScope, ...),
+        __base__=BaseModel,
     )
+    DynamicCharacterSceneNote.__doc__ = "Structured extraction of one character's information in one scene."
+
+    # Create BatchExtractionResult referencing the dynamic CharacterSceneNote
+    DynamicBatchExtractionResult = create_model(
+        "BatchExtractionResult",
+        notes=(list[DynamicCharacterSceneNote], Field(  # type: ignore
+            description=(
+                "One CharacterSceneNote per (target character × scene) where the character "
+                "actually appears. Identified by character + chapter_index + scene_index. "
+                "Omit entirely for characters not present in a scene."
+            )
+        )),
+        soul_doc_appends=(list[SoulDocAppend], Field(
+            default_factory=list,
+            description=(
+                "One SoulDocAppend per target character with genuinely new insights from "
+                "this batch. Only include characters with something new to add. "
+                "Do NOT repeat content already in the character's soul doc or insights."
+            ),
+        )),
+        __base__=BaseModel,
+    )
+    DynamicBatchExtractionResult.__doc__ = "LLM output for one scene batch."
+    
+    return DynamicCharacterSceneNote, DynamicBatchExtractionResult
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +534,7 @@ async def process_all_batches(
     target_characters: list[str],
     characters_dir: Path,
     output_dir: Path,
-    agent: Agent[None, BatchExtractionResult],
+    agent: Any,
 ) -> None:
     total = len(batches)
     # chapter_index (int) → chapter directory stem (str), e.g. 3 → "ch003"
@@ -658,6 +698,7 @@ def main() -> None:
     backup = ProjectBackup(project.root)
 
     async def run() -> None:
+        _, BatchExtractionResult = make_extraction_models(target_characters)
         extraction_agent = build_agent_from_args(
             args,
             output_type=BatchExtractionResult,

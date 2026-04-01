@@ -18,6 +18,22 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
+film = [
+    "scenedetect[opencv]<0.7",  # video shot detection
+    "opencv-python-headless>=4.9.0",  # keyframe processing
+    "av>=12.0.0",  # PyAV - video processing (supports AVIF)
+    "torch>=2.0.0",  # CLIP, pyannote, emotion2vec
+    "torchvision>=0.15.0",  # CLIP
+    "transformers>=4.40.0",  # CLIP model loading
+    "openai-whisper>=20231117",  # faster-whisper alternative
+    "faster-whisper>=1.0.0",  # STT
+    "pyannote.audio>=3.1.0",  # speaker diarization
+    "huggingface-hub>=0.20.0",  # model downloads
+    "librosa>=0.10.0",  # audio processing
+    "soundfile>=0.12.0",  # audio file I/O
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+]
 
 [build-system]
 requires = ["hatchling"]

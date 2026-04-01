@@ -66,6 +66,26 @@ class KnowledgeScope(BaseModel):
     facts_revealed: list[str]
     facts_hidden: list[str]
 
+
+class ComfortMechanism(BaseModel):
+    """A self-soothing or comfort-seeking behavior."""
+
+    trigger: str = Field(description="What triggers this behavior (situation, emotion, stressor).")
+    action: str = Field(description="What the character does to comfort/soothe themselves.")
+    sensory_details: list[str] = Field(
+        default_factory=list,
+        description="Sensory elements involved (scents, sounds, textures, visuals).",
+    )
+
+
+class RepeatedExpression(BaseModel):
+    """A phrase or expression the character uses repeatedly."""
+
+    phrase: str = Field(description="The exact phrase or expression.")
+    context: str = Field(description="When/why this phrase is used (deflection, excitement, dismissive, etc.).")
+    frequency: str = Field(description="How often: 'always', 'frequently', 'occasionally', or 'rarely'.")
+
+
 class CharacterSceneNote(BaseModel):
     """Structured extraction of one character's information in one scene."""
 
@@ -87,6 +107,22 @@ class CharacterSceneNote(BaseModel):
     decision_logic: str
     arc_marker: str
     knowledge_scope: KnowledgeScope
+    comfort_mechanisms: list[ComfortMechanism] = Field(
+        default_factory=list,
+        description="Self-soothing behaviors: what triggers them, what actions, sensory details.",
+    )
+    repeated_expressions: list[RepeatedExpression] = Field(
+        default_factory=list,
+        description="Phrases used repeatedly by this character in this scene.",
+    )
+    persona_shifts: list[str] = Field(
+        default_factory=list,
+        description="Moments where the character shifts from one persona to another (e.g., formal→informal, composed→emotional).",
+    )
+    sensory_triggers: list[str] = Field(
+        default_factory=list,
+        description="Sensory inputs that evoke emotional responses (specific songs, scents, objects, places).",
+    )
 
 class SoulDocAppend(BaseModel):
     """Per-character synthesized insights from a batch, for soul doc accumulation."""
@@ -104,8 +140,11 @@ class SoulDocAppend(BaseModel):
     behavioral_patterns: list[str] = Field(
         default_factory=list,
         description=(
-            "Cross-scene consistent behavioral patterns: how the character acts under "
-            "pressure, with intimacy, facing failure, in moral dilemmas, habitual rituals."
+            "Cross-scene consistent behavioral patterns. MUST include when observed: "
+            "(1) Physical rituals with sensory details (e.g., 'listens to X song when stressed', "
+            "'uses specific scent for sleep'), (2) Deflection patterns (phrases or behaviors "
+            "used to brush off praise, emotions, difficult topics), (3) Self-soothing mechanisms, "
+            "(4) Habits repeated across multiple scenes. Each pattern MUST have scene references."
         ),
     )
     simulation_directives: list[str] = Field(
@@ -174,6 +213,10 @@ def make_extraction_models(canonical_names: list[str]) -> tuple[type[BaseModel],
         decision_logic=(str, ...),
         arc_marker=(str, ...),
         knowledge_scope=(KnowledgeScope, ...),
+        comfort_mechanisms=(list[ComfortMechanism], Field(default_factory=list)),
+        repeated_expressions=(list[RepeatedExpression], Field(default_factory=list)),
+        persona_shifts=(list[str], Field(default_factory=list)),
+        sensory_triggers=(list[str], Field(default_factory=list)),
         __base__=BaseModel,
     )
     DynamicCharacterSceneNote.__doc__ = "Structured extraction of one character's information in one scene."
@@ -262,6 +305,16 @@ Characters not present in a scene must be omitted.
 - `arc_marker`: Whether this is a character development node; how it changes them.
 - `knowledge_scope.facts_revealed`: What they learned in this scene.
 - `knowledge_scope.facts_hidden`: What the reader knows that they don't.
+- `comfort_mechanisms`: Self-soothing behaviors with trigger, action, and sensory details. \
+Look for: listening to specific music when stressed, using specific scents for sleep, \
+repetitive physical actions (checking locks, counting), escapist activities.
+- `repeated_expressions`: Phrases this character uses repeatedly — catchphrases, \
+deflection phrases, nervous tics in speech. Include the phrase itself, context of use, \
+and frequency (always/frequently/occasionally/rarely).
+- `persona_shifts`: Moments where the character switches from one mode to another \
+(e.g., formal customer service mode → casual with friends, composed→breaking down).
+- `sensory_triggers`: Sensory inputs that evoke emotional responses — specific songs, \
+scents, objects, places, visual motifs that have emotional significance.
 
 ### B. SoulDocAppend (per character, synthesized across the batch)
 

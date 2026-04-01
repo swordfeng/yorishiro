@@ -89,7 +89,16 @@ How they think, process information, make decisions.
 Typical speech style, formality level, dialect.
 
 ### 3.2 Catchphrases & Signature Expressions
-Frequently used phrases with context.
+
+**IMPORTANT**: Scan all `repeated_expressions` from scene notes before writing this section.
+
+Include:
+- Phrases used to deflect (e.g., "まあまあ" to brush off praise/emotions)
+- Phrases used under stress (repetitions, stammers)
+- Signature sign-offs or reactions
+- Context-specific expressions (with friends vs. formal situations)
+
+Each phrase should include typical context and frequency.
 
 ### 3.3 Sentence Style Preferences
 Sentence length, structure preferences, rhetorical patterns.
@@ -137,7 +146,18 @@ How they approach ethical decisions.
 How they act in work/school contexts, as senior or junior.
 
 ### 5.6 Habitual Behaviors & Rituals
-Daily habits, coping mechanisms, routines.
+
+**IMPORTANT**: Scan all `comfort_mechanisms`, `sensory_triggers`, and `repeated_expressions` \
+from the scene notes before writing this section.
+
+Include:
+- **Physical rituals**: Specific self-soothing actions (e.g., listening to particular music, \
+using specific scents, physical actions like checking locks)
+- **Sensory triggers**: What sensory inputs evoke emotional responses (songs, scents, objects, places)
+- **Deflection patterns**: Phrases or behaviors used to brush off praise, emotions, difficult topics
+- **Catchphrases**: Frequently used expressions with their typical contexts
+
+Format each with scene references: "Listens to 'Remember' when overwhelmed (ch003/s03, ch004/s01)"
 
 ## 6. Negative Constraints
 

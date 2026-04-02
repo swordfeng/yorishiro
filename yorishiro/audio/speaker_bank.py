@@ -6,13 +6,16 @@ Manages speaker embeddings and maps local speaker IDs to global SPKR_XXX IDs.
 from __future__ import annotations
 
 import json
+import os
 import pickle
 from pathlib import Path
 
 import numpy as np
+import torch
 from pydantic import BaseModel, Field
 
 from yorishiro.models.film_models import SpeakerBank
+from yorishiro.utils import get_device
 
 
 class SpeakerBankManagerConfig(BaseModel):
@@ -63,8 +66,6 @@ class SpeakerBankManager:
     def extract_speaker_embedding(self, audio_path: Path, start: float, end: float) -> np.ndarray | None:
         """Extract speaker embedding for a segment."""
         try:
-            import os
-            import torch
             from pyannote.audio import Inference
             from pyannote.audio import Model
 
@@ -75,19 +76,18 @@ class SpeakerBankManager:
                     return None
                 model = Model.from_pretrained(
                     "pyannote/embedding",
-                    use_auth_token=hf_token,
+                    token=hf_token,
                 )
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                model = model.to(device)
+                device = torch.device(get_device())
+                model = model.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                 self._embedding_model = Inference(model, window="whole")
 
+            assert self._embedding_model is not None
             embedding = self._embedding_model(
-                {"uri": audio_path.name, "audio": audio_path},
-                start=start,
-                end=end,
+                {"uri": audio_path.name, "audio": str(audio_path)},
             )
 
-            return embedding
+            return embedding if isinstance(embedding, np.ndarray) else None
 
         except Exception as e:
             print(f"    [SpeakerEmbedding] Error extracting embedding: {e}")

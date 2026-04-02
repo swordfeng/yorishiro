@@ -10,11 +10,17 @@ Pipeline:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+import av
+import soundfile as sf
+import torch
+from av.audio.frame import AudioFrame
 from pydantic import BaseModel, Field
 
 from yorishiro.models.film_models import Transcript, TranscriptEntry
+from yorishiro.utils import get_device
 
 
 class SpeechPipelineConfig(BaseModel):
@@ -85,11 +91,6 @@ class SpeechPipeline:
         if audio_path.exists():
             return audio_path
 
-        try:
-            import av
-        except ImportError:
-            raise ImportError("PyAV not installed. Install with: pip install av")
-
         input_container = av.open(str(video_path))
         audio_stream = None
         for stream in input_container.streams:
@@ -105,8 +106,9 @@ class SpeechPipeline:
         output_stream.channels = 1
 
         for frame in input_container.decode(audio_stream):
+            assert isinstance(frame, AudioFrame)
             if frame.sample_rate != 16000:
-                frame = frame.resample(16000)
+                frame = frame.resample(16000)  # ty:ignore[unresolved-attribute]
             for packet in output_stream.encode(frame):
                 output_container.mux(packet)
 
@@ -121,8 +123,7 @@ class SpeechPipeline:
     def _run_vad(self, audio_path: Path) -> list[dict]:
         """Run Voice Activity Detection."""
         try:
-            import torch
-            from silero_vad import load_silero_vad, read_audio
+            from silero_vad import load_silero_vad, read_audio  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
         except ImportError:
             print("    [VAD] silero-vad not installed, skipping VAD")
             return [{"start": 0.0, "end": float("inf")}]
@@ -148,7 +149,6 @@ class SpeechPipeline:
     def _run_diarization(self, audio_path: Path) -> list[dict]:
         """Run speaker diarization."""
         try:
-            import os
             from pyannote.audio import Pipeline
 
             hf_token = os.environ.get(self.config.hf_token_env)
@@ -157,14 +157,15 @@ class SpeechPipeline:
                 return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
 
             if self._diarization_pipeline is None:
-                self._diarization_pipeline = Pipeline.from_pretrained(
+                pipeline = Pipeline.from_pretrained(
                     self.config.diarization_model,
-                    use_auth_token=hf_token,
+                    token=hf_token,
                 )
-                import torch
-                if torch.cuda.is_available():
-                    self._diarization_pipeline = self._diarization_pipeline.to(torch.device("cuda"))
+                device = torch.device(get_device())
+                pipeline = pipeline.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                self._diarization_pipeline = pipeline
 
+            assert self._diarization_pipeline is not None
             diarization = self._diarization_pipeline(str(audio_path))
 
             segments = []
@@ -207,7 +208,7 @@ class SpeechPipeline:
             return Transcript(language=language or "unknown", entries=entries)
 
         if self._whisper_model is None:
-            import torch
+            # faster-whisper uses CTranslate2 which only supports CUDA/CPU, not MPS
             device = "cuda" if torch.cuda.is_available() else "cpu"
             self._whisper_model = WhisperModel(self.config.stt_model, device=device)
 
@@ -254,12 +255,16 @@ class SpeechPipeline:
     def _analyze_emotions(self, audio_path: Path, transcript: Transcript) -> Transcript:
         """Analyze emotion for each transcript entry using the correct audio segment."""
         try:
-            import soundfile as sf
-            import torch
             from transformers import pipeline
 
             if self._emotion_model is None:
-                device = "cuda" if torch.cuda.is_available() else "cpu"
+                device_str = get_device()
+                if device_str == "mps":
+                    device = torch.device("mps")
+                elif device_str == "cuda":
+                    device = 0
+                else:
+                    device = -1
                 self._emotion_model = pipeline(
                     "audio-classification",
                     model="laica-labs/emotion2vec_plus_large",

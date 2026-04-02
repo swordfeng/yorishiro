@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
+import av
 import numpy as np
+import torch
 from pydantic import BaseModel, Field
 
 from yorishiro.models.film_models import Frame, KeyFrameSet, Shot, ShotList
@@ -46,6 +49,7 @@ class KeyFrameExtractor:
         self._device = None
         self._video_container = None
         self._video_stream = None
+        self._clip_lock = threading.Lock()
 
     def extract(
         self,
@@ -73,7 +77,7 @@ class KeyFrameExtractor:
 
         self._open_video(video_path)
         try:
-            keyframe_sets = self._extract_all_frames(shot_list, frames_dir)
+            keyframe_sets = self._extract_all_frames(shot_list, frames_dir, force)
         finally:
             self._close_video()
 
@@ -88,11 +92,6 @@ class KeyFrameExtractor:
 
     def _open_video(self, video_path: Path) -> None:
         """Open video file with PyAV."""
-        try:
-            import av
-        except ImportError:
-            raise ImportError("PyAV not installed. Install with: pip install av")
-
         self._video_container = av.open(str(video_path))
         self._video_stream = self._video_container.streams.video[0]
         self._video_stream.thread_type = "AUTO"
@@ -104,24 +103,90 @@ class KeyFrameExtractor:
             self._video_container = None
             self._video_stream = None
 
+    def _is_cache_valid(self, shot_frames_dir: Path) -> bool:
+        """Check if cached frames and embeddings are valid for a shot.
+
+        Cache is valid if:
+        1. embeddings.npz exists
+        2. At least min_frames_per_shot frame files exist
+        3. Embedding count matches frame count
+        """
+        embeddings_path = shot_frames_dir / "embeddings.npz"
+        if not embeddings_path.exists():
+            return False
+
+        ext = self.config.output_format
+        frame_files = sorted(shot_frames_dir.glob(f"frame_*.{ext}"))
+        if len(frame_files) < self.config.min_frames_per_shot:
+            return False
+
+        try:
+            data = np.load(embeddings_path, allow_pickle=True)
+            if len(data.files) != len(frame_files):
+                return False
+        except Exception:
+            return False
+
+        return True
+
+    def _load_cached_frames(self, shot_frames_dir: Path, fps: float) -> list[Frame]:
+        """Load cached frames from a shot directory."""
+        ext = self.config.output_format
+        frame_files = sorted(shot_frames_dir.glob(f"frame_*.{ext}"))
+
+        if not frame_files:
+            return []
+
+        frames = []
+        for frame_file in frame_files:
+            # Extract timestamp from filename or use index
+            try:
+                frame_num = int(frame_file.stem.split("_")[-1])
+            except (ValueError, IndexError):
+                frame_num = 0
+
+            frames.append(Frame(
+                frame_path=str(frame_file.relative_to(shot_frames_dir.parent.parent)),
+                timestamp=0.0,  # Will be loaded from embeddings metadata
+                frame_number=frame_num,
+            ))
+
+        return frames
+
+    def _save_embeddings(self, shot_frames_dir: Path, frames: list[Frame], embeddings: np.ndarray) -> None:
+        """Save CLIP embeddings for a shot."""
+        embeddings_path = shot_frames_dir / "embeddings.npz"
+        np.savez_compressed(embeddings_path,
+                           **{f.frame_path.split("/")[-1]: emb for f, emb in zip(frames, embeddings)})
+
     def _extract_all_frames(
-        self, shot_list: ShotList, frames_dir: Path
+        self, shot_list: ShotList, frames_dir: Path, force: bool = False
     ) -> list[KeyFrameSet]:
         """Extract frames for all shots using a producer/consumer pipeline.
 
         Video seeks/decodes happen sequentially on the main thread (single container).
         CPU-bound work (thumbnail scoring, diversity selection, CLIP, image encoding) runs
         in parallel on a thread pool.
+
+        Shots with valid cached embeddings.npz are skipped.
         """
         from tqdm import tqdm
 
-        fps = float(self._video_stream.average_rate)
+        fps = float(self._video_stream.average_rate)  # type: ignore[union-attr]  # ty:ignore[invalid-argument-type, unresolved-attribute]
         futures: list[tuple[str, Future[tuple[list[Frame], np.ndarray]]]] = []
+        cached_count = 0
 
         with ThreadPoolExecutor(max_workers=self.config.workers) as pool:
             for shot in tqdm(shot_list.shots, desc="Decoding shots", unit="shot"):
                 shot_frames_dir = frames_dir / shot.shot_id
                 shot_frames_dir.mkdir(parents=True, exist_ok=True)
+
+                # Cache check: skip if embeddings.npz exists and frame files match
+                if not force and self._is_cache_valid(shot_frames_dir):
+                    frames = self._load_cached_frames(shot_frames_dir, fps)
+                    if frames:
+                        cached_count += 1
+                        continue
 
                 candidates = self._decode_candidates(shot)
                 if candidates:
@@ -134,6 +199,9 @@ class KeyFrameExtractor:
                     )
                     futures.append((shot.shot_id, future))
 
+        if cached_count:
+            print(f"  [KeyFrameExtractor] Using cached frames for {cached_count} shots")
+
         keyframe_sets = []
         shot_order = {shot.shot_id: i for i, shot in enumerate(shot_list.shots)}
         results: dict[str, tuple[list[Frame], np.ndarray]] = {}
@@ -143,6 +211,14 @@ class KeyFrameExtractor:
             if frames:
                 results[shot_id] = (frames, embeddings)
 
+        # Load cached shots that were skipped
+        for shot in shot_list.shots:
+            shot_frames_dir = frames_dir / shot.shot_id
+            if shot.shot_id not in results:
+                frames = self._load_cached_frames(shot_frames_dir, fps)
+                if frames:
+                    results[shot.shot_id] = (frames, np.array([]))
+
         for shot_id in sorted(results, key=lambda sid: shot_order[sid]):
             frames, embeddings = results[shot_id]
             keyframe_sets.append(KeyFrameSet(
@@ -150,11 +226,6 @@ class KeyFrameExtractor:
                 representative_frame=frames[0],
                 extracted_frames=frames,
             ))
-            # Save embeddings per shot
-            shot_frames_dir = frames_dir / shot_id
-            embeddings_path = shot_frames_dir / "embeddings.npz"
-            np.savez_compressed(embeddings_path, 
-                               **{f.frame_path.split("/")[-1]: emb for f, emb in zip(frames, embeddings)})
 
         return keyframe_sets
 
@@ -173,9 +244,9 @@ class KeyFrameExtractor:
 
         candidates: list[tuple] = []
         for ts in timestamps:
-            frame_pts = int(ts / self._video_stream.time_base)
-            self._video_container.seek(frame_pts, stream=self._video_stream)
-            for frame in self._video_container.decode(video=0):
+            frame_pts = int(ts / self._video_stream.time_base)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+            self._video_container.seek(frame_pts, stream=self._video_stream)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+            for frame in self._video_container.decode(video=0):  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                 if frame.pts is not None and frame.pts >= frame_pts:
                     candidates.append((frame.to_image(), float(ts)))
                     break
@@ -244,7 +315,12 @@ class KeyFrameExtractor:
                 frame_number=int(ts * fps),
             ))
 
-        return frames, embeddings[selected_indices]
+        selected_embeddings = embeddings[selected_indices]
+
+        # Save embeddings in _process_candidates (same thread, no extra I/O pass)
+        self._save_embeddings(output_dir, frames, selected_embeddings)
+
+        return frames, selected_embeddings
 
     def _compute_dynamics_score(self, images: list) -> float:
         """Compute visual dynamics score [0, 1] from a sequence of PIL images.
@@ -432,8 +508,6 @@ class KeyFrameExtractor:
         if self._clip_model is None:
             self._load_clip_model()
 
-        import torch
-
         # Preprocess all images
         img_tensors = self._preprocess_images(images)
 
@@ -456,7 +530,7 @@ class KeyFrameExtractor:
         saved_path = output_path
 
         try:
-            import pillow_avif  # noqa: F401 - registers AVIF plugin
+            import pillow_avif  # noqa: F401,ty:ignore[unresolved-import] - registers AVIF plugin  # ty:ignore[unresolved-import]
             img.save(output_path, "AVIF", quality=self.config.output_quality)
             return saved_path
         except ImportError:
@@ -476,7 +550,6 @@ class KeyFrameExtractor:
             self._load_clip_model()
 
         from PIL import Image
-        import torch
 
         img = Image.open(frame_path).convert("RGB")
         img_tensor = self._preprocess_images([img])
@@ -493,31 +566,46 @@ class KeyFrameExtractor:
         return embedding.cpu().numpy().flatten()
 
     def _load_clip_model(self) -> None:
-        """Load CLIP model for embedding computation."""
-        try:
-            import torch
-            from transformers import CLIPProcessor, CLIPModel
-        except ImportError:
-            raise ImportError(
-                "transformers and torch required for CLIP. Install with: pip install transformers torch"
-            )
+        """Load CLIP model for embedding computation. Thread-safe."""
+        # Double-checked locking
+        if self._clip_model is not None:
+            return
 
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        with self._clip_lock:
+            if self._clip_model is not None:
+                return
 
-        model_name = self.config.model.replace("ViT-L/14", "openai/clip-vit-large-patch14")
-        model_name = model_name.replace("ViT-B/32", "openai/clip-vit-base-patch32")
+            try:
+                import torch
+                from transformers import CLIPProcessor, CLIPModel
+            except ImportError:
+                raise ImportError(
+                    "transformers and torch required for CLIP. Install with: pip install transformers torch"
+                )
 
-        try:
-            model = CLIPModel.from_pretrained(model_name)
-            processor = CLIPProcessor.from_pretrained(model_name)
-        except Exception:
-            model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-            processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+            # Use MPS on Mac, CUDA on NVIDIA, CPU otherwise
+            if torch.backends.mps.is_available():
+                device = torch.device("mps")
+            elif torch.cuda.is_available():
+                device = torch.device("cuda")
+            else:
+                device = torch.device("cpu")
 
-        self._clip_model = model.to(self._device)
-        self._processor = processor
+            model_name = self.config.model.replace("ViT-L/14", "openai/clip-vit-large-patch14")
+            model_name = model_name.replace("ViT-B/32", "openai/clip-vit-base-patch32")
 
-    def _preprocess_images(self, images: list) -> object:
+            try:
+                model = CLIPModel.from_pretrained(model_name)
+                processor = CLIPProcessor.from_pretrained(model_name)
+            except Exception:
+                model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+                processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+            self._clip_model = model.to(device)  # type: ignore[union-attr]  # ty:ignore[invalid-argument-type]
+            self._processor = processor
+            self._device = device
+
+    def _preprocess_images(self, images: list):
         """Preprocess images for CLIP model."""
 
         if self._processor is None:

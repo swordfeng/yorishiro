@@ -8,9 +8,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import librosa
+import numpy as np
+import soundfile as sf
+import torch
 from pydantic import BaseModel, Field
 
 from yorishiro.models.film_models import MusicSegment
+from yorishiro.utils import get_device
 
 
 class MusicAnalyzerConfig(BaseModel):
@@ -77,12 +82,11 @@ class MusicAnalyzer:
             return music_path, vocals_path
 
         try:
-            import torch
             from demucs import pretrained  # type: ignore
             from demucs.apply import apply_model  # type: ignore
             from demucs.audio import AudioFile  # type: ignore
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = get_device()
             model = pretrained.get_model(self.config.separation_model)
             model.to(device)
             model.eval()
@@ -98,7 +102,6 @@ class MusicAnalyzer:
             no_vocals = sources[0].sum(0) - sources[0, vocals_idx]
             vocals = sources[0, vocals_idx]
 
-            import soundfile as sf
             sf.write(str(music_path), no_vocals.numpy().T, 44100)
             sf.write(str(vocals_path), vocals.numpy().T, 44100)
 
@@ -116,9 +119,6 @@ class MusicAnalyzer:
     ) -> list[MusicSegment]:
         """Detect segments where music is present, and classify bgm vs insert_song."""
         try:
-            import librosa
-            import numpy as np
-
             y, sr = librosa.load(str(music_path), sr=None)
             duration = len(y) / sr
 
@@ -192,9 +192,6 @@ class MusicAnalyzer:
     def _analyze_features(self, music_path: Path, segments: list[MusicSegment]) -> list[MusicSegment]:
         """Analyze music features for each segment using Essentia."""
         try:
-            import librosa
-            import numpy as np
-
             if not music_path.exists():
                 return segments
 
@@ -247,9 +244,6 @@ class MusicAnalyzer:
     def _estimate_instruments(self, audio, sr: int) -> str:
         """Estimate dominant instruments using spectral features."""
         try:
-            import numpy as np
-            import librosa
-
             spectral_centroid = librosa.feature.spectral_centroid(y=audio, sr=sr)
             mean_centroid = np.mean(spectral_centroid)
 

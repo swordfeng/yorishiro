@@ -8,9 +8,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import librosa
+import torch
 from pydantic import BaseModel, Field
 
 from yorishiro.models.film_models import SoundEvent
+from yorishiro.utils import get_device
 
 
 class SoundEventDetectorConfig(BaseModel):
@@ -90,18 +93,16 @@ class SoundEventDetector:
     def _detect_events(self, audio_path: Path, transcript_end: float) -> list[SoundEvent]:
         """Run CLAP-based sound event detection."""
         try:
-            import torch
             from transformers import ClapModel, ClapProcessor
 
             if self._clap_model is None:
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                device = torch.device(get_device())
                 self._clap_model = ClapModel.from_pretrained(self.config.model)
                 self._clap_model = self._clap_model.to(device)  # type: ignore
                 self._clap_processor = ClapProcessor.from_pretrained(self.config.model)
 
             device = next(self._clap_model.parameters()).device
 
-            import librosa
             audio, sr = librosa.load(str(audio_path), sr=48000)
             duration = len(audio) / sr
 
@@ -114,6 +115,7 @@ class SoundEventDetector:
 
                 chunk = audio[int(start * sr):int(end * sr)]
 
+                assert self._clap_processor is not None
                 inputs = self._clap_processor(
                     audio=chunk,
                     text=SOUND_PROMPTS,

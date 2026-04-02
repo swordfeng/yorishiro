@@ -83,7 +83,17 @@ def cmd_extract_frames(args: argparse.Namespace) -> None:
 
     shot_list = ShotList.model_validate_json(shots_file.read_text(encoding="utf-8"))
 
-    print(f"Extracting keyframes from {len(shot_list.shots)} shots...")
+    # Filter to single shot if specified
+    if args.shot:
+        matching_shots = [s for s in shot_list.shots if s.shot_id == args.shot]
+        if not matching_shots:
+            print(f"Error: Shot '{args.shot}' not found. Available shots: {[s.shot_id for s in shot_list.shots[:5]]}...", file=sys.stderr)
+            sys.exit(1)
+        shot_list.shots = matching_shots
+        print(f"Extracting keyframes from single shot: {args.shot}")
+    else:
+        print(f"Extracting keyframes from {len(shot_list.shots)} shots...")
+
     print(f"Output format: {args.format}")
 
     config = KeyFrameExtractorConfig(
@@ -207,6 +217,8 @@ def main() -> None:
     p_frames.add_argument("--project", type=Path, default=None)
     p_frames.add_argument("--source", type=str, required=True)
     p_frames.add_argument("--force", action="store_true")
+    p_frames.add_argument("--shot", type=str, default=None,
+                         help="Extract frames for a single shot (e.g., 'sh004')")
     p_frames.add_argument("--min-frames", type=int, default=2)
     p_frames.add_argument("--max-frames", type=int, default=8)
     p_frames.add_argument("--max-frames-scene", type=int, default=8)

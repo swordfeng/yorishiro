@@ -2,6 +2,7 @@
 
 Usage:
     uv run python -m yorishiro.video.keyframe_extractor --project <dir> --source <id> [--force]
+    uv run python -m yorishiro.video.keyframe_extractor --source cpk-film --shot sh004
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ def main() -> None:
             "Examples:\n"
             "  uv run python -m yorishiro.video.keyframe_extractor --project projects/CPK --source cpk-film\n"
             "  uv run python -m yorishiro.video.keyframe_extractor --source cpk-film --min-frames 2 --max-frames 8\n"
+            "  uv run python -m yorishiro.video.keyframe_extractor --source cpk-film --shot sh004\n"
         ),
     )
 
@@ -44,6 +46,12 @@ def main() -> None:
         "--force",
         action="store_true",
         help="Force reprocessing, ignore cache",
+    )
+    parser.add_argument(
+        "--shot",
+        type=str,
+        default=None,
+        help="Extract frames for a single shot (e.g., 'sh004')",
     )
     parser.add_argument(
         "--min-frames",
@@ -91,7 +99,16 @@ def main() -> None:
         shot_detector = ShotDetector(ShotDetectorConfig())
         shot_list = shot_detector.detect(video_path, output_dir, force=args.force)
 
-    print(f"\nExtracting keyframes from {len(shot_list.shots)} shots...")
+    # Filter to single shot if specified
+    if args.shot:
+        matching_shots = [s for s in shot_list.shots if s.shot_id == args.shot]
+        if not matching_shots:
+            print(f"Error: Shot '{args.shot}' not found. Available shots: {[s.shot_id for s in shot_list.shots[:5]]}...", file=sys.stderr)
+            sys.exit(1)
+        shot_list.shots = matching_shots
+        print(f"Extracting keyframes from single shot: {args.shot}")
+    else:
+        print(f"\nExtracting keyframes from {len(shot_list.shots)} shots...")
 
     config = KeyFrameExtractorConfig(min_frames_per_shot=args.min_frames, max_frames_per_shot=args.max_frames)
     extractor = KeyFrameExtractor(config)

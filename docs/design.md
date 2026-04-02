@@ -15,11 +15,24 @@
 ```
 影片文件
   │
-  ├─ Layer 0A: 视频处理 (非LLM, 纯Python)
-  │   ├─ 分镜检测 ─────── PySceneDetect detect-adaptive → 分镜列表 + 时间戳
-  │   └─ 关键帧提取 ───── CLIP embedding 选帧
-  │        ├─ Step 1 用: 每分镜 1 帧 (代表帧, 控制 token)
-  │        └─ Step 2 用: 每场景 3-5 帧 (余弦距离选最大语义变化帧)
+   ├─ Layer 0A: 视频处理 (非LLM, 纯Python)
+   │   ├─ 分镜检测 ─────── PySceneDetect detect-adaptive → 分镜列表 + 时间戳
+   │   └─ 关键帧提取 ───── 五层过滤 + CLIP 语义选择
+   │        ├─ Layer 1: 密集采样 (1.6fps) → 候选帧
+   │        ├─ Layer 2: 像素多样性过滤 (Filter 1) → 幸存者 (≤max_frames)
+   │        ├─ Layer 3: CLIP embedding 计算 + 语义多样性 → 确定 target
+   │        ├─ Layer 4: 语义选择 (CLIP 余弦距离) → 选中 2-8 帧
+   │        └─ Layer 5: 保存选中帧图像 + embedding (per-shot)
+   │        
+   │   **输出结构** (per-shot):
+   │   ```
+   │   cache/frames/{shot_id}/
+   │       ├── frame_000.jpg        # 第1帧 (begin, 必选)
+   │       ├── frame_001.jpg        # 语义选择的中间帧
+   │       ├── ...
+   │       ├── frame_005.jpg        # 共 6 帧 (target=6 时)
+   │       └── embeddings.npz       # 仅选中帧的 CLIP embedding
+   │   ```
   │
   ├─ Layer 0B: 音频分析 (非LLM / 轻量本地模型)
   │   ├─ SpeechPipeline
@@ -36,15 +49,140 @@
   │        ├─ 歌词提取 ─── Whisper 对人声轨道单独处理
   │        └─ 特征分析 ─── BPM / 调性 / 乐器 / valence / arousal
   │
-  ├─ Step 1: 分镜合并 Agent (LLM, 小批量渐进式)
-  │   输入: 每批 10-15 分镜 + 每镜 1 帧 + 每镜音频摘要
-  │   判断依据: 视觉连续性 / 音频连续性 / 叙事逻辑 (正反打等剪辑结构)
-  │   输出: scene_groupings (哪些分镜属于同一叙事场景)
-  │
-  └─ Step 2: VLM 场景分析 Agent
-       输入: 合并后场景 + 3-5 帧关键帧 + 完整音频分析
-       输出: scene_metadata.json (source_type: "film") + scene_fs_XXX.txt
+   ├─ Step 1: 分镜合并 Agent (LLM, 小批量渐进式)
+   │   输入: 每批 10-15 分镜 + 每镜 1 帧 (第1帧) + 每镜音频摘要
+   │   实现: 从 cache/frames/{shot_id}/ 加载 frame_000.jpg
+   │   判断依据: 视觉连续性 / 音频连续性 / 叙事逻辑 (正反打等剪辑结构)
+   │   输出: scene_groupings (哪些分镜属于同一叙事场景)
+   │
+   └─ Step 2: VLM 场景分析 Agent
+        输入: 合并后场景 + 3-5 帧关键帧 + 完整音频分析
+        实现:
+          1. 收集场景中所有分镜的已提取帧 (from cache/frames/)
+          2. 加载 embeddings.npz (CLIP 嵌入已缓存，无需重新计算)
+          3. 基于 CLIP 余弦距离选择 3-5 帧最具语义多样性的帧
+          4. 将这些帧送入 VLM 进行场景分析
+        输出: scene_metadata.json (source_type: "film") + scene_fs_XXX.txt
 ```
+
+#### 关键帧提取详细设计 (Keyframe Extraction Pipeline)
+
+**目标**: 从每个分镜中提取代表性帧，用于：
+- Step 1 (分镜合并): 每分镜使用代表帧 (第1帧)
+- Step 2 (VLM 场景分析): 每分镜 2-8 帧 (语义多样性)
+
+**三层过滤架构**:
+
+**Layer 1: 密集时序采样 (Dense Temporal Sampling)**
+- 采样率: 1.6 fps (约每 0.6 秒一帧)
+- 计算: `num_candidates = max(max_frames, int(shot_duration * 1.6))`
+- **保证**: 即使短分镜也至少有 max_frames 个候选帧
+- 例: 23 秒分镜 → ~37 候选帧；3 秒分镜 → 8 候选帧 (而非 4.8)
+- 目的: 确保不遗漏短暂但重要的视觉变化，同时为 CLIP 提供足够多的选择
+
+**Layer 2: 快速像素多样性过滤 (Filter 1 - Pixel Diversity)**
+- **条件**: 仅当候选帧 > max_frames * 1.25 时执行，否则跳过
+- **方法**: 64×64 灰度缩略图 + 贪心最大-最小多样性算法
+- **输出**: `min(int(max_frames * 1.25), candidates)` 幸存者
+  - 37 候选帧 (max_frames=8) → 保留 10 帧
+  - 10 候选帧 (max_frames=8) → 保留 10 帧
+  - 8 候选帧 (max_frames=8) → 跳过，保留全部 8 帧
+- **成本**: ~5ms (可忽略)
+- **目的**: 减少后续 CLIP 计算量，同时保留比 max_frames 多 25% 的候选帧供 CLIP 选择
+
+**Layer 3: CLIP Embedding 计算与语义 Target 确定**
+- **输入**: Filter 1 的所有幸存者 (≤max_frames * 1.25 帧)
+- **操作**: 
+  1. 对所有幸存者计算 CLIP ViT-B/32 embedding
+  2. 计算 pairwise 余弦相似度矩阵
+  3. 从相似度矩阵计算语义多样性分数 (1 - avg_sim^2.2)
+  4. 基于语义多样性确定 target: `min_frames + round((max_frames - min_frames) * semantic_diversity)`
+  5. target 被限制在 [min_frames, max_frames] 范围内
+- **成本**: ~0.1-0.2s GPU (处理 ≤10 帧)
+- **目的**: 用语义多样性 (而非像素变化) 决定需要多少帧
+
+**Layer 4: 语义多样性选择**
+- **输入**: Filter 1 的幸存者 + 已计算的 CLIP embeddings + target
+- **保留策略**: 强制保留起始帧和结束帧 (temporal anchors)
+- **选择方法**: 基于 CLIP embedding 余弦相似度，选择语义最 diverse 的帧
+- **从剩余帧中选择**: `target - 2` 帧
+- **例**: target=6, 10 个幸存者 → 保留 [begin, end], 从中间 8 帧选 4 帧
+- **目的**: 捕获语义多样性 (如: 月亮 vs 灯，而非像素变化)
+
+**Layer 5: 保存最终结果 (Save Selected Frames)**
+- **输入**: Layer 4 选择的最终帧 (2-8 帧)
+- **保存内容**:
+  - 图像文件: `frame_000.jpg` ~ `frame_00{N-1}.jpg` (按时间顺序命名)
+  - Embedding 文件: `embeddings.npz` (仅包含选中帧的 embedding)
+- **注意**: 未选中的帧不保存，不占用存储空间
+
+**Target Count 语义动态计算**:
+```python
+# 1. 计算所有幸存帧的 CLIP embeddings
+embeddings = compute_clip_embeddings(survivors)  # shape: (N, 512)
+
+# 2. 归一化
+norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+normalized = embeddings / norms
+
+# 3. 计算 pairwise 余弦相似度矩阵
+sim_matrix = np.dot(normalized, normalized.T)
+np.fill_diagonal(sim_matrix, 0)  # 排除自身相似度
+
+# 4. 平均相似度 → 语义多样性 (使用 ^2.2 曲线增强)
+avg_sim = sim_matrix.sum() / (N * (N - 1))
+semantic_diversity = 1.0 - avg_sim ** 2.2  # 曲线增强对中等相似度更敏感
+
+# 5. 确定 target
+target = min_frames + round((max_frames - min_frames) * semantic_diversity)
+target = max(min_frames, min(max_frames, target))  # 限制在 [min_frames, max_frames]
+```
+
+**语义多样性示例** (使用 ^2.2 曲线):
+- **静态场景** (所有帧语义相同): avg_sim=0.95 → diversity=0.11 → target=3
+- **中等变化** (部分帧有语义差异): avg_sim=0.7 → diversity=0.52 → target=5
+- **高语义变化** (月亮出现 vs 无月亮): avg_sim=0.4 → diversity=0.87 → target=7
+- **极端变化** (完全不同场景): avg_sim=0.1 → diversity=0.98 → target=8 (max_frames)
+
+**注意**: 
+- Layer 1 保证候选帧数至少为 max_frames，即使短分镜也有足够选择
+- Filter 1 仅在候选帧 > max_frames * 1.25 时执行，跳过时所有候选帧进入 Layer 3
+- CLIP 计算在所有幸存者上进行，用于确定 target 和选择帧
+- 即使候选帧较少 (如 3-4 帧)，CLIP 仍会运行，可能将 target 降至 min_frames (2)
+- ^2.2 曲线增强对中等相似度更敏感，避免静态场景 target 过低
+- target 决定最终保存多少帧图像 (2-8 帧)
+- 只有被选中的帧才会被保存，未选中的帧在 Layer 4 后被丢弃
+
+**关键设计原则**:
+- **像素变化 ≠ 语义变化**: Filter 1 仅用于减少计算量，最终语义选择由 CLIP 完成
+- **强制时序覆盖**: 始终保留起始和结束帧，确保关键转折点不被遗漏
+- **Embedding 缓存**: CLIP 只运行一次，结果缓存供 Step 1/Step 2 复用
+- **计算效率**: 两阶段过滤将 CLIP 调用从 37 次减少到 6-8 次 (~5× 提升)
+
+**性能特征** (per shot, GPU):
+- 23 秒分镜: ~0.3s (37→8 via Filter 1, CLIP on 8 survivors)
+- 5 秒分镜: ~0.1s (跳过 Filter 1, CLIP on 8)
+- Step 2 场景选择: ~0ms (使用缓存的 embeddings，无需重新计算 CLIP)
+- 对比: 无过滤直接 CLIP ~1s，无 CLIP 方案 ~0.05s (但丢失语义变化)
+
+**存储策略**:
+```
+cache/frames/
+├── sh001/
+│   ├── frame_000.jpg          # 第1帧 (begin) - 必选
+│   ├── frame_001.jpg          # 语义选择的中间帧
+│   ├── ...
+│   ├── frame_005.jpg          # 共 6 帧 (target=6 时)
+│   └── embeddings.npz         # 6 个 embeddings (仅选中帧)
+├── sh002/
+│   └── ...
+└── ...
+```
+- **帧图像**: 每分镜 2-8 帧 (由 target 决定，非固定 8 帧)
+- **Embeddings**: 仅保存选中帧的 embedding (2-8 个 512-dim vectors)
+- **用途**: 
+  - Step 1: 使用第1帧图像 (frame_000.jpg)
+  - Step 2: 使用缓存的 embeddings 进行场景级帧选择 (跨分镜选择)
 
 **所有模型均可配置**, 支持本地和云端切换:
 
@@ -123,15 +261,27 @@ Scene ID 格式: `fs{全局索引:03d}` (影片无章节结构, 使用平铺索�
 ```
 processed/film/{video_hash}/
     ├── shots.json              # 分镜边界
-    ├── frames/                 # 关键帧 JPEG (Step 1 代表帧 + Step 2 选取帧)
-    ├── clip_embeddings.npz     # 所有帧的 CLIP embedding (按 shot_id 索引)
-    ├── frame_index.json        # shot_id → 帧路径 (轻量索引, 不含 embedding)
+    ├── frames/                 # 关键帧存储 (per-shot)
+    │   ├── sh001/
+    │   │   ├── frame_000.jpg   # 2-8 帧图像 (仅选中帧)
+    │   │   ├── frame_001.jpg
+    │   │   ├── ...
+    │   │   └── embeddings.npz  # 选中帧的 CLIP embedding (2-8 个)
+    │   ├── sh002/
+    │   │   └── ...
+    │   └── ...
+    ├── frame_index.json        # shot_id → 帧路径列表 (轻量索引)
     ├── transcript.json         # STT + 分离 + 情绪 (含全局 SPKR_XXX)
     ├── speaker_embeddings.npz  # 全局 Speaker Bank
     ├── speaker_map.json        # SPKR_XXX → 角色名 (Step 2 逐步建立)
     ├── sound_events.json       # 声音事件检测结果
     └── music_analysis.json     # BGM/插入曲分析结果
 ```
+
+**关键帧存储结构说明**:
+- 每分镜独立目录 `frames/{shot_id}/`，仅保存 CLIP 语义选择后的最终帧 (2-8 帧)
+- `embeddings.npz` 仅包含选中帧的 embedding，与图像文件一一对应
+- Step 2 场景级选择时加载这些 embedding，无需重新计算 CLIP
 
 各模块缓存独立可单独跳过; `--force` 强制全量重跑 (与小说 pipeline 一致)。
 

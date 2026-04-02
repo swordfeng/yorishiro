@@ -153,8 +153,8 @@ class SpeechPipeline:
 
             hf_token = os.environ.get(self.config.hf_token_env)
             if not hf_token:
-                print("    [Diarization] HF_TOKEN not set, using dummy diarization")
-                return [{"speaker": "SP_A", "start": 0.0, "end": 10.0}]
+                print(f"    [Diarization] {self.config.hf_token_env} not set, using single-speaker fallback")
+                return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
 
             if self._diarization_pipeline is None:
                 self._diarization_pipeline = Pipeline.from_pretrained(
@@ -175,11 +175,11 @@ class SpeechPipeline:
                     "end": turn.end,
                 })
 
-            return segments
+            return segments if segments else [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
 
         except Exception as e:
-            print(f"    [Diarization] Error: {e}, using dummy diarization")
-            return [{"speaker": "SP_A", "start": 0.0, "end": 10.0}]
+            print(f"    [Diarization] Error: {e}, using single-speaker fallback")
+            return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
 
     def _run_transcription(
         self,
@@ -188,20 +188,21 @@ class SpeechPipeline:
         speech_segments: list[dict],
         language: str | None,
     ) -> Transcript:
-        """Run speech-to-text on each speaker segment."""
+        """Run speech-to-text on the full audio, then assign speakers by overlap."""
         try:
             from faster_whisper import WhisperModel
         except ImportError:
             print("    [STT] faster-whisper not installed, using dummy transcript")
             entries = [
                 TranscriptEntry(
-                    speaker_global="SPKR_001",
-                    start=seg["start"],
-                    end=seg["end"],
+                    speaker_global="SPEAKER_00",
+                    start=seg["start"] if seg["start"] != float("inf") else 0.0,
+                    end=seg["end"] if seg["end"] != float("inf") else 0.0,
                     text="[Transcription unavailable]",
                     confidence=0.0,
                 )
                 for seg in diarization
+                if seg["start"] != float("inf")
             ]
             return Transcript(language=language or "unknown", entries=entries)
 
@@ -212,42 +213,48 @@ class SpeechPipeline:
 
         detected_language = language or "auto"
 
+        # Transcribe the full audio once
+        segments, info = self._whisper_model.transcribe(
+            str(audio_path),
+            language=detected_language if detected_language != "auto" else None,
+            task="transcribe",
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 500},
+        )
+
         entries = []
-        for seg in diarization:
-            segments, info = self._whisper_model.transcribe(
-                str(audio_path),
-                language=detected_language if detected_language != "auto" else None,
-                task="transcribe",
-                vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 500},
-            )
+        for segment in segments:
+            speaker = self._assign_speaker(segment.start, segment.end, diarization)
+            entries.append(TranscriptEntry(
+                speaker_global=speaker,
+                start=segment.start,
+                end=segment.end,
+                text=segment.text.strip(),
+                confidence=segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9,
+            ))
 
-            for segment in segments:
-                if segment.start >= seg["start"] and segment.end <= seg["end"]:
-                    entries.append(TranscriptEntry(
-                        speaker_global="SPKR_TEMP",
-                        start=segment.start,
-                        end=segment.end,
-                        text=segment.text.strip(),
-                        confidence=segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9,
-                    ))
-                elif segment.end > seg["start"] and segment.start < seg["end"]:
-                    entries.append(TranscriptEntry(
-                        speaker_global="SPKR_TEMP",
-                        start=max(segment.start, seg["start"]),
-                        end=min(segment.end, seg["end"]),
-                        text=segment.text.strip(),
-                        confidence=segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9,
-                    ))
-
-        if detected_language == "auto" and hasattr(info, "language"):
-            detected_language = info.language
+        if detected_language == "auto":
+            detected_language = getattr(info, "language", None) or "unknown"
 
         return Transcript(language=detected_language or "unknown", entries=entries)
 
+    @staticmethod
+    def _assign_speaker(start: float, end: float, diarization: list[dict]) -> str:
+        """Find the diarization speaker with the greatest overlap with [start, end]."""
+        best_speaker = "SPEAKER_00"
+        best_overlap = 0.0
+        for seg in diarization:
+            seg_end = seg["end"] if seg["end"] != float("inf") else end + 1.0
+            overlap = min(end, seg_end) - max(start, seg["start"])
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_speaker = seg["speaker"]
+        return best_speaker
+
     def _analyze_emotions(self, audio_path: Path, transcript: Transcript) -> Transcript:
-        """Analyze emotion for each transcript entry."""
+        """Analyze emotion for each transcript entry using the correct audio segment."""
         try:
+            import soundfile as sf
             import torch
             from transformers import pipeline
 
@@ -260,12 +267,16 @@ class SpeechPipeline:
                 )
 
             print("    [Emotion] Analyzing emotions ...")
+            audio_array, sample_rate = sf.read(str(audio_path), dtype="float32")
+
             for entry in transcript.entries:
                 try:
-                    result = self._emotion_model(
-                        str(audio_path),
-                        chunk_length_s=max(entry.end - entry.start, 1.0),
-                    )
+                    start_sample = int(entry.start * sample_rate)
+                    end_sample = int(entry.end * sample_rate)
+                    chunk = audio_array[start_sample:end_sample]
+                    if len(chunk) < int(sample_rate * 0.1):
+                        continue
+                    result = self._emotion_model({"raw": chunk, "sampling_rate": int(sample_rate)})
                     if result:
                         entry.emotion = result[0]["label"]
                         entry.confidence = max(entry.confidence, result[0]["score"])

@@ -8,9 +8,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from pydantic_ai.messages import BinaryContent
 
 from yorishiro.agent_utils import build_agent_from_args
 from yorishiro.models.film_models import ShotGroup, GroupingBatchResult, Shot, KeyFrameSet
+
+_MEDIA_TYPES = {".avif": "image/avif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
 
 SHOT_GROUPING_SYSTEM_PROMPT = """\
@@ -98,41 +101,44 @@ class ShotGroupingAgent:
         batch_num: int,
         total_batches: int,
         frame_base_path: Path,
-    ) -> str:
-        """Build the prompt for a batch of shots."""
-        parts = []
+    ) -> list[Any]:
+        """Build the prompt for a batch of shots, with embedded keyframe images."""
+        content: list[Any] = []
 
         if not previous_summary:
-            parts.append("[This is the START of the video — there is NO previous context]")
+            content.append("[This is the START of the video — there is NO previous context]")
         else:
-            parts.append(f"[Previously processed scenes — summary]\n{previous_summary}")
+            content.append(f"[Previously processed scenes — summary]\n{previous_summary}")
 
         if partial_group:
-            parts.append(
+            content.append(
                 f"[Incomplete scene group from previous batch]\n"
                 f"Shots: {', '.join(partial_group.shots)}\n"
                 f"Provisional location: {partial_group.provisional_location}\n"
                 f"Reason: {partial_group.grouping_reason}"
             )
 
-        parts.append(f"[Current batch {batch_num}/{total_batches} — {len(shots)} shots]")
+        content.append(f"[Current batch {batch_num}/{total_batches} — {len(shots)} shots]")
 
-        for i, (shot, kf) in enumerate(zip(shots, keyframes)):
+        for shot, kf in zip(shots, keyframes):
             shot_info = (
                 f"### Shot {shot.shot_id}\n"
                 f"Time: {self._format_time(shot.start_time)} - {self._format_time(shot.end_time)}\n"
-                f"Duration: {shot.end_time - shot.start_time:.1f}s\n"
+                f"Duration: {shot.end_time - shot.start_time:.1f}s"
             )
+            content.append(shot_info)
 
             frame_path = frame_base_path / kf.representative_frame.frame_path
             if frame_path.exists():
-                shot_info += f"Frame: {frame_path}\n"
+                media_type = _MEDIA_TYPES.get(frame_path.suffix.lower(), "image/jpeg")
+                try:
+                    content.append(BinaryContent(data=frame_path.read_bytes(), media_type=media_type))
+                except Exception:
+                    pass
 
-            parts.append(shot_info)
+        content.append(f"[Audio summary for this batch]\n{audio_summary}")
 
-        parts.append(f"[Audio summary for this batch]\n{audio_summary}")
-
-        parts.append(
+        content.append(
             "[Task]\n"
             f"Group these {len(shots)} shots into narrative scenes.\n"
             "For each scene group, explain why these shots belong together.\n"
@@ -140,9 +146,9 @@ class ShotGroupingAgent:
             "Provide a summary update for the next batch."
         )
 
-        return "\n\n".join(parts)
+        return content
 
-    async def run(self, prompt: str) -> GroupingBatchResult:
+    async def run(self, prompt: list[Any]) -> GroupingBatchResult:
         """Run the agent with the given prompt."""
         result = await self.agent.run(prompt)
         return result.output

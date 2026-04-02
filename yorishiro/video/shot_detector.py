@@ -16,7 +16,9 @@ from yorishiro.models.film_models import Shot, ShotList
 
 class ShotDetectorConfig(BaseModel):
     backend: str = Field(default="pyscenedetect", description="Detection backend")
-    threshold: float = Field(default=3.0, description="Detection threshold (lower = more sensitive)")
+    detector: str = Field(default="adaptive", description="Detector type: 'adaptive' or 'content'")
+    threshold: float = Field(default=4.0, description="Detection threshold (adaptive: ratio vs local mean; content: absolute HSV delta)")
+    min_content_val: float = Field(default=15.0, description="AdaptiveDetector: minimum raw content score to consider a cut candidate")
     min_scene_len: int = Field(default=15, description="Minimum scene length in frames")
     show_progress: bool = Field(default=True, description="Show progress bar during detection")
 
@@ -71,7 +73,7 @@ class ShotDetector:
     def _detect_shots(self, video_path: Path) -> dict:
         """Run PySceneDetect and return shot data."""
         try:
-            from scenedetect import detect, ContentDetector
+            from scenedetect import detect, ContentDetector, AdaptiveDetector
         except ImportError:
             raise ImportError(
                 "PySceneDetect not installed. Install with: pip install scenedetect[opencv]"
@@ -87,10 +89,11 @@ class ShotDetector:
             container = av.open(str(video_path))
             video_stream = container.streams.video[0]
 
-            fps = float(video_stream.average_rate)
+            if video_stream.average_rate is not None:
+                fps = float(video_stream.average_rate)
 
             # Try multiple ways to get duration
-            if video_stream.duration:
+            if video_stream.duration and video_stream.time_base is not None:
                 duration = float(video_stream.duration * video_stream.time_base)
             elif container.duration:
                 duration = float(container.duration) / 1000000.0  # AV_TIME_BASE
@@ -109,30 +112,35 @@ class ShotDetector:
         # Run shot detection with progress
         print("  [ShotDetector] Detecting shots...")
 
+        if self.config.detector == "adaptive":
+            detector = AdaptiveDetector(
+                adaptive_threshold=self.config.threshold,
+                min_content_val=self.config.min_content_val,
+            )
+        else:
+            detector = ContentDetector(threshold=self.config.threshold)
+
         try:
             scene_list = detect(
                 str(video_path),
-                ContentDetector(threshold=self.config.threshold),
+                detector,
                 show_progress=self.config.show_progress,
             )
         except TypeError:
             # Older version without show_progress
-            scene_list = detect(
-                str(video_path),
-                ContentDetector(threshold=self.config.threshold),
-            )
+            scene_list = detect(str(video_path), detector)
 
         print(f"  [ShotDetector] Found {len(scene_list)} scene boundaries")
 
+        valid_scenes = [
+            (scene[0], scene[1])
+            for scene in scene_list
+            if self.config.min_scene_len == 0
+            or scene[1].get_frames() - scene[0].get_frames() >= self.config.min_scene_len
+        ]
+
         shots = []
-        for i, scene in enumerate(scene_list):
-            start, end = scene[0], scene[1]
-
-            # Filter out short scenes
-            frame_diff = end.get_frames() - start.get_frames()
-            if self.config.min_scene_len > 0 and frame_diff < self.config.min_scene_len:
-                continue
-
+        for i, (start, end) in enumerate(valid_scenes):
             shots.append({
                 "shot_id": f"sh{i + 1:03d}",
                 "start_time": start.get_seconds(),

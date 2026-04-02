@@ -33,6 +33,7 @@ film = [
     "soundfile>=0.12.0",  # audio file I/O
     "numpy>=1.24.0",
     "scipy>=1.10.0",
+    "tqdm>=4.60.0",
 ]
 
 [build-system]

@@ -8,6 +8,8 @@ Extracts representative frames from video shots for:
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -19,10 +21,12 @@ from yorishiro.models.film_models import Frame, KeyFrameSet, Shot, ShotList
 class KeyFrameExtractorConfig(BaseModel):
     backend: str = Field(default="clip", description="Embedding backend")
     model: str = Field(default="ViT-L/14", description="CLIP model variant")
-    frames_per_shot: int = Field(default=5, description="Frames to extract per shot")
+    min_frames_per_shot: int = Field(default=2, description="Minimum frames to extract per shot")
+    max_frames_per_shot: int = Field(default=8, description="Maximum frames to extract per shot")
     max_frames_per_scene: int = Field(default=8, description="Max frames per scene to give to VLM")
     output_format: str = Field(default="avif", description="Output image format: 'avif', 'jpg', or 'png'")
     output_quality: int = Field(default=85, description="Output quality (1-100)")
+    workers: int = Field(default_factory=lambda: os.cpu_count() or 4, description="Worker threads for parallel frame processing")
 
 
 class KeyFrameExtractor:
@@ -96,65 +100,170 @@ class KeyFrameExtractor:
     def _extract_all_frames(
         self, shot_list: ShotList, frames_dir: Path
     ) -> list[KeyFrameSet]:
-        """Extract frames for all shots."""
+        """Extract frames for all shots using a producer/consumer pipeline.
+
+        Video seeks/decodes happen sequentially on the main thread (single container).
+        CPU-bound work (thumbnail scoring, diversity selection, image encoding) runs
+        in parallel on a thread pool.
+        """
+        from tqdm import tqdm
+
+        fps = float(self._video_stream.average_rate)
+        futures: list[tuple[str, Future[list[Frame]]]] = []
+
+        with ThreadPoolExecutor(max_workers=self.config.workers) as pool:
+            for shot in tqdm(shot_list.shots, desc="Decoding shots", unit="shot"):
+                shot_frames_dir = frames_dir / shot.shot_id
+                shot_frames_dir.mkdir(parents=True, exist_ok=True)
+
+                candidates = self._decode_candidates(shot)
+                if candidates:
+                    future = pool.submit(
+                        self._process_candidates,
+                        candidates,
+                        shot_frames_dir,
+                        frames_dir.parent,
+                        fps,
+                    )
+                    futures.append((shot.shot_id, future))
+
         keyframe_sets = []
+        shot_order = {shot.shot_id: i for i, shot in enumerate(shot_list.shots)}
+        results: dict[str, list[Frame]] = {}
 
-        for shot in shot_list.shots:
-            shot_frames_dir = frames_dir / shot.shot_id
-            shot_frames_dir.mkdir(parents=True, exist_ok=True)
-
-            frames = self._extract_shot_frames(shot, shot_frames_dir)
-
+        for shot_id, future in futures:
+            frames = future.result()
             if frames:
-                keyframe_sets.append(KeyFrameSet(
-                    shot_id=shot.shot_id,
-                    representative_frame=frames[0],
-                    extracted_frames=frames,
-                ))
+                results[shot_id] = frames
+
+        for shot_id in sorted(results, key=lambda sid: shot_order[sid]):
+            frames = results[shot_id]
+            keyframe_sets.append(KeyFrameSet(
+                shot_id=shot_id,
+                representative_frame=frames[0],
+                extracted_frames=frames,
+            ))
 
         return keyframe_sets
 
-    def _extract_shot_frames(
-        self, shot: Shot, output_dir: Path
-    ) -> list[Frame]:
-        """Extract evenly-spaced frames from a single shot using PyAV."""
-        ext = self.config.output_format
-        fps = float(self._video_stream.average_rate)
-        num_frames = self.config.frames_per_shot
+    def _decode_candidates(self, shot: Shot) -> list[tuple]:
+        """Seek and decode candidate frames for one shot. Runs on main thread."""
+        max_frames = self.config.max_frames_per_shot
 
-        timestamps = np.linspace(shot.start_time, shot.end_time, num_frames + 2)[1:-1]
+        timestamps = np.linspace(shot.start_time, shot.end_time, max_frames + 2)[1:-1]
         if len(timestamps) < 1:
             timestamps = np.array([(shot.start_time + shot.end_time) / 2])
 
-        ext = self.config.output_format
-        frames = []
-
-        for i, ts in enumerate(timestamps):
+        candidates: list[tuple] = []
+        for ts in timestamps:
             frame_pts = int(ts / self._video_stream.time_base)
             self._video_container.seek(frame_pts, stream=self._video_stream)
-
             for frame in self._video_container.decode(video=0):
                 if frame.pts is not None and frame.pts >= frame_pts:
-                    output_path = output_dir / f"frame_{i:03d}.{ext}"
-                    img = frame.to_image()
-
-                    if ext == "avif":
-                        actual_path = self._save_avif(img, output_path)
-                    elif ext == "png":
-                        img.save(output_path, "PNG", compress_level=9)
-                        actual_path = output_path
-                    else:
-                        img.save(output_path, "JPEG", quality=self.config.output_quality)
-                        actual_path = output_path
-
-                    frames.append(Frame(
-                        frame_path=str(actual_path.relative_to(output_dir.parent.parent)),
-                        timestamp=float(ts),
-                        frame_number=int(ts * fps),
-                    ))
+                    candidates.append((frame.to_image(), float(ts)))
                     break
 
+        return candidates
+
+    def _process_candidates(
+        self,
+        candidates: list[tuple],
+        output_dir: Path,
+        cache_dir: Path,
+        fps: float,
+    ) -> list[Frame]:
+        """Score, select, and save frames for one shot. Runs in thread pool."""
+        min_frames = self.config.min_frames_per_shot
+        max_frames = self.config.max_frames_per_shot
+
+        dynamics_score = self._compute_dynamics_score([img for img, _ in candidates])
+        target = min_frames + round((max_frames - min_frames) * dynamics_score)
+        target = max(min_frames, min(max_frames, min(target, len(candidates))))
+
+        if target < len(candidates):
+            selected_indices = self._select_diverse_frames(
+                [img for img, _ in candidates], target
+            )
+        else:
+            selected_indices = list(range(len(candidates)))
+
+        ext = self.config.output_format
+        frames = []
+        for i, idx in enumerate(selected_indices):
+            img, ts = candidates[idx]
+            output_path = output_dir / f"frame_{i:03d}.{ext}"
+
+            if ext == "avif":
+                actual_path = self._save_avif(img, output_path)
+            elif ext == "png":
+                img.save(output_path, "PNG", compress_level=9)
+                actual_path = output_path
+            else:
+                img.save(output_path, "JPEG", quality=self.config.output_quality)
+                actual_path = output_path
+
+            frames.append(Frame(
+                frame_path=str(actual_path.relative_to(cache_dir)),
+                timestamp=ts,
+                frame_number=int(ts * fps),
+            ))
+
         return frames
+
+    def _compute_dynamics_score(self, images: list) -> float:
+        """Compute visual dynamics score [0, 1] from a sequence of PIL images.
+
+        Uses mean absolute difference between adjacent 64x64 grayscale thumbnails,
+        saturating at 0.2 (20% pixel change per frame = fully dynamic).
+        """
+        if len(images) < 2:
+            return 0.0
+
+        thumbs = [
+            np.array(img.resize((64, 64)).convert("L"), dtype=np.float32)
+            for img in images
+        ]
+
+        diffs = [
+            float(np.mean(np.abs(thumbs[i + 1] - thumbs[i])) / 255.0)
+            for i in range(len(thumbs) - 1)
+        ]
+
+        raw = float(np.mean(diffs))
+        # Static shots: ~0.01–0.05; dynamic shots: ~0.1–0.3+; saturate at 0.2
+        return min(1.0, raw / 0.2)
+
+    def _select_diverse_frames(self, images: list, count: int) -> list[int]:
+        """Select `count` indices via greedy max-min pixel diversity."""
+        if count >= len(images):
+            return list(range(len(images)))
+
+        vecs = []
+        for img in images:
+            flat = np.array(img.resize((64, 64)).convert("L"), dtype=np.float32).flatten()
+            norm = np.linalg.norm(flat)
+            vecs.append(flat / norm if norm > 0 else flat)
+        vecs_array = np.array(vecs)
+
+        selected = [0]
+        remaining = set(range(1, len(images)))
+
+        while len(selected) < count and remaining:
+            best_idx = None
+            best_score = -1.0
+            sel_vecs = vecs_array[selected]
+            for idx in remaining:
+                sims = np.dot(sel_vecs, vecs_array[idx])
+                diversity = float(1.0 - np.max(sims))
+                if diversity > best_score:
+                    best_score = diversity
+                    best_idx = idx
+            if best_idx is not None:
+                selected.append(best_idx)
+                remaining.discard(best_idx)
+
+        selected.sort()  # preserve temporal order
+        return selected
 
     def _save_avif(self, img, output_path: Path) -> Path:
         """Save image as AVIF. Falls back to JPEG if AVIF not supported."""
@@ -229,6 +338,7 @@ class KeyFrameExtractor:
         self,
         shot_frames: list[Frame],
         max_frames: int = 8,
+        base_path: Path | None = None,
     ) -> list[Frame]:
         """Select keyframes from a list of shot frames using CLIP diversity."""
         if len(shot_frames) <= max_frames:
@@ -238,7 +348,7 @@ class KeyFrameExtractor:
         valid_frames = []
         for frame in shot_frames:
             try:
-                frame_path = Path(frame.frame_path)
+                frame_path = base_path / frame.frame_path if base_path else Path(frame.frame_path)
                 if frame_path.exists():
                     emb = self.compute_clip_embedding(frame_path)
                     embeddings.append(emb)
@@ -259,16 +369,14 @@ class KeyFrameExtractor:
 
         while len(selected_indices) < max_frames and remaining:
             best_idx = None
-            best_score = -1
+            best_score = -1.0
 
             selected_embeddings = normalized[selected_indices]
 
             for idx in remaining:
-                similarities = np.dot(normalized[selected_embeddings.shape[0] - 1], normalized[idx].T)
-                diversity = 1 - similarities
-
-                if idx == len(valid_frames) - 1:
-                    diversity += 0.5
+                # Max-min diversity: min similarity to any already-selected frame
+                sims = np.dot(selected_embeddings, normalized[idx])
+                diversity = float(1.0 - np.max(sims))
 
                 if diversity > best_score:
                     best_score = diversity
@@ -278,5 +386,5 @@ class KeyFrameExtractor:
                 selected_indices.append(best_idx)
                 remaining.discard(best_idx)
 
-        selected_indices.sort(key=lambda i: shot_frames[i].timestamp if i < len(shot_frames) else 0)
+        selected_indices.sort(key=lambda i: valid_frames[i].timestamp)
         return [valid_frames[i] for i in selected_indices[:max_frames]]

@@ -24,7 +24,7 @@ def main() -> None:
         epilog=(
             "Examples:\n"
             "  uv run python -m yorishiro.video.keyframe_extractor --project projects/CPK --source cpk-film\n"
-            "  uv run python -m yorishiro.video.keyframe_extractor --source cpk-film --frames-per-shot 7\n"
+            "  uv run python -m yorishiro.video.keyframe_extractor --source cpk-film --min-frames 2 --max-frames 8\n"
         ),
     )
 
@@ -46,10 +46,16 @@ def main() -> None:
         help="Force reprocessing, ignore cache",
     )
     parser.add_argument(
-        "--frames-per-shot",
+        "--min-frames",
         type=int,
-        default=5,
-        help="Frames to extract per shot",
+        default=2,
+        help="Minimum frames to extract per shot",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=8,
+        help="Maximum frames to extract per shot",
     )
     parser.add_argument(
         "--skip-shot-detection",
@@ -87,7 +93,7 @@ def main() -> None:
 
     print(f"\nExtracting keyframes from {len(shot_list.shots)} shots...")
 
-    config = KeyFrameExtractorConfig(frames_per_shot=args.frames_per_shot)
+    config = KeyFrameExtractorConfig(min_frames_per_shot=args.min_frames, max_frames_per_shot=args.max_frames)
     extractor = KeyFrameExtractor(config)
 
     keyframes = extractor.extract(video_path, shot_list, output_dir, force=args.force)

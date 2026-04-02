@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from pydantic_ai.messages import BinaryContent
 
 from yorishiro.agent_utils import build_agent_from_args
 from yorishiro.models.film_models import (
@@ -20,6 +21,8 @@ from yorishiro.models.film_models import (
     MusicSegment,
 )
 from yorishiro.audio.speaker_bank import SpeakerBankManager
+
+_MEDIA_TYPES = {".avif": "image/avif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
 
 SCENE_ANALYSIS_SYSTEM_PROMPT = """\
@@ -121,9 +124,9 @@ class SceneAnalysisAgent:
         project_name: str,
         scene_id: str,
         frame_base_path: Path,
-    ) -> str:
-        """Build the prompt for scene analysis."""
-        parts = []
+    ) -> list[Any]:
+        """Build the prompt for scene analysis, with embedded keyframe images."""
+        content: list[Any] = []
 
         start_shot = shot_list.get_shot(scene_group.shots[0])
         end_shot = shot_list.get_shot(scene_group.shots[-1])
@@ -131,65 +134,80 @@ class SceneAnalysisAgent:
         scene_start = start_shot.start_time if start_shot else 0.0
         scene_end = end_shot.end_time if end_shot else 0.0
 
-        parts.append(f"# Scene Analysis: {scene_id}")
-        parts.append(f"Project: {project_name}")
-        parts.append(f"Time range: {self._format_time(scene_start)} - {self._format_time(scene_end)}")
-        parts.append(f"Shots: {', '.join(scene_group.shots)}")
-        parts.append(f"Provisional location: {scene_group.provisional_location}")
-        parts.append("")
+        header = "\n".join([
+            f"# Scene Analysis: {scene_id}",
+            f"Project: {project_name}",
+            f"Time range: {self._format_time(scene_start)} - {self._format_time(scene_end)}",
+            f"Shots: {', '.join(scene_group.shots)}",
+            f"Provisional location: {scene_group.provisional_location}",
+            "",
+            "## Key Frames",
+        ])
+        content.append(header)
 
-        parts.append("## Key Frames\n")
         for frame in selected_frames:
             frame_path = frame_base_path / frame.frame_path
             if frame_path.exists():
-                parts.append(f"Frame at {self._format_time(frame.timestamp)}: {frame_path}")
+                media_type = _MEDIA_TYPES.get(frame_path.suffix.lower(), "image/jpeg")
+                content.append(f"Frame at {self._format_time(frame.timestamp)}:")
+                try:
+                    content.append(BinaryContent(data=frame_path.read_bytes(), media_type=media_type))
+                except Exception:
+                    pass
 
-        parts.append("\n## Transcript\n")
+        transcript_lines = ["\n## Transcript\n"]
         for entry in transcript.entries:
             if entry.end > scene_start and entry.start < scene_end:
                 speaker_name = speaker_bank_manager.get_speaker_name(entry.speaker_global) or entry.speaker_global
                 emotion_str = f" [{entry.emotion}]" if entry.emotion else ""
                 volume_str = f", {entry.volume}" if entry.volume else ""
-                parts.append(
+                transcript_lines.append(
                     f"{self._format_time(entry.start)} {speaker_name}{emotion_str}{volume_str}: \"{entry.text}\""
                 )
 
-        parts.append("\n## Sound Events\n")
+        sound_lines = ["\n## Sound Events\n"]
         for event in sound_events:
             if event.end > scene_start and event.start < scene_end:
-                parts.append(f"{self._format_time(event.start)}-{self._format_time(event.end)}: [{event.event_type}] {event.description}")
+                sound_lines.append(
+                    f"{self._format_time(event.start)}-{self._format_time(event.end)}: [{event.event_type}] {event.description}"
+                )
 
-        parts.append("\n## Music\n")
+        music_lines = ["\n## Music\n"]
         for seg in music:
             if seg.end > scene_start and seg.start < scene_end:
                 music_desc = f"{self._format_time(seg.start)}-{self._format_time(seg.end)}: {seg.music_type}"
                 if seg.mood:
-                    music_desc += f", mood: {seg.mood}"
+                    music_desc += f", {seg.mood}"
                 if seg.instrumentation:
                     music_desc += f", instruments: {seg.instrumentation}"
-                parts.append(music_desc)
+                music_lines.append(music_desc)
                 if seg.has_lyrics and seg.lyrics_excerpt:
-                    parts.append(f"  Lyrics: {seg.lyrics_excerpt}")
+                    music_lines.append(f"  Lyrics: {seg.lyrics_excerpt}")
 
-        parts.append("\n## Current Speaker Map\n")
+        speaker_lines = ["\n## Current Speaker Map\n"]
         for spk_info in speaker_bank_manager.speaker_bank.speakers:
             status = "confirmed" if spk_info.confidence == "confirmed" else "unconfirmed"
             name = speaker_bank_manager.speaker_bank.speaker_map.get(spk_info.speaker_id, "?")
-            parts.append(f"  {spk_info.speaker_id} → {name} [{status}]")
+            speaker_lines.append(f"  {spk_info.speaker_id} → {name} [{status}]")
 
-        parts.append("\n## Task\n")
-        parts.append("Analyze this scene and provide:")
-        parts.append("1. Visual description (synthesized, not frame-by-frame)")
-        parts.append("2. Music description")
-        parts.append("3. Chronological dialogue and sounds")
-        parts.append("4. Character list (present and mentioned)")
-        parts.append("5. Confirmed speaker identities")
-        parts.append("6. Location and time of day")
-        parts.append("\nAll text content must be in the source language (same as dialogue).")
+        task_text = "\n".join([
+            "\n## Task\n",
+            "Analyze this scene and provide:",
+            "1. Visual description (synthesized, not frame-by-frame)",
+            "2. Music description",
+            "3. Chronological dialogue and sounds",
+            "4. Character list (present and mentioned)",
+            "5. Confirmed speaker identities (only if visually confirmed)",
+            "6. Location and time of day",
+            "\nAll text content must be in the source language (same as dialogue).",
+        ])
 
-        return "\n".join(parts)
+        content.append("\n".join(transcript_lines + sound_lines + music_lines + speaker_lines))
+        content.append(task_text)
 
-    async def run(self, prompt: str) -> FilmSceneContent:
+        return content
+
+    async def run(self, prompt: list[Any]) -> FilmSceneContent:
         """Run the agent with the given prompt."""
         result = await self.agent.run(prompt)
         return result.output

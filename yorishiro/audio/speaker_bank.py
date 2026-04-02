@@ -63,14 +63,19 @@ class SpeakerBankManager:
     def extract_speaker_embedding(self, audio_path: Path, start: float, end: float) -> np.ndarray | None:
         """Extract speaker embedding for a segment."""
         try:
+            import os
             import torch
             from pyannote.audio import Inference
             from pyannote.audio import Model
 
             if self._embedding_model is None:
+                hf_token = os.environ.get("HF_TOKEN")
+                if not hf_token:
+                    print("    [SpeakerEmbedding] HF_TOKEN not set, skipping embedding extraction")
+                    return None
                 model = Model.from_pretrained(
                     "pyannote/embedding",
-                    use_auth_token=False,
+                    use_auth_token=hf_token,
                 )
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 model = model.to(device)

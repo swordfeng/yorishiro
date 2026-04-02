@@ -30,6 +30,7 @@ from yorishiro.audio.speech_pipeline import SpeechPipelineConfig
 from yorishiro.audio.speaker_bank import SpeakerBankManagerConfig
 from yorishiro.audio.sound_event_detector import SoundEventDetectorConfig
 from yorishiro.audio.music_analyzer import MusicAnalyzerConfig
+from yorishiro.agent_utils import estimate_tokens
 from yorishiro.agents.film.shot_grouping import ShotGroupingAgent, build_shot_audio_summary
 from yorishiro.agents.film.scene_analysis import SceneAnalysisAgent
 from yorishiro.models.film_models import (
@@ -181,8 +182,9 @@ class FilmSceneExtractionPipeline:
             force=force,
         )
 
-        print("Step 0B.2: Speaker bank management ...")
+        print("Step 0B.2: Speaker bank management — resolving local speaker IDs ...")
         self.ctx.speaker_bank.load(cache_dir)
+        self._resolve_speaker_ids(cache_dir / "audio.wav", cache_dir)
 
         print("Step 0B.3: Sound event detection ...")
         self.ctx.sound_events = self.ctx.sound_detector.detect(
@@ -201,6 +203,44 @@ class FilmSceneExtractionPipeline:
         )
 
         self.ctx.speaker_bank.save(cache_dir)
+
+    def _resolve_speaker_ids(self, audio_path: Path, cache_dir: Path) -> None:
+        """Resolve diarization local speaker IDs (SPEAKER_XX) to global SPKR_XXX IDs."""
+        if not self.ctx.transcript or not self.ctx.transcript.entries:
+            return
+
+        # Skip if already resolved (entries already have global SPKR_XXX format)
+        if all(e.speaker_global.startswith("SPKR_") for e in self.ctx.transcript.entries):
+            return
+
+        # Collect unique local speakers and a representative segment for each
+        local_speakers: dict[str, Any] = {}
+        for entry in self.ctx.transcript.entries:
+            if entry.speaker_global not in local_speakers:
+                local_speakers[entry.speaker_global] = entry
+
+        # Assign global IDs (one per unique local speaker)
+        local_to_global: dict[str, str] = {}
+        for local_id, rep_entry in local_speakers.items():
+            if audio_path.exists():
+                embedding = self.ctx.speaker_bank.extract_speaker_embedding(
+                    audio_path, rep_entry.start, rep_entry.end
+                )
+            else:
+                embedding = None
+            global_id = self.ctx.speaker_bank.assign_global_speaker_id(
+                local_id, embedding, rep_entry.start
+            )
+            local_to_global[local_id] = global_id
+            print(f"    {local_id} → {global_id}")
+
+        # Rewrite transcript entries with global IDs
+        for entry in self.ctx.transcript.entries:
+            entry.speaker_global = local_to_global.get(entry.speaker_global, entry.speaker_global)
+
+        # Persist updated transcript
+        cache_file = cache_dir / "transcript.json"
+        cache_file.write_text(self.ctx.transcript.model_dump_json(indent=2), encoding="utf-8")
 
     def _run_step_1(self, force: bool) -> None:
         """Step 1: Shot grouping with LLM."""
@@ -242,7 +282,7 @@ class FilmSceneExtractionPipeline:
         idx = 0
 
         cache_dir = self.ctx.output_dir / "cache"
-        frame_base_path = cache_dir / "frames"
+        frame_base_path = cache_dir  # frame.frame_path is relative to cache_dir
 
         while idx < len(shots):
             batch_end = min(idx + batch_size, len(shots))
@@ -287,7 +327,8 @@ class FilmSceneExtractionPipeline:
                         partial_group = None
 
                 previous_summary = result.summary_update
-                idx = result.next_shot_index
+                # Always advance at least to batch_end to prevent infinite loops
+                idx = max(result.next_shot_index, batch_end)
 
             except Exception as e:
                 print(f"  Error in grouping: {e}", file=sys.stderr)
@@ -324,7 +365,7 @@ class FilmSceneExtractionPipeline:
         scenes_metadata: list[FilmSceneMetadata] = []
 
         cache_dir = self.ctx.output_dir / "cache"
-        frame_base_path = cache_dir / "frames"
+        frame_base_path = cache_dir  # frame.frame_path is relative to cache_dir
 
         for scene_num, group in enumerate(self._shot_groups, 1):
             scene_id = f"fs{scene_num:03d}"
@@ -354,7 +395,7 @@ class FilmSceneExtractionPipeline:
 
             max_frames = self.ctx.keyframe_extractor.config.max_frames_per_scene
             selected_frames = self.ctx.keyframe_extractor.select_keyframes_for_scene(
-                all_frames, max_frames=max_frames
+                all_frames, max_frames=max_frames, base_path=cache_dir
             )
 
             scene_start = first_shot.start_time
@@ -377,7 +418,10 @@ class FilmSceneExtractionPipeline:
                 content = await analysis_agent.run(prompt)
 
                 for spk_id, name in content.speaker_map_update.items():
-                    self.ctx.speaker_bank.confirm_speaker(spk_id, name, scene_id)
+                    if self.ctx.speaker_bank.speaker_bank.get_speaker(spk_id) is not None:
+                        self.ctx.speaker_bank.confirm_speaker(spk_id, name, scene_id)
+                    else:
+                        print(f"  [Warning] VLM confirmed unknown speaker {spk_id} → {name}, skipping")
 
                 scene_file_name = f"scene_{scene_id}.txt"
                 scene_file_path = scenes_dir / scene_file_name
@@ -401,7 +445,7 @@ class FilmSceneExtractionPipeline:
                         "end_time": scene_end,
                     },
                     content_file=str(scene_file_path.relative_to(self.ctx.output_dir)),
-                    token_estimate=len(scene_text),
+                    token_estimate=estimate_tokens(scene_text),
                     location=content.location,
                     time_of_day=content.time_of_day,
                     characters={

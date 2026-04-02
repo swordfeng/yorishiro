@@ -221,7 +221,7 @@ def find_end_offset(
     pat = re.escape(end_clean)
     # Special fix for Gemini models - it escapes newline in the string
     if "\\n" in end_clean:
-        pat = pat + "|" + end_clean.replace("\\n", "")
+        pat = pat + "|" + re.escape(end_clean.replace("\\n", ""))
     m = re.search(pat, norm_str)
     if m is not None:
         return pairs[m.end() - 1][0] + 1

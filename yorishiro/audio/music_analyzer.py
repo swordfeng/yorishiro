@@ -12,17 +12,18 @@ import librosa
 import numpy as np
 import soundfile as sf
 import torch
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
 
 from yorishiro.models.film_models import MusicSegment
 from yorishiro.utils import get_device
 
 
-class MusicAnalyzerConfig(BaseModel):
-    separation_backend: str = Field(default="demucs", description="Music/vocals separation backend")
-    separation_model: str = Field(default="htdemucs", description="Demucs model")
-    analysis_backend: str = Field(default="essentia", description="Music analysis backend")
-    detect_lyrics: bool = Field(default=True, description="Whether to extract lyrics from insert songs")
+@dataclass
+class MusicAnalyzerConfig:
+    separation_backend: str = "demucs"
+    separation_model: str = "htdemucs"
+    analysis_backend: str = "essentia"
+    detect_lyrics: bool = True
 
 
 class MusicAnalyzer:
@@ -82,16 +83,16 @@ class MusicAnalyzer:
             return music_path, vocals_path
 
         try:
-            from demucs import pretrained  # type: ignore
-            from demucs.apply import apply_model  # type: ignore
-            from demucs.audio import AudioFile  # type: ignore
+            from demucs import pretrained
+            from demucs.apply import apply_model
+            from demucs.audio import AudioFile
 
             device = get_device()
             model = pretrained.get_model(self.config.separation_model)
             model.to(device)
             model.eval()
 
-            audio_file = AudioFile(str(audio_path))
+            audio_file = AudioFile(audio_path)
             audio = audio_file.read(streams=0, samplerate=44100, channels=2)
 
             with torch.no_grad():

@@ -17,21 +17,22 @@ import av
 import soundfile as sf
 import torch
 from av.audio.frame import AudioFrame
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
 
 from yorishiro.models.film_models import Transcript, TranscriptEntry
 from yorishiro.utils import get_device
 
 
-class SpeechPipelineConfig(BaseModel):
-    vad_backend: str = Field(default="silero-vad", description="VAD backend")
-    diarization_backend: str = Field(default="pyannote", description="Diarization backend")
-    diarization_model: str = Field(default="pyannote/speaker-diarization-3.1")
-    stt_backend: str = Field(default="faster-whisper", description="STT backend")
-    stt_model: str = Field(default="large-v3", description="Whisper model size")
-    language: str | None = Field(default=None, description="Language hint (None for auto-detect)")
-    emotion_backend: str = Field(default="emotion2vec", description="Emotion detection backend")
-    hf_token_env: str = Field(default="HF_TOKEN", description="HuggingFace token env var")
+@dataclass
+class SpeechPipelineConfig:
+    vad_backend: str = "silero-vad"
+    diarization_backend: str = "pyannote"
+    diarization_model: str = "pyannote/speaker-diarization-3.1"
+    stt_backend: str = "faster-whisper"
+    stt_model: str = "large-v3"
+    language: str | None = None
+    emotion_backend: str = "emotion2vec"
+    hf_token_env: str = "YORISHIRO_HF_TOKEN"
 
 
 class SpeechPipeline:
@@ -66,27 +67,34 @@ class SpeechPipeline:
 
         print(f"  [SpeechPipeline] Extracting audio from {video_path.name} ...")
         audio_path = self._extract_audio(video_path, output_dir)
+        print(f"  [SpeechPipeline] Audio extracted: {audio_path.stat().st_size / 1024 / 1024:.1f} MB")
 
         print("  [SpeechPipeline] Running VAD ...")
         speech_segments = self._run_vad(audio_path)
+        print(f"  [SpeechPipeline] VAD: {len(speech_segments)} speech segment(s)")
 
         print("  [SpeechPipeline] Running speaker diarization ...")
         diarization = self._run_diarization(audio_path)
+        speakers = {d["speaker"] for d in diarization}
+        print(f"  [SpeechPipeline] Diarization: {len(diarization)} turn(s), {len(speakers)} speaker(s): {', '.join(sorted(speakers))}")
 
         print("  [SpeechPipeline] Running transcription ...")
         detected_language = language or self.config.language
         transcript = self._run_transcription(audio_path, diarization, speech_segments, detected_language)
+        print(f"  [SpeechPipeline] Transcription: {len(transcript.entries)} segment(s), language: {transcript.language}")
 
         print("  [SpeechPipeline] Running emotion analysis ...")
         transcript = self._analyze_emotions(audio_path, transcript)
+        emotions = {e.emotion for e in transcript.entries if e.emotion}
+        print(f"  [SpeechPipeline] Emotions detected: {', '.join(sorted(emotions)) if emotions else 'none'}")
 
         cache_file.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
-        print(f"  [SpeechPipeline] Transcribed {len(transcript.entries)} segments")
+        print(f"  [SpeechPipeline] Done — {len(transcript.entries)} segments cached")
         return transcript
 
     def _extract_audio(self, video_path: Path, output_dir: Path) -> Path:
-        """Extract audio from video as WAV using PyAV."""
-        audio_path = output_dir / "audio.wav"
+        """Extract audio from video as FLAC using PyAV."""
+        audio_path = output_dir / "audio.flac"
 
         if audio_path.exists():
             return audio_path
@@ -102,14 +110,18 @@ class SpeechPipeline:
             raise ValueError(f"No audio stream found in {video_path}")
 
         output_container = av.open(str(audio_path), "w")
-        output_stream = output_container.add_stream("pcm_s16le", rate=16000)
-        output_stream.channels = 1
+        output_stream = output_container.add_stream("flac", rate=16000)
+        assert isinstance(output_stream, av.AudioStream)
+        output_stream.layout = "mono"
 
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
         for frame in input_container.decode(audio_stream):
             assert isinstance(frame, AudioFrame)
-            if frame.sample_rate != 16000:
-                frame = frame.resample(16000)  # ty:ignore[unresolved-attribute]
-            for packet in output_stream.encode(frame):
+            for resampled in resampler.resample(frame):
+                for packet in output_stream.encode(resampled):
+                    output_container.mux(packet)
+        for resampled in resampler.resample(None):
+            for packet in output_stream.encode(resampled):
                 output_container.mux(packet)
 
         for packet in output_stream.encode():
@@ -122,27 +134,14 @@ class SpeechPipeline:
 
     def _run_vad(self, audio_path: Path) -> list[dict]:
         """Run Voice Activity Detection."""
-        try:
-            from silero_vad import load_silero_vad, read_audio  # type: ignore[import-not-found]  # ty:ignore[unresolved-import]
-        except ImportError:
-            print("    [VAD] silero-vad not installed, skipping VAD")
-            return [{"start": 0.0, "end": float("inf")}]
+        from silero_vad import load_silero_vad, read_audio
+        from silero_vad import get_speech_timestamps
 
         model = load_silero_vad()
         wav = read_audio(str(audio_path))
 
-        speech_segments = []
-        for i in range(0, len(wav), 16000):
-            chunk = wav[i:i + 16000]
-            if len(chunk) < 16000:
-                chunk = torch.nn.functional.pad(chunk, (0, 16000 - len(chunk)))
-
-            speech_prob = model(chunk, 16000)
-            if speech_prob > 0.5:
-                speech_segments.append({
-                    "start": i / 16000.0,
-                    "end": min((i + 16000) / 16000.0, len(wav) / 16000.0),
-                })
+        timestamps = get_speech_timestamps(wav, model, sampling_rate=16000, return_seconds=True)
+        speech_segments = [{"start": t["start"], "end": t["end"]} for t in timestamps]
 
         return speech_segments or [{"start": 0.0, "end": float("inf")}]
 
@@ -166,7 +165,16 @@ class SpeechPipeline:
                 self._diarization_pipeline = pipeline
 
             assert self._diarization_pipeline is not None
-            diarization = self._diarization_pipeline(str(audio_path))
+            from tqdm import tqdm
+            with tqdm(total=1.0, desc="    [Diarization]", unit="%", bar_format="{l_bar}{bar}| {elapsed}<{remaining}") as pbar:
+                last = 0.0
+                def _hook(_step_name: str, _step_artifact: object, file: object = None, total: int | None = None, completed: int | None = None) -> None:  # noqa: ARG001
+                    nonlocal last
+                    if completed is not None and total is not None and total > 0:
+                        progress = completed / total
+                        pbar.update(progress - last)
+                        last = progress
+                diarization = self._diarization_pipeline(str(audio_path), hook=_hook)
 
             segments = []
             for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -186,7 +194,7 @@ class SpeechPipeline:
         self,
         audio_path: Path,
         diarization: list[dict],
-        speech_segments: list[dict],
+        speech_segments: list[dict],  # noqa: ARG002 — reserved for future VAD-gated transcription
         language: str | None,
     ) -> Transcript:
         """Run speech-to-text on the full audio, then assign speakers by overlap."""

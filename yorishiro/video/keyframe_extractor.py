@@ -22,21 +22,22 @@ from pathlib import Path
 import av
 import numpy as np
 import torch
-from pydantic import BaseModel, Field
+from dataclasses import dataclass, field
 
 from yorishiro.models.film_models import Frame, KeyFrameSet, Shot, ShotList
 
 
-class KeyFrameExtractorConfig(BaseModel):
-    backend: str = Field(default="clip", description="Embedding backend")
-    model: str = Field(default="ViT-B/32", description="CLIP model variant (faster)")
-    sampling_fps: float = Field(default=1.6, description="Frames per second for dense sampling")
-    min_frames_per_shot: int = Field(default=2, description="Minimum frames to extract per shot")
-    max_frames_per_shot: int = Field(default=8, description="Maximum frames to extract per shot")
-    max_frames_per_scene: int = Field(default=8, description="Max frames per scene to give to VLM")
-    output_format: str = Field(default="avif", description="Output image format: 'avif', 'jpg', or 'png'")
-    output_quality: int = Field(default=85, description="Output quality (1-100)")
-    workers: int = Field(default_factory=lambda: os.cpu_count() or 4, description="Worker threads for parallel frame processing")
+@dataclass
+class KeyFrameExtractorConfig:
+    backend: str = "clip"
+    model: str = "ViT-B/32"
+    sampling_fps: float = 1.6
+    min_frames_per_shot: int = 2
+    max_frames_per_shot: int = 8
+    max_frames_per_scene: int = 8
+    output_format: str = "avif"
+    output_quality: int = 85
+    workers: int = field(default_factory=lambda: os.cpu_count() or 4)
 
 
 class KeyFrameExtractor:

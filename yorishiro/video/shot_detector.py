@@ -9,18 +9,19 @@ import hashlib
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
 
 from yorishiro.models.film_models import Shot, ShotList
 
 
-class ShotDetectorConfig(BaseModel):
-    backend: str = Field(default="pyscenedetect", description="Detection backend")
-    detector: str = Field(default="adaptive", description="Detector type: 'adaptive' or 'content'")
-    threshold: float = Field(default=4.0, description="Detection threshold (adaptive: ratio vs local mean; content: absolute HSV delta)")
-    min_content_val: float = Field(default=15.0, description="AdaptiveDetector: minimum raw content score to consider a cut candidate")
-    min_scene_len: int = Field(default=15, description="Minimum scene length in frames")
-    show_progress: bool = Field(default=True, description="Show progress bar during detection")
+@dataclass
+class ShotDetectorConfig:
+    backend: str = "pyscenedetect"
+    detector: str = "adaptive"
+    threshold: float = 4.0
+    min_content_val: float = 15.0
+    min_scene_len: int = 15
+    show_progress: bool = True
 
 
 class ShotDetector:

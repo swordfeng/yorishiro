@@ -10,16 +10,17 @@ from pathlib import Path
 
 import librosa
 import torch
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
 
 from yorishiro.models.film_models import SoundEvent
 from yorishiro.utils import get_device
 
 
-class SoundEventDetectorConfig(BaseModel):
-    backend: str = Field(default="clap", description="Detection backend")
-    model: str = Field(default="laion/larger_clap_general", description="CLAP model")
-    threshold: float = Field(default=0.3, description="Detection threshold")
+@dataclass
+class SoundEventDetectorConfig:
+    backend: str = "clap"
+    model: str = "laion/larger_clap_general"
+    threshold: float = 0.3
 
 
 SOUND_PROMPTS = [

@@ -12,15 +12,16 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
 
 from yorishiro.models.film_models import SpeakerBank
 from yorishiro.utils import get_device
 
 
-class SpeakerBankManagerConfig(BaseModel):
-    embedding_backend: str = Field(default="pyannote", description="Embedding backend")
-    similarity_threshold: float = Field(default=0.75, description="Threshold for speaker matching")
+@dataclass
+class SpeakerBankManagerConfig:
+    embedding_backend: str = "pyannote"
+    similarity_threshold: float = 0.75
 
 
 class SpeakerBankManager:

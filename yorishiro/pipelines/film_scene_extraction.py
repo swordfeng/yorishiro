@@ -184,11 +184,11 @@ class FilmSceneExtractionPipeline:
 
         print("Step 0B.2: Speaker bank management — resolving local speaker IDs ...")
         self.ctx.speaker_bank.load(cache_dir)
-        self._resolve_speaker_ids(cache_dir / "audio.wav", cache_dir)
+        self._resolve_speaker_ids(cache_dir / "audio.flac", cache_dir)
 
         print("Step 0B.3: Sound event detection ...")
         self.ctx.sound_events = self.ctx.sound_detector.detect(
-            cache_dir / "audio.wav",
+            cache_dir / "audio.flac",
             cache_dir,
             transcript_end=self.ctx.transcript.entries[-1].end if self.ctx.transcript.entries else 0.0,
             force=force,
@@ -197,7 +197,7 @@ class FilmSceneExtractionPipeline:
         print("Step 0B.4: Music analysis ...")
         self.ctx.music_segments = self.ctx.music_analyzer.analyze(
             video_path,
-            cache_dir / "audio.wav",
+            cache_dir / "audio.flac",
             cache_dir,
             force=force,
         )

@@ -2,9 +2,6 @@
 # Raw materials are not part of the code/docs
 /material/
 
-# Material metadata (contains paths and may be local)
-/material.yaml
-
 # Projects folder
 /projects/
 

@@ -527,13 +527,13 @@ def main() -> None:
     backup = ProjectBackup(project.root)
     scenes_dir = project.source_dir(args.source) / "scenes"
     valid_stems = {p.stem for p in chapter_paths}
-    cleanup_stale_scene_dirs(scenes_dir, valid_stems, [project.root / "material.yaml"])
+    cleanup_stale_scene_dirs(scenes_dir, valid_stems, [project.root / "project.yaml"])
 
     processed_any = False
     for chapter_path in chapter_paths:
         output_dir = project.source_dir(args.source) / "scenes" / chapter_path.stem
         if process_chapter(chapter_path, output_dir, args.force, args, config,
-                           material_yaml=project.root / "material.yaml"):
+                           material_yaml=project.root / "project.yaml"):
             processed_any = True
 
     if processed_any and not args.no_backup:

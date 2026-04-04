@@ -1,0 +1,87 @@
+"""novel.scenes step: segment each chapter into scenes using an LLM agent."""
+
+from __future__ import annotations
+
+import argparse
+import re
+from pathlib import Path
+
+from yorishiro.project import ModelConfig, Project
+from yorishiro.tasks.base import Step, Task
+from yorishiro.tasks.registry import ModelRegistry
+
+
+class NovelScenesTask(Task):
+    """Segment one chapter file into scenes."""
+
+    def __init__(
+        self,
+        chapter_path: Path,
+        output_dir: Path,
+        project_yaml: Path,
+        model_config: ModelConfig,
+    ) -> None:
+        self.key = chapter_path.stem  # e.g. "ch003"
+        self._chapter_path = chapter_path
+        self._output_dir = output_dir
+        self._project_yaml = project_yaml
+        self._model_config = model_config
+
+    def input_paths(self) -> list[Path]:
+        return [self._chapter_path, self._project_yaml]
+
+    def output_paths(self) -> list[Path]:
+        return [self._output_dir / "scenes_manifest.json"]
+
+    def _run(self) -> None:
+        from yorishiro.scene import process_chapter
+
+        print(f"[novel.scenes] Processing {self._chapter_path.name} ...")
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+
+        cfg = self._model_config
+        args = argparse.Namespace(
+            provider=cfg.provider,
+            model=cfg.name,
+            thinking=cfg.thinking,
+            output_mode=cfg.output_mode,
+            base_url=cfg.base_url,
+            api_key_env=cfg.api_key_env,
+        )
+        process_chapter(
+            chapter_file=self._chapter_path,
+            output_dir=self._output_dir,
+            force=True,  # staleness already checked by Task.run()
+            args=args,
+            config=cfg,
+            material_yaml=self._project_yaml,
+        )
+
+
+class NovelScenesStep(Step):
+    step_id = "novel.scenes"
+
+    def __init__(self, project: Project, source_id: str, registry: ModelRegistry) -> None:
+        self._project = project
+        self._source_id = source_id
+        self._registry = registry
+
+    def tasks(self) -> list[Task]:
+        config = self._registry.cloud_config("novel.scenes")
+        chapters = self._project.list_chapters(self._source_id)
+        scenes_dir = self._project.step_dir(self._source_id, "scenes")
+        project_yaml = self._project.root / "project.yaml"
+
+        return [
+            NovelScenesTask(
+                chapter_path=ch,
+                output_dir=scenes_dir / ch.stem,
+                project_yaml=project_yaml,
+                model_config=config,
+            )
+            for ch in chapters
+        ]
+
+    def _chapter_stem_to_index(self, stem: str) -> int:
+        m = re.search(r"\d+", stem)
+        return int(m.group()) if m else 0

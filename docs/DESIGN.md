@@ -1,8 +1,141 @@
 # Yorishiro（依り代）— 技术设计
 
-> **版本**: 0.3 · **状态**: 草案 · **最后更新**: 2026-03-31
+> **版本**: 0.4 · **状态**: 草案 · **最后更新**: 2026-04-03
 
-产品目标与规格见 [requirements.md](./requirements.md)。
+产品目标与规格见 [REQUIREMENTS.md](./REQUIREMENTS.md)。
+
+---
+
+## 0. Pipeline Architecture | 流水线架构
+
+### 0.1 Project Folder Structure | 项目目录结构
+
+```
+projects/{CODE}/
+├── project.yaml                    # 项目配置 (sources, models, steps, step_groups)
+├── raw/                            # 只读原始素材 (epub, mkv, pdf, …)
+│
+├── processed/                      # 各 source 的中间产出
+│   └── {source-id}/
+│       └── steps/
+│           ├── chapters/           # novel.chapters: ch000.txt, ch001.txt, …
+│           ├── scenes/             # novel.scenes:   ch000/scenes_manifest.json + scene_*.txt
+│           ├── aliases/            # novel.aliases:  character_aliases.json
+│           ├── characters/         # novel.characters: {name}/ch*.json + insights.md
+│           ├── shots/              # film.shots:     shots.json
+│           ├── frames/             # film.frames:    frame_index.json + frames/{shot_id}/frame_*.avif
+│           ├── audio/              # film.audio:     transcript.json, speaker_bank.json, …
+│           ├── shot_groups/        # film.shot_groups: shot_groups.json
+│           └── scenes/             # film.scenes:    scene_fs*.txt + scene_index.json
+│
+├── cross/                          # 跨 source 中间产出
+│   └── characters/{name}/          # cross.synthesize 输入
+│
+└── souls/                          # 最终产出: {name}.md
+```
+
+完成标记 (completion marker): 每个 task 以其自然 summary/index 文件作为完成标志 (如 `shots.json`, `scene_index.json`, `scenes_manifest.json`), 无需额外 `.done` 文件。staleness 判断基于 marker 的 mtime vs 输入文件 mtime。
+
+### 0.2 project.yaml Schema
+
+```yaml
+project:
+  name: "项目名"
+  code: "CODE"
+
+sources:
+  - id: source-id
+    type: novel | film          # 决定使用哪些 steps
+    path: raw/file.epub         # 相对项目根目录, 或绝对路径
+    authority: PRIMARY | SECONDARY | RUMOR
+    config:
+      language: ja | zh-CN | en
+
+# 命名模型定义 — 本地模型 (backend 字段) 或云端模型 (provider 字段), 定义一次, steps 中引用
+models:
+  whisper:
+    backend: faster-whisper
+    model: large-v3
+    device: auto
+  sonnet:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4-6
+    thinking: medium
+    output_mode: tool
+    api_key_env: YORISHIRO_API_KEY_OPENROUTER
+  # … 其他模型
+
+# 每个 step 的配置: 引用模型 + step 级参数 (覆盖模型定义中的同名字段)
+steps:
+  film.audio:
+    model: whisper
+    diarization_model: diarization
+  film.shot_groups:
+    model: sonnet
+    batch_size: 15
+  novel.scenes:
+    model: sonnet
+    batch_tokens: 32000
+  cross.synthesize:
+    model: sonnet
+    thinking: high
+  # …
+
+step_groups:
+  novel-full: [novel.chapters, novel.scenes, novel.aliases, novel.characters]
+  film-full:  [film.shots, film.frames, film.audio, film.shot_groups, film.scenes]
+  all:        [novel.chapters, novel.scenes, novel.aliases, novel.characters,
+               film.shots, film.frames, film.audio, film.shot_groups, film.scenes,
+               cross.synthesize]
+```
+
+### 0.3 Task / Step Abstraction | 任务抽象
+
+```
+Task (ABC)                       — 原子工作单元
+├── output_paths() → list[Path]  — 该 task 产出的文件
+├── input_paths()  → list[Path]  — 该 task 依赖的输入文件
+├── completion_marker() → Path   — 用于 staleness 判断的单一文件 (默认 output_paths()[0])
+├── is_stale() → bool            — marker 不存在, 或任意输入比 marker 新
+└── run(force=False)             — 若 stale (或 force) 则执行 _run()
+
+Step (ABC)                       — 命名步骤, 拥有一组 Task
+├── step_id: str                 — e.g. "novel.scenes", "film.audio"
+├── tasks() → list[Task]         — 按顺序返回所有 task (如每章一个 task)
+└── run(force, task_key)         — 运行全部 task, 或指定 key 的单个 task
+
+ModelRegistry                    — 懒加载本地模型 + 解析云端配置
+├── step_config(step_id) → dict  — 合并: step 级字段 → 引用模型定义
+├── cloud_config(step_id) → ModelConfig
+└── get_*(step_id) → 本地模型实例 (懒加载, 按模型名缓存)
+
+Orchestrator                     — 依赖解析 + 运行 + 备份
+├── run(steps, source_id, force, task_key)
+├── run_group(group_name, source_id)
+└── run_all()
+```
+
+### 0.4 CLI | 命令行
+
+```bash
+# 运行单个 step
+python -m yorishiro run --project projects/CPK --source cpk-novel --step novel.scenes
+
+# 运行 step 内单个 task (如单章)
+python -m yorishiro run --project projects/CPK --source cpk-novel --step novel.scenes --task ch003
+
+# 运行命名 step group
+python -m yorishiro run --project projects/CPK --source cpk-novel --group novel-full
+
+# 运行所有 steps
+python -m yorishiro run --project projects/CPK --all
+
+# 强制重跑 (忽略 staleness)
+python -m yorishiro run --project projects/CPK --source cpk-film --step film.audio --force
+
+# 查看各 step 完成状态
+python -m yorishiro status --project projects/CPK
+```
 
 ---
 
@@ -26,7 +159,7 @@
    │        
    │   **输出结构** (per-shot):
    │   ```
-   │   cache/frames/{shot_id}/
+   │   steps/frames/frames/{shot_id}/
    │       ├── frame_000.jpg        # 第1帧 (begin, 必选)
    │       ├── frame_001.jpg        # 语义选择的中间帧
    │       ├── ...
@@ -167,7 +300,7 @@ target = max(min_frames, min(max_frames, target))  # 限制在 [min_frames, max_
 
 **存储策略**:
 ```
-cache/frames/
+steps/frames/frames/
 ├── sh001/
 │   ├── frame_000.jpg          # 第1帧 (begin) - 必选
 │   ├── frame_001.jpg          # 语义选择的中间帧
@@ -259,23 +392,23 @@ Scene ID 格式: `fs{全局索引:03d}` (影片无章节结构, 使用平铺索�
 **缓存策略**: Layer 0 全部输出持久化, 缓存 key 为 `sha256(mtime + filesize)`:
 
 ```
-processed/film/{video_hash}/
-    ├── shots.json              # 分镜边界
-    ├── frames/                 # 关键帧存储 (per-shot)
-    │   ├── sh001/
-    │   │   ├── frame_000.jpg   # 2-8 帧图像 (仅选中帧)
-    │   │   ├── frame_001.jpg
-    │   │   ├── ...
-    │   │   └── embeddings.npz  # 选中帧的 CLIP embedding (2-8 个)
-    │   ├── sh002/
-    │   │   └── ...
-    │   └── ...
-    ├── frame_index.json        # shot_id → 帧路径列表 (轻量索引)
-    ├── transcript.json         # STT + 分离 + 情绪 (含全局 SPKR_XXX)
-    ├── speaker_embeddings.npz  # 全局 Speaker Bank
-    ├── speaker_map.json        # SPKR_XXX → 角色名 (Step 2 逐步建立)
-    ├── sound_events.json       # 声音事件检测结果
-    └── music_analysis.json     # BGM/插入曲分析结果
+processed/{source-id}/steps/
+    ├── shots/
+    │   └── shots.json              # 分镜边界 (completion marker)
+    ├── frames/
+    │   ├── frame_index.json        # shot_id → 帧路径列表 (completion marker)
+    │   └── frames/
+    │       ├── sh001/
+    │       │   ├── frame_000.jpg   # 2-8 帧图像 (仅选中帧)
+    │       │   ├── frame_001.jpg
+    │       │   ├── ...
+    │       │   └── embeddings.npz  # 选中帧的 CLIP embedding (2-8 个)
+    │       └── sh002/
+    └── audio/
+        ├── transcript.json         # STT + 分离 + 情绪 — completion marker
+        ├── speaker_bank.json       # 全局 Speaker Bank (SPKR_XXX → 角色名)
+        ├── sound_events.json       # 声音事件检测结果
+        └── music_analysis.json     # BGM/插入曲分析结果
 ```
 
 **关键帧存储结构说明**:

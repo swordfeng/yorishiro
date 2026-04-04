@@ -40,9 +40,12 @@ class MusicAnalyzer:
         audio_path: Path,
         output_dir: Path,
         force: bool = False,
+        nonvoice_path: Path | None = None,
     ) -> list[MusicSegment]:
         """Analyze music in video.
 
+        If nonvoice_path is provided (pre-separated non-voice stem), internal
+        Demucs separation is skipped and that file is used directly.
         Returns list of MusicSegment.
         Caches to output_dir / music_analysis.json.
         """
@@ -56,8 +59,12 @@ class MusicAnalyzer:
             except Exception:
                 pass
 
-        print(f"  [MusicAnalyzer] Separating music from {video_path.name} ...")
-        music_path, vocals_path = self._separate_music(audio_path, output_dir)
+        if nonvoice_path is not None:
+            print(f"  [MusicAnalyzer] Using pre-separated non-voice stem: {nonvoice_path.name}")
+            music_path, vocals_path = nonvoice_path, None
+        else:
+            print(f"  [MusicAnalyzer] Separating music from {video_path.name} ...")
+            music_path, vocals_path = self._separate_music(audio_path, output_dir)
 
         print("  [MusicAnalyzer] Detecting music segments ...")
         segments = self._detect_music_segments(music_path, audio_path, vocals_path)

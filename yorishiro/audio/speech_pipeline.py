@@ -50,9 +50,12 @@ class SpeechPipeline:
         output_dir: Path,
         language: str | None = None,
         force: bool = False,
+        audio_path: Path | None = None,
     ) -> Transcript:
         """Process audio from video and return transcript.
 
+        If audio_path is provided (e.g. a pre-separated voice.flac), it is used
+        directly and audio extraction from video is skipped.
         Caches to output_dir / transcript.json.
         """
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -65,9 +68,12 @@ class SpeechPipeline:
             except Exception:
                 pass
 
-        print(f"  [SpeechPipeline] Extracting audio from {video_path.name} ...")
-        audio_path = self._extract_audio(video_path, output_dir)
-        print(f"  [SpeechPipeline] Audio extracted: {audio_path.stat().st_size / 1024 / 1024:.1f} MB")
+        if audio_path is not None:
+            print(f"  [SpeechPipeline] Using pre-extracted audio: {audio_path.name}")
+        else:
+            print(f"  [SpeechPipeline] Extracting audio from {video_path.name} ...")
+            audio_path = self._extract_audio(video_path, output_dir)
+            print(f"  [SpeechPipeline] Audio extracted: {audio_path.stat().st_size / 1024 / 1024:.1f} MB")
 
         print("  [SpeechPipeline] Running VAD ...")
         speech_segments = self._run_vad(audio_path)
@@ -90,6 +96,60 @@ class SpeechPipeline:
 
         cache_file.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
         print(f"  [SpeechPipeline] Done — {len(transcript.entries)} segments cached")
+        return transcript
+
+    # ------------------------------------------------------------------
+    # Public single-stage methods (used by individual step classes)
+    # ------------------------------------------------------------------
+
+    def run_vad(self, audio_path: Path, output_dir: Path) -> list[dict]:
+        """Run VAD and write vad.json. Returns speech segments."""
+        print(f"  [VAD] Running on {audio_path.name} ...")
+        segments = self._run_vad(audio_path)
+        out = output_dir / "vad.json"
+        out.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  [VAD] Done — {len(segments)} speech segment(s)")
+        return segments
+
+    def run_diarization(self, audio_path: Path, output_dir: Path) -> list[dict]:
+        """Run diarization and write diarization.json. Returns speaker turns."""
+        print(f"  [Diarization] Running on {audio_path.name} ...")
+        turns = self._run_diarization(audio_path)
+        out = output_dir / "diarization.json"
+        out.write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
+        speakers = {t["speaker"] for t in turns}
+        print(f"  [Diarization] Done — {len(turns)} turn(s), {len(speakers)} speaker(s): {', '.join(sorted(speakers))}")
+        return turns
+
+    def run_stt(
+        self,
+        audio_path: Path,
+        output_dir: Path,
+        language: str | None = None,
+    ) -> Transcript:
+        """Run STT using cached vad.json + diarization.json. Writes transcript_raw.json."""
+        vad_path = output_dir / "vad.json"
+        diar_path = output_dir / "diarization.json"
+        speech_segments = json.loads(vad_path.read_text(encoding="utf-8"))
+        diarization = json.loads(diar_path.read_text(encoding="utf-8"))
+        detected_language = language or self.config.language
+        print(f"  [STT] Transcribing {audio_path.name} ...")
+        transcript = self._run_transcription(audio_path, diarization, speech_segments, detected_language)
+        out = output_dir / "transcript_raw.json"
+        out.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
+        print(f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}")
+        return transcript
+
+    def run_emotion(self, audio_path: Path, output_dir: Path) -> Transcript:
+        """Run emotion analysis on transcript_raw.json. Writes transcript.json."""
+        raw_path = output_dir / "transcript_raw.json"
+        transcript = Transcript(**json.loads(raw_path.read_text(encoding="utf-8")))
+        print(f"  [Emotion] Analyzing {len(transcript.entries)} segment(s) ...")
+        transcript = self._analyze_emotions(audio_path, transcript)
+        emotions = {e.emotion for e in transcript.entries if e.emotion}
+        out = output_dir / "transcript.json"
+        out.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
+        print(f"  [Emotion] Done — {', '.join(sorted(emotions)) if emotions else 'none'}")
         return transcript
 
     def _extract_audio(self, video_path: Path, output_dir: Path) -> Path:

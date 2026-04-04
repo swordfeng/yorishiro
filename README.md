@@ -109,36 +109,80 @@ This design ensures:
 
 | Item | Status |
 |------|--------|
-| **Version** | 0.3 |
+| **Version** | 0.4 |
 | **State** | Draft |
-| **Phase** | Phase 1 (Extraction — Novel ✅, Film next) |
-
-For full architecture details, see [yorishiro.md](./yorishiro.md).
+| **Phase** | Phase 1 (Extraction — all steps complete, pipeline orchestration in progress) |
 
 ---
 
 ## Project Structure | 项目结构
 
+### Code | 代码
+
 ```
 yorishiro/
-├── extract/                 # Phase 1: Extraction pipelines
-│   ├── film_pipeline.py    #   Film processing (scene detection, keyframes, STT)
-│   ├── novel_pipeline.py   #   Novel processing (segmentation, summarization)
-│   └── character_extractor.py  # Character-centric extraction
-├── index/                  # Phase 2: Vector storage & retrieval
-│   ├── indexer.py          #   Vector database operations
-│   └── searcher.py         #   Retrieval API
-├── align/                  # Phase 3: Cross-source alignment
-│   └── cross_source_aligner.py
-├── synthesize/             # Phase 4: SOUL.md synthesis
-│   ├── agent.py            #   Synthesis agent
-│   └── templates.py        #   SOUL.md templates
-├── mcp_server/            # Phase 5: MCP server implementation
-│   ├── server.py          #   MCP server entry point
-│   ├── tools.py           #   MCP tool definitions
-│   └── knowledge_gate.py  #   Knowledge boundary filtering
-├── config.yaml             # Model provider configuration
-└── cli.py                 # CLI entry point
+├── tasks/                   # Phase 1: Task/Step abstractions per pipeline step
+│   ├── base.py              #   Task + Step ABCs
+│   ├── registry.py          #   ModelRegistry (lazy-loads local models + resolves cloud configs)
+│   ├── novel/               #   Novel pipeline steps (chapters, scenes, aliases, characters)
+│   ├── film/                #   Film pipeline steps (shots, frames, audio, shot_groups, scenes)
+│   └── cross/               #   Cross-source steps (synthesize)
+├── pipeline/
+│   └── orchestrator.py      #   Dependency resolution + execution + backup
+├── video/                   #   Local ML: shot detection, keyframe extraction
+├── audio/                   #   Local ML: speech, diarization, sound events, music
+├── agents/                  #   LLM/VLM agents (shot grouping, scene analysis)
+├── models/                  #   Pydantic data models
+├── project.py               #   Project config loader + path management
+├── agent_utils.py           #   Shared pydantic-ai agent builder
+├── backup.py                #   Hard-link snapshot backup
+└── cli.py                   #   Unified CLI entry point
+```
+
+### Project Folder | 项目文件夹
+
+```
+projects/{CODE}/
+├── project.yaml             # Config: sources, models, steps, step_groups
+├── raw/                     # Read-only source inputs (epub, mkv, …)
+├── processed/
+│   └── {source-id}/
+│       └── steps/
+│           ├── chapters/    # novel.chapters
+│           ├── scenes/      # novel.scenes  (per-chapter subdirs)
+│           ├── aliases/     # novel.aliases
+│           ├── characters/  # novel.characters  (per-character subdirs)
+│           ├── shots/       # film.shots
+│           ├── frames/      # film.frames
+│           ├── audio/       # film.audio
+│           ├── shot_groups/ # film.shot_groups
+│           └── scenes/      # film.scenes
+├── cross/                   # Cross-source intermediates
+└── souls/                   # Final SOUL.md outputs
+```
+
+---
+
+## Usage | 使用
+
+```bash
+# Run a single step
+python -m yorishiro run --project projects/CPK --source cpk-novel --step novel.scenes
+
+# Run a single task within a step (e.g. one chapter)
+python -m yorishiro run --project projects/CPK --source cpk-novel --step novel.scenes --task ch003
+
+# Run a named step group
+python -m yorishiro run --project projects/CPK --source cpk-novel --group novel-full
+
+# Run all steps for all sources
+python -m yorishiro run --project projects/CPK --all
+
+# Force re-run (ignore staleness)
+python -m yorishiro run --project projects/CPK --source cpk-film --step film.audio --force
+
+# Check completion status
+python -m yorishiro status --project projects/CPK
 ```
 
 ---
@@ -147,8 +191,9 @@ yorishiro/
 
 | Document | Description |
 |----------|-------------|
-| [docs/requirements.md](./docs/requirements.md) | Product goals, SOUL.md format spec, roadmap (Chinese) |
-| [docs/design.md](./docs/design.md) | Technical design, tool choices, schemas, prompt templates (Chinese) |
+| [docs/REQUIREMENTS.md](./docs/REQUIREMENTS.md) | Product goals, SOUL.md format spec, roadmap (Chinese) |
+| [docs/DESIGN.md](./docs/DESIGN.md) | Technical design: pipeline architecture, tool choices, schemas, prompt templates (Chinese) |
+| [docs/PLAN.md](./docs/PLAN.md) | Implementation status, next tasks, open questions |
 
 ## Examples | 示例
 
@@ -160,28 +205,36 @@ yorishiro/
 
 ## Model Configuration | 模型配置
 
-Yorishiro supports swappable model providers via `config.yaml`:
+Yorishiro supports swappable model providers via `project.yaml`. Models are defined once by name and referenced from step configs:
 
 ```yaml
 models:
-  extraction:     # Smaller models for extraction tasks
-    provider: "openrouter"  # or "local"
-    model: "anthropic/claude-3-haiku"
-    
-  synthesis:      # Strong models for SOUL.md synthesis
-    provider: "openrouter"
-    model: "anthropic/claude-3-opus"
-    
-  embedding:      # Vector embeddings
-    provider: "openai"
-    model: "text-embedding-3-large"
+  sonnet:                          # cloud model
+    provider: openrouter
+    name: anthropic/claude-sonnet-4-6
+    thinking: medium
+    output_mode: tool
+    api_key_env: YORISHIRO_API_KEY_OPENROUTER
+
+  whisper:                         # local model
+    backend: faster-whisper
+    model: large-v3
+    device: auto
+
+steps:
+  novel.scenes:
+    model: sonnet
+    batch_tokens: 32000
+  film.audio:
+    model: whisper
+    diarization_model: diarization
+  cross.synthesize:
+    model: sonnet
+    thinking: high                 # step-level override
 ```
 
-Supported providers:
-- **OpenRouter** — Claude, GPT, Gemini, and 100+ other models
-- **Local Models** — Ollama, Qwen, and other local LLMs
-- **OpenAI** — GPT embeddings
-- **Local Embeddings** — BGE-M3, CLIP
+Supported cloud providers: OpenRouter (Claude, GPT, Gemini, …), OpenAI.  
+Supported local backends: faster-whisper, pyannote, CLIP, adaptive shot detector, Demucs.
 
 ---
 

@@ -10,10 +10,12 @@ Pipeline:
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 
 import av
+import numpy as np
 import soundfile as sf
 import torch
 from av.audio.frame import AudioFrame
@@ -22,12 +24,16 @@ from dataclasses import dataclass
 from yorishiro.models.film_models import Transcript, TranscriptEntry
 from yorishiro.utils import get_device
 
+_DIARIZATION_CHUNK_SECONDS = 1200.0   # target chunk duration; actual cuts snap to VAD silence gaps
+_SPEAKER_SIM_THRESHOLD = 0.75         # cosine similarity threshold for cross-chunk speaker matching
+
 
 @dataclass
 class SpeechPipelineConfig:
     vad_backend: str = "silero-vad"
     diarization_backend: str = "pyannote"
     diarization_model: str = "pyannote/speaker-diarization-3.1"
+    diarization_batch_size: int = 32    # pyannote 4.x default is 1; 32 is much faster
     stt_backend: str = "faster-whisper"
     stt_model: str = "large-v3"
     language: str | None = None
@@ -111,10 +117,10 @@ class SpeechPipeline:
         print(f"  [VAD] Done — {len(segments)} speech segment(s)")
         return segments
 
-    def run_diarization(self, audio_path: Path, output_dir: Path) -> list[dict]:
+    def run_diarization(self, audio_path: Path, output_dir: Path, force: bool = False) -> list[dict]:
         """Run diarization and write diarization.json. Returns speaker turns."""
         print(f"  [Diarization] Running on {audio_path.name} ...")
-        turns = self._run_diarization(audio_path)
+        turns = self._run_diarization(audio_path, output_dir=output_dir, force=force)
         out = output_dir / "diarization.json"
         out.write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
         speakers = {t["speaker"] for t in turns}
@@ -205,28 +211,38 @@ class SpeechPipeline:
 
         return speech_segments or [{"start": 0.0, "end": float("inf")}]
 
-    def _run_diarization(self, audio_path: Path) -> list[dict]:
-        """Run speaker diarization."""
+    def _load_diarization_pipeline(self, hf_token: str) -> object:
+        """Load and cache the pyannote pipeline with batch size settings."""
+        from pyannote.audio import Pipeline
+
+        if self._diarization_pipeline is None:
+            pipeline = Pipeline.from_pretrained(self.config.diarization_model, token=hf_token)
+            device = torch.device(get_device())
+            pipeline = pipeline.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+            if hasattr(pipeline, '_segmentation'):
+                pipeline._segmentation.batch_size = self.config.diarization_batch_size
+            if hasattr(pipeline, 'embedding_batch_size'):
+                pipeline.embedding_batch_size = self.config.diarization_batch_size
+            self._diarization_pipeline = pipeline
+        return self._diarization_pipeline
+
+    def _diarize_chunk(
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+        chunk_idx: int,
+        chunk_start: float,  # absolute time of audio[0]; added to segment times
+    ) -> tuple[list[dict], np.ndarray | None, list[str]]:
+        """Diarize one audio chunk. chunk_start is the absolute offset of audio[0]."""
+        from tqdm import tqdm
+        import tempfile
+
+        assert self._diarization_pipeline is not None
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            tmp_path = Path(f.name)
         try:
-            from pyannote.audio import Pipeline
-
-            hf_token = os.environ.get(self.config.hf_token_env)
-            if not hf_token:
-                print(f"    [Diarization] {self.config.hf_token_env} not set, using single-speaker fallback")
-                return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
-
-            if self._diarization_pipeline is None:
-                pipeline = Pipeline.from_pretrained(
-                    self.config.diarization_model,
-                    token=hf_token,
-                )
-                device = torch.device(get_device())
-                pipeline = pipeline.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
-                self._diarization_pipeline = pipeline
-
-            assert self._diarization_pipeline is not None
-            from tqdm import tqdm
-            with tqdm(total=1.0, desc="    [Diarization]", unit="%", bar_format="{l_bar}{bar}| {elapsed}<{remaining}") as pbar:
+            sf.write(str(tmp_path), audio, sample_rate)
+            with tqdm(total=1.0, desc=f"    [Diarization] chunk {chunk_idx}", unit="%", bar_format="{l_bar}{bar}| {elapsed}<{remaining}") as pbar:
                 last = 0.0
                 def _hook(_step_name: str, _step_artifact: object, file: object = None, total: int | None = None, completed: int | None = None) -> None:  # noqa: ARG001
                     nonlocal last
@@ -234,15 +250,194 @@ class SpeechPipeline:
                         progress = completed / total
                         pbar.update(progress - last)
                         last = progress
-                diarization = self._diarization_pipeline(str(audio_path), hook=_hook)
+                result = self._diarization_pipeline(str(tmp_path), hook=_hook)
 
-            segments = []
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
-                segments.append({
+            ann = result.exclusive_speaker_diarization if hasattr(result, 'exclusive_speaker_diarization') else result
+            embeddings: np.ndarray | None = result.speaker_embeddings if hasattr(result, 'speaker_embeddings') else None
+            # speaker_embeddings rows are ordered by speaker_diarization.labels(), not exclusive_speaker_diarization.labels()
+            full_ann = result.speaker_diarization if hasattr(result, 'speaker_diarization') else ann
+            speakers_local = full_ann.labels() if hasattr(full_ann, 'labels') else []
+
+            turns = []
+            for segment, _, speaker in ann.itertracks(yield_label=True):
+                turns.append({
                     "speaker": speaker,
-                    "start": turn.start,
-                    "end": turn.end,
+                    "start": round(chunk_start + segment.start, 3),
+                    "end": round(chunk_start + segment.end, 3),
                 })
+            return turns, embeddings, speakers_local
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def _merge_chunk_speakers(
+        self,
+        chunks: list[dict],  # each: {turns, embeddings, speakers_local}
+    ) -> list[dict]:
+        """Merge per-chunk speaker labels into global IDs via embedding cosine similarity."""
+        global_embeddings: list[np.ndarray] = []   # one per global speaker
+        global_labels: list[str] = []              # e.g. "SPEAKER_00", "SPEAKER_01", ...
+        local_to_global: list[dict[str, str]] = []  # per chunk
+
+        for chunk in chunks:
+            embeddings: np.ndarray | None = chunk["embeddings"]
+            speakers_local: list[str] = chunk["speakers_local"]
+            mapping: dict[str, str] = {}
+
+            for i, local_id in enumerate(speakers_local):
+                emb = embeddings[i] if embeddings is not None and i < len(embeddings) else None
+
+                best_global: str | None = None
+                best_sim = -1.0
+                if emb is not None:
+                    norm = np.linalg.norm(emb)
+                    emb_n = emb / norm if norm > 0 else emb
+                    for j, g_emb in enumerate(global_embeddings):
+                        g_norm = np.linalg.norm(g_emb)
+                        g_emb_n = g_emb / g_norm if g_norm > 0 else g_emb
+                        sim = float(np.dot(emb_n, g_emb_n))
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_global = global_labels[j]
+
+                if best_global is not None and best_sim >= _SPEAKER_SIM_THRESHOLD:
+                    mapping[local_id] = best_global
+                    # Update running average of the matched global embedding
+                    idx = global_labels.index(best_global)
+                    global_embeddings[idx] = (global_embeddings[idx] + emb) / 2
+                else:
+                    new_label = f"SPEAKER_{len(global_labels):02d}"
+                    mapping[local_id] = new_label
+                    global_labels.append(new_label)
+                    global_embeddings.append(emb if emb is not None else np.zeros(1))
+
+            local_to_global.append(mapping)
+
+        # Apply mappings and flatten turns
+        all_turns: list[dict] = []
+        for chunk, mapping in zip(chunks, local_to_global):
+            for turn in chunk["turns"]:
+                all_turns.append({**turn, "speaker": mapping.get(turn["speaker"], turn["speaker"])})
+        all_turns.sort(key=lambda t: t["start"])
+        return all_turns
+
+    def _run_diarization(self, audio_path: Path, output_dir: Path | None = None, force: bool = False) -> list[dict]:
+        """Run speaker diarization with per-chunk checkpointing."""
+        try:
+            hf_token = os.environ.get(self.config.hf_token_env)
+            if not hf_token:
+                print(f"    [Diarization] {self.config.hf_token_env} not set, using single-speaker fallback")
+                return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
+
+            audio, sample_rate = sf.read(str(audio_path), dtype="float32")
+            total_duration = len(audio) / sample_rate
+            source_mtime = audio_path.stat().st_mtime
+
+            # Load VAD to find silence gaps for clean chunk boundaries
+            vad_segments: list[dict] = []
+            if output_dir and (output_dir / "vad.json").exists():
+                vad_segments = json.loads((output_dir / "vad.json").read_text(encoding="utf-8"))
+
+            # Build chunk boundaries snapped to VAD silence gaps
+            # A silence gap is the interval between vad_segments[i]["end"] and vad_segments[i+1]["start"]
+            # For each target boundary, pick the nearest silence gap midpoint
+            num_chunks = max(1, math.ceil(total_duration / _DIARIZATION_CHUNK_SECONDS))
+            boundaries = [0.0]
+            for i in range(1, num_chunks):
+                target = i * (total_duration / num_chunks)
+                if len(vad_segments) >= 2:
+                    best_mid = target
+                    for j in range(len(vad_segments) - 1):
+                        gap_mid = (vad_segments[j]["end"] + vad_segments[j + 1]["start"]) / 2
+                        if abs(gap_mid - target) < abs(best_mid - target):
+                            best_mid = gap_mid
+                    boundaries.append(best_mid)
+                else:
+                    boundaries.append(target)
+            boundaries.append(total_duration)
+
+            # Checkpoint directory
+            ckpt_dir = output_dir / ".diarization_checkpoints" if output_dir else None
+
+            if force:
+                import shutil
+                if ckpt_dir and ckpt_dir.exists():
+                    shutil.rmtree(ckpt_dir)
+                    print("    [Diarization] Cleared checkpoints (force)")
+                if output_dir:
+                    out_json = output_dir / "diarization.json"
+                    if out_json.exists():
+                        out_json.unlink()
+                        print("    [Diarization] Cleared output (force)")
+
+            if ckpt_dir:
+                ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+            self._load_diarization_pipeline(hf_token)
+
+            chunk_results: list[dict] = []
+            for chunk_idx in range(num_chunks):
+                chunk_start = boundaries[chunk_idx]
+                chunk_end = boundaries[chunk_idx + 1]
+
+                ckpt_file = ckpt_dir / f"chunk_{chunk_idx:04d}.json" if ckpt_dir else None
+
+                # Check checkpoint validity
+                if ckpt_file and ckpt_file.exists() and not force:
+                    ckpt = json.loads(ckpt_file.read_text(encoding="utf-8"))
+                    if ckpt.get("source_mtime") == source_mtime:
+                        print(f"    [Diarization] chunk {chunk_idx} — resuming from checkpoint")
+                        # Load embeddings: prefer .npy, fall back to legacy JSON field
+                        npy_file = ckpt_file.with_suffix(".npy")
+                        if npy_file.exists():
+                            ckpt["embeddings"] = np.load(str(npy_file))
+                        elif ckpt.get("embeddings") is not None:
+                            # Migrate: save as .npy and remove from JSON
+                            emb = np.array(ckpt["embeddings"], dtype=np.float32)
+                            np.save(str(npy_file), emb)
+                            ckpt["embeddings"] = emb
+                            del ckpt["embeddings"]  # will be reloaded from npy next time
+                            ckpt_no_emb = {k: v for k, v in ckpt.items() if k != "embeddings"}
+                            ckpt_file.write_text(json.dumps(ckpt_no_emb, ensure_ascii=False, indent=2), encoding="utf-8")
+                            ckpt["embeddings"] = emb
+                        else:
+                            ckpt["embeddings"] = None
+                        chunk_results.append(ckpt)
+                        continue
+                    else:
+                        print(f"    [Diarization] chunk {chunk_idx} — checkpoint stale, reprocessing")
+
+                start_sample = int(chunk_start * sample_rate)
+                end_sample = int(chunk_end * sample_rate)
+                chunk_audio = audio[start_sample:end_sample]
+
+                turns, embeddings, speakers_local = self._diarize_chunk(
+                    chunk_audio, sample_rate, chunk_idx, chunk_start,
+                )
+
+                ckpt_data: dict = {
+                    "chunk_idx": chunk_idx,
+                    "source_mtime": source_mtime,
+                    "turns": turns,
+                    "speakers_local": speakers_local,
+                    "embeddings": embeddings,
+                }
+                if ckpt_file:
+                    ckpt_json = {k: v for k, v in ckpt_data.items() if k != "embeddings"}
+                    ckpt_file.write_text(json.dumps(ckpt_json, ensure_ascii=False, indent=2), encoding="utf-8")
+                    if embeddings is not None:
+                        np.save(str(ckpt_file.with_suffix(".npy")), embeddings)
+
+                chunk_results.append(ckpt_data)
+
+            if num_chunks == 1:
+                # No merging needed — remap to canonical names
+                all_turns = []
+                mapping = {s: f"SPEAKER_{i:02d}" for i, s in enumerate(sorted(set(t["speaker"] for t in chunk_results[0]["turns"])))}
+                for t in chunk_results[0]["turns"]:
+                    all_turns.append({**t, "speaker": mapping.get(t["speaker"], t["speaker"])})
+                segments = all_turns
+            else:
+                segments = self._merge_chunk_speakers(chunk_results)
 
             return segments if segments else [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
 

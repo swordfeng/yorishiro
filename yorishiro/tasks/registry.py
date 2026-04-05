@@ -93,6 +93,7 @@ class ModelRegistry:
                 stt_model=cfg.get("model", "large-v3"),
                 diarization_backend=diar_cfg.get("backend", "pyannote"),
                 diarization_model=diar_cfg.get("model", "pyannote/speaker-diarization-3.1"),
+                diarization_batch_size=int(diar_cfg.get("batch_size", 32)),
                 hf_token_env=diar_cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
             ))
         return self._cache[key]

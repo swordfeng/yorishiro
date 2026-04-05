@@ -111,6 +111,7 @@ class FilmAudioDiarizeTask(Task):
     def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
         self._output_dir = output_dir
         self._registry = registry
+        self._force = False
 
     def input_paths(self) -> list[Path]:
         return [self._output_dir / "voice.flac"]
@@ -118,10 +119,14 @@ class FilmAudioDiarizeTask(Task):
     def output_paths(self) -> list[Path]:
         return [self._output_dir / "diarization.json"]
 
+    def run(self, force: bool = False) -> None:
+        self._force = force
+        super().run(force=force)
+
     def _run(self) -> None:
         print("[film.audio.diarize] Running speaker diarization on voice stem ...")
         pipeline = self._registry.get_speech_pipeline()
-        pipeline.run_diarization(self._output_dir / "voice.flac", self._output_dir)
+        pipeline.run_diarization(self._output_dir / "voice.flac", self._output_dir, force=self._force)
 
 
 class FilmAudioSTTTask(Task):

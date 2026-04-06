@@ -20,6 +20,8 @@ import soundfile as sf
 import torch
 from av.audio.frame import AudioFrame
 from dataclasses import dataclass
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import pdist
 
 from yorishiro.models.film_models import Transcript, TranscriptEntry
 from yorishiro.utils import get_device
@@ -36,8 +38,11 @@ class SpeechPipelineConfig:
     diarization_batch_size: int = 32    # pyannote 4.x default is 1; 32 is much faster
     stt_backend: str = "faster-whisper"
     stt_model: str = "large-v3"
+    stt_cpu_threads: int = 0    # 0 = use all available cores
+    stt_num_workers: int = 1    # parallel CTranslate2 replicas (num_workers in WhisperModel)
     language: str | None = None
     emotion_backend: str = "emotion2vec"
+    emotion_model: str = "emotion2vec/emotion2vec_plus_base"
     hf_token_env: str = "YORISHIRO_HF_TOKEN"
 
 
@@ -132,6 +137,7 @@ class SpeechPipeline:
         audio_path: Path,
         output_dir: Path,
         language: str | None = None,
+        force: bool = False,
     ) -> Transcript:
         """Run STT using cached vad.json + diarization.json. Writes transcript_raw.json."""
         vad_path = output_dir / "vad.json"
@@ -140,7 +146,7 @@ class SpeechPipeline:
         diarization = json.loads(diar_path.read_text(encoding="utf-8"))
         detected_language = language or self.config.language
         print(f"  [STT] Transcribing {audio_path.name} ...")
-        transcript = self._run_transcription(audio_path, diarization, speech_segments, detected_language)
+        transcript = self._run_transcription(audio_path, diarization, speech_segments, detected_language, output_dir=output_dir, force=force)
         out = output_dir / "transcript_raw.json"
         out.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
         print(f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}")
@@ -148,10 +154,15 @@ class SpeechPipeline:
 
     def run_emotion(self, audio_path: Path, output_dir: Path) -> Transcript:
         """Run emotion analysis on transcript_raw.json. Writes transcript.json."""
+        import gc
         raw_path = output_dir / "transcript_raw.json"
         transcript = Transcript(**json.loads(raw_path.read_text(encoding="utf-8")))
         print(f"  [Emotion] Analyzing {len(transcript.entries)} segment(s) ...")
         transcript = self._analyze_emotions(audio_path, transcript)
+        self._emotion_model = None   # free before prosody
+        gc.collect()
+        print(f"  [Prosody] Analyzing {len(transcript.entries)} segment(s) ...")
+        transcript = self._analyze_prosody(audio_path, transcript)
         emotions = {e.emotion for e in transcript.entries if e.emotion}
         out = output_dir / "transcript.json"
         out.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
@@ -226,6 +237,51 @@ class SpeechPipeline:
             self._diarization_pipeline = pipeline
         return self._diarization_pipeline
 
+    @staticmethod
+    def _vad_chunk_boundaries(
+        total_duration: float,
+        vad_segments: list[dict],
+        chunk_seconds: float = _DIARIZATION_CHUNK_SECONDS,
+    ) -> list[float]:
+        """Chunk boundary times snapped to nearest VAD silence gap midpoint.
+
+        All silence regions are considered (before first segment, between segments,
+        after last segment). Always cuts in silence — never falls back to raw target.
+        Deduplicates boundaries if multiple targets snap to the same gap.
+        """
+        num_chunks = max(1, math.ceil(total_duration / chunk_seconds))
+        if num_chunks == 1:
+            return [0.0, total_duration]
+
+        # Collect midpoints of all silence regions
+        gap_mids: list[float] = []
+        if vad_segments:
+            if vad_segments[0]["start"] > 0:
+                gap_mids.append(vad_segments[0]["start"] / 2)
+            for j in range(len(vad_segments) - 1):
+                gap_mids.append((vad_segments[j]["end"] + vad_segments[j + 1]["start"]) / 2)
+            if vad_segments[-1]["end"] < total_duration:
+                gap_mids.append((vad_segments[-1]["end"] + total_duration) / 2)
+
+        boundaries: list[float] = [0.0]
+        for i in range(1, num_chunks):
+            target = i * (total_duration / num_chunks)
+            if gap_mids:
+                best_mid = min(gap_mids, key=lambda m: abs(m - target))
+                boundaries.append(best_mid)
+            else:
+                boundaries.append(target)
+        boundaries.append(total_duration)
+
+        # Deduplicate while preserving order (two targets may snap to the same gap)
+        seen: set[float] = set()
+        deduped: list[float] = []
+        for b in boundaries:
+            if b not in seen:
+                deduped.append(b)
+                seen.add(b)
+        return deduped
+
     def _diarize_chunk(
         self,
         audio: np.ndarray,
@@ -273,50 +329,47 @@ class SpeechPipeline:
         self,
         chunks: list[dict],  # each: {turns, embeddings, speakers_local}
     ) -> list[dict]:
-        """Merge per-chunk speaker labels into global IDs via embedding cosine similarity."""
-        global_embeddings: list[np.ndarray] = []   # one per global speaker
-        global_labels: list[str] = []              # e.g. "SPEAKER_00", "SPEAKER_01", ...
-        local_to_global: list[dict[str, str]] = []  # per chunk
+        """Merge per-chunk speaker labels into global IDs via clustering."""
+        all_embeddings: list[np.ndarray] = []
+        metadata: list[tuple[int, str]] = []  # (chunk_idx, local_speaker_id)
 
-        for chunk in chunks:
-            embeddings: np.ndarray | None = chunk["embeddings"]
-            speakers_local: list[str] = chunk["speakers_local"]
-            mapping: dict[str, str] = {}
+        for chunk_idx, chunk in enumerate(chunks):
+            emb = chunk["embeddings"]
+            speakers_local = chunk["speakers_local"]
+            if emb is not None:
+                for i, local_id in enumerate(speakers_local):
+                    all_embeddings.append(emb[i])
+                    metadata.append((chunk_idx, local_id))
 
-            for i, local_id in enumerate(speakers_local):
-                emb = embeddings[i] if embeddings is not None and i < len(embeddings) else None
+        if len(all_embeddings) == 0:
+            all_turns: list[dict] = []
+            for chunk_idx, chunk in enumerate(chunks):
+                for turn in chunk["turns"]:
+                    all_turns.append({**turn, "speaker": f"SPEAKER_{chunk_idx:02d}_{turn['speaker']}"})
+            all_turns.sort(key=lambda t: t["start"])
+            return all_turns
 
-                best_global: str | None = None
-                best_sim = -1.0
-                if emb is not None:
-                    norm = np.linalg.norm(emb)
-                    emb_n = emb / norm if norm > 0 else emb
-                    for j, g_emb in enumerate(global_embeddings):
-                        g_norm = np.linalg.norm(g_emb)
-                        g_emb_n = g_emb / g_norm if g_norm > 0 else g_emb
-                        sim = float(np.dot(emb_n, g_emb_n))
-                        if sim > best_sim:
-                            best_sim = sim
-                            best_global = global_labels[j]
+        X = np.stack(all_embeddings)
+        distances = pdist(X, metric="cosine")
+        Z = linkage(distances, method="average")
+        threshold = 1.0 - _SPEAKER_SIM_THRESHOLD
+        cluster_labels = fcluster(Z, t=threshold, criterion="distance")
 
-                if best_global is not None and best_sim >= _SPEAKER_SIM_THRESHOLD:
-                    mapping[local_id] = best_global
-                    # Update running average of the matched global embedding
-                    idx = global_labels.index(best_global)
-                    global_embeddings[idx] = (global_embeddings[idx] + emb) / 2
-                else:
-                    new_label = f"SPEAKER_{len(global_labels):02d}"
-                    mapping[local_id] = new_label
-                    global_labels.append(new_label)
-                    global_embeddings.append(emb if emb is not None else np.zeros(1))
+        unique_clusters = np.unique(cluster_labels)
+        cluster_to_speaker = {c: f"SPEAKER_{i:02d}" for i, c in enumerate(unique_clusters)}
 
-            local_to_global.append(mapping)
+        local_to_global: dict[tuple[int, str], str] = {}
+        for (chunk_idx, local_id), cluster_label in zip(metadata, cluster_labels):
+            local_to_global[(chunk_idx, local_id)] = cluster_to_speaker[cluster_label]
 
-        # Apply mappings and flatten turns
-        all_turns: list[dict] = []
-        for chunk, mapping in zip(chunks, local_to_global):
+        print(f"    [Diarization] Clustered {len(all_embeddings)} local speakers into {len(unique_clusters)} global speakers")
+
+        all_turns = []
+        for chunk_idx, chunk in enumerate(chunks):
             for turn in chunk["turns"]:
-                all_turns.append({**turn, "speaker": mapping.get(turn["speaker"], turn["speaker"])})
+                global_speaker = local_to_global.get((chunk_idx, turn["speaker"]), turn["speaker"])
+                all_turns.append({**turn, "speaker": global_speaker})
+
         all_turns.sort(key=lambda t: t["start"])
         return all_turns
 
@@ -328,8 +381,9 @@ class SpeechPipeline:
                 print(f"    [Diarization] {self.config.hf_token_env} not set, using single-speaker fallback")
                 return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
 
-            audio, sample_rate = sf.read(str(audio_path), dtype="float32")
-            total_duration = len(audio) / sample_rate
+            info = sf.info(str(audio_path))
+            total_duration = info.duration
+            sample_rate = info.samplerate
             source_mtime = audio_path.stat().st_mtime
 
             # Load VAD to find silence gaps for clean chunk boundaries
@@ -338,22 +392,8 @@ class SpeechPipeline:
                 vad_segments = json.loads((output_dir / "vad.json").read_text(encoding="utf-8"))
 
             # Build chunk boundaries snapped to VAD silence gaps
-            # A silence gap is the interval between vad_segments[i]["end"] and vad_segments[i+1]["start"]
-            # For each target boundary, pick the nearest silence gap midpoint
-            num_chunks = max(1, math.ceil(total_duration / _DIARIZATION_CHUNK_SECONDS))
-            boundaries = [0.0]
-            for i in range(1, num_chunks):
-                target = i * (total_duration / num_chunks)
-                if len(vad_segments) >= 2:
-                    best_mid = target
-                    for j in range(len(vad_segments) - 1):
-                        gap_mid = (vad_segments[j]["end"] + vad_segments[j + 1]["start"]) / 2
-                        if abs(gap_mid - target) < abs(best_mid - target):
-                            best_mid = gap_mid
-                    boundaries.append(best_mid)
-                else:
-                    boundaries.append(target)
-            boundaries.append(total_duration)
+            boundaries = self._vad_chunk_boundaries(total_duration, vad_segments)
+            num_chunks = len(boundaries) - 1
 
             # Checkpoint directory
             ckpt_dir = output_dir / ".diarization_checkpoints" if output_dir else None
@@ -408,7 +448,7 @@ class SpeechPipeline:
 
                 start_sample = int(chunk_start * sample_rate)
                 end_sample = int(chunk_end * sample_rate)
-                chunk_audio = audio[start_sample:end_sample]
+                chunk_audio, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
 
                 turns, embeddings, speakers_local = self._diarize_chunk(
                     chunk_audio, sample_rate, chunk_idx, chunk_start,
@@ -449,10 +489,12 @@ class SpeechPipeline:
         self,
         audio_path: Path,
         diarization: list[dict],
-        speech_segments: list[dict],  # noqa: ARG002 — reserved for future VAD-gated transcription
+        speech_segments: list[dict],
         language: str | None,
+        output_dir: Path | None = None,
+        force: bool = False,
     ) -> Transcript:
-        """Run speech-to-text on the full audio, then assign speakers by overlap."""
+        """Run speech-to-text in chunks to bound peak memory, then assign speakers by overlap."""
         try:
             from faster_whisper import WhisperModel
         except ImportError:
@@ -473,34 +515,132 @@ class SpeechPipeline:
         if self._whisper_model is None:
             # faster-whisper uses CTranslate2 which only supports CUDA/CPU, not MPS
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            self._whisper_model = WhisperModel(self.config.stt_model, device=device)
+            cpu_threads = self.config.stt_cpu_threads or os.cpu_count() or 4
+            num_workers = self.config.stt_num_workers
+            self._whisper_model = WhisperModel(
+                self.config.stt_model, device=device,
+                cpu_threads=cpu_threads, num_workers=num_workers,
+            )
+            print(f"    [STT] Loaded {self.config.stt_model} on {device} ({cpu_threads} threads × {num_workers} workers)")
 
-        detected_language = language or "auto"
+        import librosa
 
-        # Transcribe the full audio once
-        segments, info = self._whisper_model.transcribe(
-            str(audio_path),
-            language=detected_language if detected_language != "auto" else None,
-            task="transcribe",
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 500},
+        with sf.SoundFile(str(audio_path)) as f:
+            file_sample_rate = f.samplerate
+            total_duration = f.frames / file_sample_rate
+
+        boundaries = self._vad_chunk_boundaries(total_duration, speech_segments)
+
+        # Merge any pure-silence chunk into its neighbour so no time is unaccounted for.
+        # Pass left-to-right: if [prev, b] has no speech, drop b (silence absorbed into next).
+        # Then pass right-to-left for trailing silence: if [b, next] has no speech, drop b.
+        def _has_speech(start: float, end: float) -> bool:
+            return any(s["start"] < end and s["end"] > start for s in speech_segments)
+
+        merged = [boundaries[0]]
+        for b in boundaries[1:-1]:
+            if _has_speech(merged[-1], b):
+                merged.append(b)
+            # else: drop b — this chunk is silent, absorbed into the next
+        merged.append(boundaries[-1])
+        # Handle trailing silence: merge backward
+        while len(merged) > 2 and not _has_speech(merged[-2], merged[-1]):
+            merged.pop(-2)
+        boundaries = merged
+        num_chunks = len(boundaries) - 1
+
+        source_mtime = audio_path.stat().st_mtime
+        ckpt_dir = output_dir / ".stt_checkpoints" if output_dir else None
+
+        if force and ckpt_dir and ckpt_dir.exists():
+            import shutil
+            shutil.rmtree(ckpt_dir)
+            print("    [STT] Cleared checkpoints (force)")
+
+        if ckpt_dir:
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        assert self._whisper_model is not None
+        whisper_model = self._whisper_model
+
+        def _transcribe_chunk(chunk_idx: int) -> tuple[int, list[TranscriptEntry], str | None]:
+            chunk_start = boundaries[chunk_idx]
+            chunk_end = boundaries[chunk_idx + 1]
+
+            ckpt_file = ckpt_dir / f"chunk_{chunk_idx:04d}.json" if ckpt_dir else None
+            if ckpt_file and ckpt_file.exists():
+                ckpt = json.loads(ckpt_file.read_text(encoding="utf-8"))
+                if ckpt.get("source_mtime") == source_mtime:
+                    print(f"    [STT] chunk {chunk_idx + 1}/{num_chunks} — resuming from checkpoint")
+                    return chunk_idx, [TranscriptEntry(**e) for e in ckpt["entries"]], ckpt.get("detected_language")
+            # Read only this chunk from disk — avoids loading the full file into RAM.
+            # Each thread opens its own file handle to allow concurrent seeks.
+            start_frame = int(chunk_start * file_sample_rate)
+            end_frame = int(chunk_end * file_sample_rate)
+            with sf.SoundFile(str(audio_path)) as fh:
+                fh.seek(start_frame)
+                chunk_audio = fh.read(end_frame - start_frame, dtype="float32")
+            if chunk_audio.ndim > 1:
+                chunk_audio = chunk_audio.mean(axis=1)
+            if file_sample_rate != 16000:
+                chunk_audio = librosa.resample(chunk_audio, orig_sr=file_sample_rate, target_sr=16000)
+            print(f"    [STT] chunk {chunk_idx + 1}/{num_chunks}  {chunk_start:.0f}s–{chunk_end:.0f}s ...", flush=True)
+            segments, info = whisper_model.transcribe(
+                chunk_audio,
+                language=language or None,
+                task="transcribe",
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 500},
+            )
+            from tqdm import tqdm
+            chunk_duration = chunk_end - chunk_start
+            chunk_entries: list[TranscriptEntry] = []
+            with tqdm(total=chunk_duration, desc=f"    [STT] chunk {chunk_idx + 1}/{num_chunks}", unit="s", bar_format="{l_bar}{bar}| {elapsed}<{remaining}") as pbar:
+                last_end = 0.0
+                for segment in segments:
+                    abs_start = chunk_start + segment.start
+                    abs_end = chunk_start + segment.end
+                    chunk_entries.append(TranscriptEntry(
+                        speaker_global=self._assign_speaker(abs_start, abs_end, diarization),
+                        start=abs_start,
+                        end=abs_end,
+                        text=segment.text.strip(),
+                        confidence=segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9,
+                    ))
+                    pbar.update(min(segment.end, chunk_duration) - last_end)
+                    last_end = min(segment.end, chunk_duration)
+            detected = getattr(info, "language", None)
+            if ckpt_file:
+                ckpt_data = {
+                    "chunk_idx": chunk_idx,
+                    "source_mtime": source_mtime,
+                    "entries": [e.model_dump() for e in chunk_entries],
+                    "detected_language": detected,
+                }
+                ckpt_file.write_text(json.dumps(ckpt_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            return chunk_idx, chunk_entries, detected
+
+        num_workers = self.config.stt_num_workers
+        chunk_results: list[tuple[int, list[TranscriptEntry], str | None]] = []
+        with ThreadPoolExecutor(max_workers=num_workers) as pool:
+            futures = [pool.submit(_transcribe_chunk, i) for i in range(num_chunks)]
+            for f in futures:
+                chunk_results.append(f.result())
+
+        chunk_results.sort(key=lambda t: t[0])
+        entries: list[TranscriptEntry] = []
+        detected_language: str | None = language
+        for _, chunk_entries, lang in chunk_results:
+            entries.extend(chunk_entries)
+            if detected_language is None and lang:
+                detected_language = lang
+
+        return Transcript(
+            language=detected_language or "unknown",
+            entries=entries,
         )
-
-        entries = []
-        for segment in segments:
-            speaker = self._assign_speaker(segment.start, segment.end, diarization)
-            entries.append(TranscriptEntry(
-                speaker_global=speaker,
-                start=segment.start,
-                end=segment.end,
-                text=segment.text.strip(),
-                confidence=segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9,
-            ))
-
-        if detected_language == "auto":
-            detected_language = getattr(info, "language", None) or "unknown"
-
-        return Transcript(language=detected_language or "unknown", entries=entries)
 
     @staticmethod
     def _assign_speaker(start: float, end: float, diarization: list[dict]) -> str:
@@ -516,43 +656,136 @@ class SpeechPipeline:
         return best_speaker
 
     def _analyze_emotions(self, audio_path: Path, transcript: Transcript) -> Transcript:
-        """Analyze emotion for each transcript entry using the correct audio segment."""
+        """Analyze emotion for each transcript entry. Reads segments lazily, caps at 10s each."""
+        import contextlib
+        import gc
+        import io
+        from funasr import AutoModel
+
         try:
-            from transformers import pipeline
-
             if self._emotion_model is None:
-                device_str = get_device()
-                if device_str == "mps":
-                    device = torch.device("mps")
-                elif device_str == "cuda":
-                    device = 0
-                else:
-                    device = -1
-                self._emotion_model = pipeline(
-                    "audio-classification",
-                    model="laica-labs/emotion2vec_plus_large",
-                    device=device,
+                self._emotion_model = AutoModel(
+                    model=self.config.emotion_model,
+                    hub="hf",
+                    disable_update=True,
+                    device=get_device(),
                 )
-
-            print("    [Emotion] Analyzing emotions ...")
-            audio_array, sample_rate = sf.read(str(audio_path), dtype="float32")
-
-            for entry in transcript.entries:
-                try:
-                    start_sample = int(entry.start * sample_rate)
-                    end_sample = int(entry.end * sample_rate)
-                    chunk = audio_array[start_sample:end_sample]
-                    if len(chunk) < int(sample_rate * 0.1):
-                        continue
-                    result = self._emotion_model({"raw": chunk, "sampling_rate": int(sample_rate)})
-                    if result:
-                        entry.emotion = result[0]["label"]
-                        entry.confidence = max(entry.confidence, result[0]["score"])
-                except Exception:
-                    pass
-
-            return transcript
-
         except Exception as e:
-            print(f"    [Emotion] Error: {e}, skipping emotion analysis")
+            print(f"    [Emotion] Failed to load model: {e}")
             return transcript
+
+        info = sf.info(str(audio_path))
+        sample_rate = info.samplerate
+        max_samples = sample_rate * 10  # cap at 10s — enough for emotion, avoids huge tensors
+
+        total = len(transcript.entries)
+        errors = 0
+        for i, entry in enumerate(transcript.entries):
+            if i % 50 == 0:
+                print(f"    [Emotion] {i}/{total} ...", flush=True)
+
+            start_sample = int(entry.start * sample_rate)
+            end_sample = min(int(entry.end * sample_rate), start_sample + max_samples)
+            if end_sample - start_sample < int(sample_rate * 0.1):
+                continue
+
+            try:
+                chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
+                # Suppress funasr's per-call tqdm noise
+                with torch.no_grad(), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    result = self._emotion_model.generate(
+                        input=chunk,
+                        sample_rate=int(sample_rate),
+                        granularity="utterance",
+                        extract_embedding=False,
+                    )
+                if result and result[0].get("scores"):
+                    scores = result[0]["scores"]
+                    labels = result[0]["labels"]
+                    best_idx = int(max(range(len(scores)), key=lambda j: scores[j]))
+                    raw_label = labels[best_idx]
+                    entry.emotion = raw_label.split("/")[-1] if "/" in raw_label else raw_label
+                    entry.confidence = max(entry.confidence, scores[best_idx])
+            except Exception as e:
+                errors += 1
+                if errors <= 3:
+                    print(f"    [Emotion] Warning: entry {i} failed: {e}", flush=True)
+
+            if i % 20 == 0:
+                gc.collect()
+
+        print(f"    [Emotion] {total}/{total} done{f' ({errors} errors)' if errors else ''}", flush=True)
+        return transcript
+
+    def _analyze_prosody(self, audio_path: Path, transcript: Transcript) -> Transcript:
+        """Classify pitch trend, speech rate, and volume for each transcript entry.
+
+        Pure librosa signal processing — no ML model, no GPU.
+        Same lazy per-entry sf.read(start=, stop=) pattern as _analyze_emotions.
+        """
+        import gc
+        import librosa
+
+        info = sf.info(str(audio_path))
+        sr = info.samplerate
+        max_samples = sr * 10
+
+        total = len(transcript.entries)
+        errors = 0
+        for i, entry in enumerate(transcript.entries):
+            if i % 50 == 0:
+                print(f"    [Prosody] {i}/{total} ...", flush=True)
+
+            start_sample = int(entry.start * sr)
+            end_sample = min(int(entry.end * sr), start_sample + max_samples)
+            if end_sample - start_sample < int(sr * 0.1):
+                continue
+
+            try:
+                chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
+                if chunk.ndim > 1:
+                    chunk = chunk.mean(axis=1)   # stereo → mono
+
+                # volume — mean RMS in dBFS
+                rms_frames = librosa.feature.rms(y=chunk)[0]
+                db = 20.0 * np.log10(float(np.mean(rms_frames)) + 1e-9)
+                entry.volume = "quiet" if db < -38.0 else ("loud" if db > -20.0 else "normal")
+
+                # speech_rate — onset density per second
+                duration = entry.end - entry.start
+                if duration >= 0.3:
+                    onsets = librosa.onset.onset_detect(y=chunk, sr=sr, units="time", normalize=True)
+                    rate = len(onsets) / duration
+                    entry.speech_rate = "slow" if rate < 2.0 else ("fast" if rate > 4.0 else "normal")
+
+                # pitch_trend — pyin F0, classify by slope + CoV
+                f0, voiced_flag, _ = librosa.pyin(
+                    chunk,
+                    fmin=float(librosa.note_to_hz('C2')),
+                    fmax=float(librosa.note_to_hz('C7')),
+                    sr=sr,
+                )
+                voiced_f0 = f0[voiced_flag]
+                if len(voiced_f0) >= 4:
+                    mean_f0 = float(np.mean(voiced_f0))
+                    rel_std = float(np.std(voiced_f0)) / mean_f0
+                    norm_slope = float(np.polyfit(np.arange(len(voiced_f0)), voiced_f0, 1)[0]) / mean_f0
+                    if rel_std > 0.25:
+                        entry.pitch_trend = "variable"
+                    elif norm_slope > 0.003:
+                        entry.pitch_trend = "rising"
+                    elif norm_slope < -0.003:
+                        entry.pitch_trend = "falling"
+                    else:
+                        entry.pitch_trend = "steady"
+
+            except Exception as e:
+                errors += 1
+                if errors <= 3:
+                    print(f"    [Prosody] Warning: entry {i} failed: {e}", flush=True)
+
+            if i % 20 == 0:
+                gc.collect()
+
+        print(f"    [Prosody] {total}/{total} done{f' ({errors} errors)' if errors else ''}", flush=True)
+        return transcript

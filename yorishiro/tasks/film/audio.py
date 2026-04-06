@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any
 
+from yorishiro.models.film_models import Transcript, TranscriptEntry
 from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
 from yorishiro.tasks.registry import ModelRegistry
@@ -13,52 +14,6 @@ from yorishiro.tasks.registry import ModelRegistry
 # ---------------------------------------------------------------------------
 # Tasks (one per step — no key needed)
 # ---------------------------------------------------------------------------
-
-class FilmAudioExtractTask(Task):
-    """Extract raw audio from video → audio.flac (16kHz mono)."""
-
-    def __init__(self, video_path: Path, output_dir: Path) -> None:
-        self._video_path = video_path
-        self._output_dir = output_dir
-
-    def input_paths(self) -> list[Path]:
-        return [self._video_path]
-
-    def output_paths(self) -> list[Path]:
-        return [self._output_dir / "audio.flac"]
-
-    def _run(self) -> None:
-        import av
-        import numpy as np
-        import soundfile as sf
-        from av.audio.frame import AudioFrame
-
-        self._output_dir.mkdir(parents=True, exist_ok=True)
-        audio_path = self._output_dir / "audio.flac"
-
-        print(f"[film.audio.extract] Extracting audio from {self._video_path.name} ...")
-        input_container = av.open(str(self._video_path))
-        audio_stream = next(
-            (s for s in input_container.streams if s.type == "audio"), None
-        )
-        if audio_stream is None:
-            raise ValueError(f"No audio stream found in {self._video_path}")
-
-        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
-        chunks = []
-        for frame in input_container.decode(audio_stream):
-            assert isinstance(frame, AudioFrame)
-            for resampled in resampler.resample(frame):
-                arr = resampled.to_ndarray()  # (1, samples) int16
-                chunks.append(arr)
-        input_container.close()
-
-        if not chunks:
-            raise ValueError(f"No audio frames decoded from {self._video_path}")
-
-        audio = np.concatenate(chunks, axis=1)[0].astype("float32") / 32768.0
-        sf.write(str(audio_path), audio, 16000)
-        print(f"[film.audio.extract] Done: {audio_path.stat().st_size / 1024 / 1024:.1f} MB")
 
 
 class FilmAudioSeparateTask(Task):
@@ -136,6 +91,7 @@ class FilmAudioSTTTask(Task):
         self._output_dir = output_dir
         self._language = language
         self._registry = registry
+        self._force = False
 
     def input_paths(self) -> list[Path]:
         return [
@@ -147,14 +103,18 @@ class FilmAudioSTTTask(Task):
     def output_paths(self) -> list[Path]:
         return [self._output_dir / "transcript_raw.json"]
 
+    def run(self, force: bool = False) -> None:
+        self._force = force
+        super().run(force=force)
+
     def _run(self) -> None:
         print("[film.audio.stt] Running speech-to-text ...")
         pipeline = self._registry.get_speech_pipeline()
-        pipeline.run_stt(self._output_dir / "voice.flac", self._output_dir, self._language)
+        pipeline.run_stt(self._output_dir / "voice.flac", self._output_dir, self._language, force=self._force)
 
 
 class FilmAudioEmotionTask(Task):
-    """Run emotion analysis on transcript_raw.json → transcript.json + speaker_bank.json."""
+    """Run emotion + prosody analysis on transcript_raw.json → transcript.json."""
 
     def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
         self._output_dir = output_dir
@@ -167,52 +127,75 @@ class FilmAudioEmotionTask(Task):
         ]
 
     def output_paths(self) -> list[Path]:
-        return [self._output_dir / "transcript.json", self._output_dir / "speaker_bank.json"]
+        return [self._output_dir / "transcript.json"]
 
     def _run(self) -> None:
         print("[film.audio.emotion] Running emotion analysis ...")
         pipeline = self._registry.get_speech_pipeline()
-        transcript = pipeline.run_emotion(self._output_dir / "voice.flac", self._output_dir)
-
-        speaker_bank = self._registry.get_speaker_bank_manager()
-        print("[film.audio.emotion] Resolving speaker IDs ...")
-        speaker_bank.load(self._output_dir)
-        self._resolve_speaker_ids(transcript, self._output_dir / "voice.flac", speaker_bank)
-        speaker_bank.save(self._output_dir)
+        pipeline.run_emotion(self._output_dir / "voice.flac", self._output_dir)
         print("[film.audio.emotion] Done.")
 
-    def _resolve_speaker_ids(
-        self,
-        transcript: Any,
-        audio_path: Path,
-        speaker_bank: Any,
-    ) -> None:
-        if not transcript or not transcript.entries:
-            return
-        if all(e.speaker_global.startswith("SPKR_") for e in transcript.entries):
-            return
 
-        local_speakers: dict[str, Any] = {}
+class FilmAudioSpeakerTask(Task):
+    """Map local SPEAKER_XX IDs to global SPKR_XXX IDs → transcript.json + speaker_bank.json."""
+
+    def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
+        self._output_dir = output_dir
+        self._registry = registry
+
+    def input_paths(self) -> list[Path]:
+        return [self._output_dir / "voice.flac", self._output_dir / "transcript.json"]
+
+    def output_paths(self) -> list[Path]:
+        return [self._output_dir / "transcript.json", self._output_dir / "speaker_bank.json"]
+
+    def completion_marker(self) -> Path:
+        # transcript.json is both input and output; use speaker_bank.json as the marker
+        # (written last in _run, so its mtime > transcript.json → staleness check is stable)
+        return self._output_dir / "speaker_bank.json"
+
+    def _run(self) -> None:
+        from yorishiro.audio.speaker_bank import SpeakerBankManager
+
+        print("[film.audio.speaker] Resolving speaker IDs ...")
+        transcript = Transcript(**json.loads(
+            (self._output_dir / "transcript.json").read_text(encoding="utf-8")
+        ))
+
+        # Collect unique speakers; pick longest entry as representative
+        speaker_rep: dict[str, TranscriptEntry] = {}
+        speaker_first: dict[str, float] = {}
         for entry in transcript.entries:
-            if entry.speaker_global not in local_speakers:
-                local_speakers[entry.speaker_global] = entry
+            spk = entry.speaker_global
+            if spk not in speaker_first:
+                speaker_first[spk] = entry.start
+            dur = entry.end - entry.start
+            if spk not in speaker_rep or dur > (speaker_rep[spk].end - speaker_rep[spk].start):
+                speaker_rep[spk] = entry
 
+        # Ordered by first appearance → deterministic SPKR_001, SPKR_002, ...
+        speakers_ordered = sorted(speaker_rep, key=lambda s: speaker_first[s])
+
+        # Fresh bank — no load; fixes accumulation bug on force re-runs
+        bank = SpeakerBankManager(self._registry.get_speaker_bank_manager().config)
+
+        voice_path = self._output_dir / "voice.flac"
         local_to_global: dict[str, str] = {}
-        for local_id, rep_entry in local_speakers.items():
-            embedding = None
-            if audio_path.exists():
-                embedding = speaker_bank.extract_speaker_embedding(
-                    audio_path, rep_entry.start, rep_entry.end
-                )
-            global_id = speaker_bank.assign_global_speaker_id(local_id, embedding, rep_entry.start)
+        for local_id in speakers_ordered:
+            rep = speaker_rep[local_id]
+            embedding = bank.extract_speaker_embedding(voice_path, rep.start, rep.end)
+            global_id = bank.assign_global_speaker_id(local_id, embedding, rep.start)
             local_to_global[local_id] = global_id
             print(f"    {local_id} → {global_id}")
 
         for entry in transcript.entries:
             entry.speaker_global = local_to_global.get(entry.speaker_global, entry.speaker_global)
 
-        cache_file = self._output_dir / "transcript.json"
-        cache_file.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
+        (self._output_dir / "transcript.json").write_text(
+            transcript.model_dump_json(indent=2), encoding="utf-8"
+        )
+        bank.save(self._output_dir)
+        print(f"[film.audio.speaker] Done — {len(local_to_global)} speaker(s) mapped.")
 
 
 class FilmAudioAnalysisTask(Task):
@@ -273,19 +256,6 @@ class FilmAudioAnalysisTask(Task):
 # ---------------------------------------------------------------------------
 # Steps (one per stage)
 # ---------------------------------------------------------------------------
-
-class FilmAudioExtractStep(Step):
-    step_id = "film.audio.extract"
-
-    def __init__(self, project: Project, source_id: str, registry: ModelRegistry) -> None:
-        self._project = project
-        self._source_id = source_id
-
-    def tasks(self) -> list[Task]:
-        return [FilmAudioExtractTask(
-            self._project.get_source_path(self._source_id),
-            self._project.step_dir(self._source_id, "audio"),
-        )]
 
 
 class FilmAudioSeparateStep(Step):
@@ -362,6 +332,21 @@ class FilmAudioEmotionStep(Step):
 
     def tasks(self) -> list[Task]:
         return [FilmAudioEmotionTask(
+            self._project.step_dir(self._source_id, "audio"),
+            self._registry,
+        )]
+
+
+class FilmAudioSpeakerStep(Step):
+    step_id = "film.audio.speaker"
+
+    def __init__(self, project: Project, source_id: str, registry: ModelRegistry) -> None:
+        self._project = project
+        self._source_id = source_id
+        self._registry = registry
+
+    def tasks(self) -> list[Task]:
+        return [FilmAudioSpeakerTask(
             self._project.step_dir(self._source_id, "audio"),
             self._registry,
         )]

@@ -88,13 +88,17 @@ class ModelRegistry:
             diar_step_cfg = self._project.steps.get("film.audio.diarize", {})
             diar_name = diar_step_cfg.get("diarization_model")
             diar_cfg = dict(self._project.models.get(diar_name, {})) if diar_name else {}
+            emotion_step_cfg = self._project.steps.get("film.audio.emotion", {})
             self._cache[key] = SpeechPipeline(SpeechPipelineConfig(
                 stt_backend=cfg.get("backend", "faster-whisper"),
                 stt_model=cfg.get("model", "large-v3"),
+                stt_cpu_threads=int(cfg.get("cpu_threads", 0)),
+                stt_num_workers=int(cfg.get("num_workers", 1)),
                 diarization_backend=diar_cfg.get("backend", "pyannote"),
                 diarization_model=diar_cfg.get("model", "pyannote/speaker-diarization-3.1"),
                 diarization_batch_size=int(diar_cfg.get("batch_size", 32)),
                 hf_token_env=diar_cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
+                emotion_model=emotion_step_cfg.get("model", "emotion2vec/emotion2vec_plus_base"),
             ))
         return self._cache[key]
 
@@ -103,7 +107,11 @@ class ModelRegistry:
 
         key = "__speaker_bank__"
         if key not in self._cache:
-            self._cache[key] = SpeakerBankManager(SpeakerBankManagerConfig())
+            diar_name = self._project.steps.get("film.audio.diarize", {}).get("diarization_model", "diarization")
+            diar_cfg = dict(self._project.models.get(diar_name, {})) if diar_name else {}
+            self._cache[key] = SpeakerBankManager(SpeakerBankManagerConfig(
+                hf_token_env=diar_cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
+            ))
         return self._cache[key]
 
     def get_sound_event_detector(self) -> SoundEventDetector:

@@ -24,12 +24,12 @@ NOVEL_STEPS = [
 FILM_STEPS = [
     "film.shots",
     "film.frames",
-    "film.audio.extract",
     "film.audio.separate",
     "film.audio.vad",
     "film.audio.diarize",
     "film.audio.stt",
     "film.audio.emotion",
+    "film.audio.speaker",
     "film.audio.analysis",
     "film.shot_groups",
     "film.scenes",
@@ -88,9 +88,6 @@ def _build_step(step_id: str, source_id: str, project: Project, registry: ModelR
     if step_id == "film.frames":
         from yorishiro.tasks.film.frames import FilmFramesStep
         return FilmFramesStep(project, source_id, registry)
-    if step_id == "film.audio.extract":
-        from yorishiro.tasks.film.audio import FilmAudioExtractStep
-        return FilmAudioExtractStep(project, source_id, registry)
     if step_id == "film.audio.separate":
         from yorishiro.tasks.film.audio import FilmAudioSeparateStep
         return FilmAudioSeparateStep(project, source_id, registry)
@@ -106,6 +103,9 @@ def _build_step(step_id: str, source_id: str, project: Project, registry: ModelR
     if step_id == "film.audio.emotion":
         from yorishiro.tasks.film.audio import FilmAudioEmotionStep
         return FilmAudioEmotionStep(project, source_id, registry)
+    if step_id == "film.audio.speaker":
+        from yorishiro.tasks.film.audio import FilmAudioSpeakerStep
+        return FilmAudioSpeakerStep(project, source_id, registry)
     if step_id == "film.audio.analysis":
         from yorishiro.tasks.film.audio import FilmAudioAnalysisStep
         return FilmAudioAnalysisStep(project, source_id, registry)

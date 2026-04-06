@@ -22,6 +22,7 @@ from yorishiro.utils import get_device
 class SpeakerBankManagerConfig:
     embedding_backend: str = "pyannote"
     similarity_threshold: float = 0.75
+    hf_token_env: str = "YORISHIRO_HF_TOKEN"
 
 
 class SpeakerBankManager:
@@ -71,9 +72,9 @@ class SpeakerBankManager:
             from pyannote.audio import Model
 
             if self._embedding_model is None:
-                hf_token = os.environ.get("HF_TOKEN")
+                hf_token = os.environ.get(self.config.hf_token_env)
                 if not hf_token:
-                    print("    [SpeakerEmbedding] HF_TOKEN not set, skipping embedding extraction")
+                    print(f"    [SpeakerEmbedding] {self.config.hf_token_env} not set, skipping embedding extraction")
                     return None
                 model = Model.from_pretrained(
                     "pyannote/embedding",
@@ -84,9 +85,17 @@ class SpeakerBankManager:
                 self._embedding_model = Inference(model, window="whole")
 
             assert self._embedding_model is not None
-            embedding = self._embedding_model(
-                {"uri": audio_path.name, "audio": str(audio_path)},
-            )
+            import soundfile as sf
+            info = sf.info(str(audio_path))
+            start_sample = int(start * info.samplerate)
+            end_sample = int(end * info.samplerate)
+            chunk, sr = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32", always_2d=False)
+            t = torch.tensor(chunk)
+            if t.ndim == 1:
+                waveform = t.unsqueeze(0)        # mono: (1, time)
+            else:
+                waveform = t.T.contiguous()      # stereo: (channels, time)
+            embedding = self._embedding_model({"waveform": waveform, "sample_rate": int(sr)})
 
             return embedding if isinstance(embedding, np.ndarray) else None
 

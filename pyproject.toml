@@ -19,23 +19,24 @@ dev = [
     "mypy>=1.0.0",
 ]
 film = [
-    "scenedetect[opencv]<0.7",  # video shot detection
-    "opencv-python-headless>=4.9.0",  # keyframe processing
-    "av>=12.0.0",  # PyAV - video processing (supports AVIF)
-    "torch>=2.0.0",  # CLIP, pyannote, emotion2vec
-    "torchvision>=0.15.0",  # CLIP
-    "transformers>=4.40.0",  # CLIP model loading
-    "openai-whisper>=20231117",  # faster-whisper alternative
-    "faster-whisper>=1.0.0",  # STT
-    "pyannote.audio>=3.1.0",  # speaker diarization
-    "huggingface-hub>=0.20.0",  # model downloads
-    "librosa>=0.10.0",  # audio processing
-    "silero-vad>=5.0",  # VAD preprocessing
-    "demucs>=4.0.0",  # music/vocals separation
-    "soundfile>=0.12.0",  # audio file I/O
+    "scenedetect[opencv]<0.7", # video shot detection
+    "opencv-python-headless>=4.9.0", # keyframe processing
+    "av>=12.0.0", # PyAV - video processing (supports AVIF)
+    "torch>=2.0.0", # CLIP, pyannote, emotion2vec
+    "torchvision>=0.15.0", # CLIP
+    "transformers>=4.40.0", # CLIP model loading
+    "openai-whisper>=20231117", # faster-whisper alternative
+    "faster-whisper>=1.0.0", # STT
+    "pyannote.audio>=3.1.0", # speaker diarization
+    "huggingface-hub>=0.20.0", # model downloads
+    "librosa>=0.10.0", # audio processing
+    "silero-vad>=5.0", # VAD preprocessing
+    "demucs>=4.0.0", # music/vocals separation
+    "soundfile>=0.12.0", # audio file I/O
     "numpy>=1.24.0",
     "scipy>=1.10.0",
     "tqdm>=4.60.0",
+    "funasr>=1.3.1",
 ]
 
 [build-system]

@@ -660,7 +660,9 @@ class SpeechPipeline:
         import contextlib
         import gc
         import io
+        import time
         from funasr import AutoModel
+        from tqdm import tqdm
 
         try:
             if self._emotion_model is None:
@@ -676,45 +678,53 @@ class SpeechPipeline:
 
         info = sf.info(str(audio_path))
         sample_rate = info.samplerate
-        max_samples = sample_rate * 10  # cap at 10s — enough for emotion, avoids huge tensors
+        max_samples = sample_rate * 10
 
         total = len(transcript.entries)
         errors = 0
-        for i, entry in enumerate(transcript.entries):
-            if i % 50 == 0:
-                print(f"    [Emotion] {i}/{total} ...", flush=True)
+        total_inference_time = 0.0
 
-            start_sample = int(entry.start * sample_rate)
-            end_sample = min(int(entry.end * sample_rate), start_sample + max_samples)
-            if end_sample - start_sample < int(sample_rate * 0.1):
-                continue
+        print(f"    [Emotion] Analyzing {total} segment(s) ...")
+        with tqdm(total=total, desc="    [Emotion]", unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
+            for i, entry in enumerate(transcript.entries):
+                seg_duration = entry.end - entry.start
+                pbar.set_postfix_str(f"seg={seg_duration:.1f}s")
 
-            try:
-                chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
-                # Suppress funasr's per-call tqdm noise
-                with torch.no_grad(), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                    result = self._emotion_model.generate(
-                        input=chunk,
-                        sample_rate=int(sample_rate),
-                        granularity="utterance",
-                        extract_embedding=False,
-                    )
-                if result and result[0].get("scores"):
-                    scores = result[0]["scores"]
-                    labels = result[0]["labels"]
-                    best_idx = int(max(range(len(scores)), key=lambda j: scores[j]))
-                    raw_label = labels[best_idx]
-                    entry.emotion = raw_label.split("/")[-1] if "/" in raw_label else raw_label
-                    entry.confidence = max(entry.confidence, scores[best_idx])
-            except Exception as e:
-                errors += 1
-                if errors <= 3:
-                    print(f"    [Emotion] Warning: entry {i} failed: {e}", flush=True)
+                start_sample = int(entry.start * sample_rate)
+                end_sample = min(int(entry.end * sample_rate), start_sample + max_samples)
+                if end_sample - start_sample < int(sample_rate * 0.1):
+                    pbar.update(1)
+                    continue
 
-            if i % 20 == 0:
-                gc.collect()
+                try:
+                    chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
+                    infer_start = time.perf_counter()
+                    with torch.no_grad(), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        result = self._emotion_model.generate(
+                            input=chunk,
+                            sample_rate=int(sample_rate),
+                            granularity="utterance",
+                            extract_embedding=False,
+                        )
+                    infer_time = time.perf_counter() - infer_start
+                    total_inference_time += infer_time
 
-        print(f"    [Emotion] {total}/{total} done{f' ({errors} errors)' if errors else ''}", flush=True)
+                    if result and result[0].get("scores"):
+                        scores = result[0]["scores"]
+                        labels = result[0]["labels"]
+                        best_idx = int(max(range(len(scores)), key=lambda j: scores[j]))
+                        raw_label = labels[best_idx]
+                        entry.emotion = raw_label.split("/")[-1] if "/" in raw_label else raw_label
+                        entry.confidence = max(entry.confidence, scores[best_idx])
+                except Exception as e:
+                    errors += 1
+                    pbar.write(f"    [Emotion] Warning: entry {i} failed: {e}")
+
+                if i % 20 == 0:
+                    gc.collect()
+                pbar.update(1)
+
+        print(f"    [Emotion] Done — {total} segment(s), {errors} error(s), {total_inference_time:.1f}s inference")
         return transcript
 
     def _analyze_prosody(self, audio_path: Path, transcript: Transcript) -> Transcript:
@@ -725,6 +735,7 @@ class SpeechPipeline:
         """
         import gc
         import librosa
+        from tqdm import tqdm
 
         info = sf.info(str(audio_path))
         sr = info.samplerate
@@ -732,60 +743,64 @@ class SpeechPipeline:
 
         total = len(transcript.entries)
         errors = 0
-        for i, entry in enumerate(transcript.entries):
-            if i % 50 == 0:
-                print(f"    [Prosody] {i}/{total} ...", flush=True)
 
-            start_sample = int(entry.start * sr)
-            end_sample = min(int(entry.end * sr), start_sample + max_samples)
-            if end_sample - start_sample < int(sr * 0.1):
-                continue
+        print(f"    [Prosody] Analyzing {total} segment(s) ...")
+        with tqdm(total=total, desc="    [Prosody]", unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
+            for i, entry in enumerate(transcript.entries):
+                seg_duration = entry.end - entry.start
+                pbar.set_postfix_str(f"seg={seg_duration:.1f}s")
 
-            try:
-                chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
-                if chunk.ndim > 1:
-                    chunk = chunk.mean(axis=1)   # stereo → mono
+                start_sample = int(entry.start * sr)
+                end_sample = min(int(entry.end * sr), start_sample + max_samples)
+                if end_sample - start_sample < int(sr * 0.1):
+                    pbar.update(1)
+                    continue
 
-                # volume — mean RMS in dBFS
-                rms_frames = librosa.feature.rms(y=chunk)[0]
-                db = 20.0 * np.log10(float(np.mean(rms_frames)) + 1e-9)
-                entry.volume = "quiet" if db < -38.0 else ("loud" if db > -20.0 else "normal")
+                try:
+                    chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
+                    if chunk.ndim > 1:
+                        chunk = chunk.mean(axis=1)
 
-                # speech_rate — onset density per second
-                duration = entry.end - entry.start
-                if duration >= 0.3:
-                    onsets = librosa.onset.onset_detect(y=chunk, sr=sr, units="time", normalize=True)
-                    rate = len(onsets) / duration
-                    entry.speech_rate = "slow" if rate < 2.0 else ("fast" if rate > 4.0 else "normal")
+                    # volume — mean RMS in dBFS
+                    rms_frames = librosa.feature.rms(y=chunk)[0]
+                    db = 20.0 * np.log10(float(np.mean(rms_frames)) + 1e-9)
+                    entry.volume = "quiet" if db < -38.0 else ("loud" if db > -20.0 else "normal")
 
-                # pitch_trend — pyin F0, classify by slope + CoV
-                f0, voiced_flag, _ = librosa.pyin(
-                    chunk,
-                    fmin=float(librosa.note_to_hz('C2')),
-                    fmax=float(librosa.note_to_hz('C7')),
-                    sr=sr,
-                )
-                voiced_f0 = f0[voiced_flag]
-                if len(voiced_f0) >= 4:
-                    mean_f0 = float(np.mean(voiced_f0))
-                    rel_std = float(np.std(voiced_f0)) / mean_f0
-                    norm_slope = float(np.polyfit(np.arange(len(voiced_f0)), voiced_f0, 1)[0]) / mean_f0
-                    if rel_std > 0.25:
-                        entry.pitch_trend = "variable"
-                    elif norm_slope > 0.003:
-                        entry.pitch_trend = "rising"
-                    elif norm_slope < -0.003:
-                        entry.pitch_trend = "falling"
-                    else:
-                        entry.pitch_trend = "steady"
+                    # speech_rate — onset density per second
+                    duration = entry.end - entry.start
+                    if duration >= 0.3:
+                        onsets = librosa.onset.onset_detect(y=chunk, sr=sr, units="time", normalize=True)
+                        rate = len(onsets) / duration
+                        entry.speech_rate = "slow" if rate < 2.0 else ("fast" if rate > 4.0 else "normal")
 
-            except Exception as e:
-                errors += 1
-                if errors <= 3:
-                    print(f"    [Prosody] Warning: entry {i} failed: {e}", flush=True)
+                    # pitch_trend — pyin F0, classify by slope + CoV
+                    f0, voiced_flag, _ = librosa.pyin(
+                        chunk,
+                        fmin=float(librosa.note_to_hz('C2')),
+                        fmax=float(librosa.note_to_hz('C7')),
+                        sr=sr,
+                    )
+                    voiced_f0 = f0[voiced_flag]
+                    if len(voiced_f0) >= 4:
+                        mean_f0 = float(np.mean(voiced_f0))
+                        rel_std = float(np.std(voiced_f0)) / mean_f0
+                        norm_slope = float(np.polyfit(np.arange(len(voiced_f0)), voiced_f0, 1)[0]) / mean_f0
+                        if rel_std > 0.25:
+                            entry.pitch_trend = "variable"
+                        elif norm_slope > 0.003:
+                            entry.pitch_trend = "rising"
+                        elif norm_slope < -0.003:
+                            entry.pitch_trend = "falling"
+                        else:
+                            entry.pitch_trend = "steady"
 
-            if i % 20 == 0:
-                gc.collect()
+                except Exception as e:
+                    errors += 1
+                    pbar.write(f"    [Prosody] Warning: entry {i} failed: {e}")
 
-        print(f"    [Prosody] {total}/{total} done{f' ({errors} errors)' if errors else ''}", flush=True)
+                if i % 20 == 0:
+                    gc.collect()
+                pbar.update(1)
+
+        print(f"    [Prosody] Done — {total} segment(s), {errors} error(s)")
         return transcript

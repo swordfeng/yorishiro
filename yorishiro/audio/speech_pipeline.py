@@ -30,6 +30,35 @@ _DIARIZATION_CHUNK_SECONDS = 1200.0   # target chunk duration; actual cuts snap 
 _SPEAKER_SIM_THRESHOLD = 0.75         # cosine similarity threshold for cross-chunk speaker matching
 
 
+def _load_emotion2vec(model_name: str, device: str):
+    """Load emotion2vec model directly via torch, bypassing funasr.AutoModel overhead."""
+    import yaml
+    from huggingface_hub import hf_hub_download
+    from funasr.models.emotion2vec.model import Emotion2vec
+
+    config_path = hf_hub_download(model_name, "config.yaml")
+    weights_path = hf_hub_download(model_name, "model.pt")
+    tokens_path = hf_hub_download(model_name, "tokens.txt")
+
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+    # yaml.safe_load mis-parses bare scientific notation (e.g. "1e-05") as str
+    mc = config["model_conf"]
+    if isinstance(mc.get("norm_eps"), str):
+        mc["norm_eps"] = float(mc["norm_eps"])
+    with open(tokens_path) as f:
+        labels = [line.strip() for line in f if line.strip() and line.strip() != "<unk>"]
+
+    # vocab_size = labels + <unk>
+    model = Emotion2vec(model_conf=config["model_conf"], vocab_size=len(labels) + 1)
+    state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+    model.load_state_dict(state_dict, strict=False)
+    del state_dict
+
+    model = model.to(device).eval()
+    return model, labels
+
+
 @dataclass
 class SpeechPipelineConfig:
     vad_backend: str = "silero-vad"
@@ -53,7 +82,6 @@ class SpeechPipeline:
         self.config = config or SpeechPipelineConfig()
         self._diarization_pipeline = None
         self._whisper_model = None
-        self._emotion_model = None
 
     def process(
         self,
@@ -159,7 +187,6 @@ class SpeechPipeline:
         transcript = Transcript(**json.loads(raw_path.read_text(encoding="utf-8")))
         print(f"  [Emotion] Analyzing {len(transcript.entries)} segment(s) ...")
         transcript = self._analyze_emotions(audio_path, transcript)
-        self._emotion_model = None   # free before prosody
         gc.collect()
         print(f"  [Prosody] Analyzing {len(transcript.entries)} segment(s) ...")
         transcript = self._analyze_prosody(audio_path, transcript)
@@ -328,8 +355,12 @@ class SpeechPipeline:
     def _merge_chunk_speakers(
         self,
         chunks: list[dict],  # each: {turns, embeddings, speakers_local}
-    ) -> list[dict]:
-        """Merge per-chunk speaker labels into global IDs via clustering."""
+    ) -> tuple[list[dict], dict[str, np.ndarray]]:
+        """Merge per-chunk speaker labels into global IDs via clustering.
+
+        Returns (all_turns, speaker_embeddings) where speaker_embeddings maps
+        global speaker ID → mean embedding vector.
+        """
         all_embeddings: list[np.ndarray] = []
         metadata: list[tuple[int, str]] = []  # (chunk_idx, local_speaker_id)
 
@@ -347,7 +378,7 @@ class SpeechPipeline:
                 for turn in chunk["turns"]:
                     all_turns.append({**turn, "speaker": f"SPEAKER_{chunk_idx:02d}_{turn['speaker']}"})
             all_turns.sort(key=lambda t: t["start"])
-            return all_turns
+            return all_turns, {}
 
         X = np.stack(all_embeddings)
         distances = pdist(X, metric="cosine")
@@ -362,6 +393,16 @@ class SpeechPipeline:
         for (chunk_idx, local_id), cluster_label in zip(metadata, cluster_labels):
             local_to_global[(chunk_idx, local_id)] = cluster_to_speaker[cluster_label]
 
+        # Compute mean embedding per global speaker
+        speaker_emb_accum: dict[str, list[np.ndarray]] = {}
+        for emb, cluster_label in zip(all_embeddings, cluster_labels):
+            global_id = cluster_to_speaker[cluster_label]
+            speaker_emb_accum.setdefault(global_id, []).append(emb)
+        speaker_embeddings = {
+            spk: np.mean(np.stack(embs), axis=0)
+            for spk, embs in speaker_emb_accum.items()
+        }
+
         print(f"    [Diarization] Clustered {len(all_embeddings)} local speakers into {len(unique_clusters)} global speakers")
 
         all_turns = []
@@ -371,7 +412,31 @@ class SpeechPipeline:
                 all_turns.append({**turn, "speaker": global_speaker})
 
         all_turns.sort(key=lambda t: t["start"])
-        return all_turns
+        return all_turns, speaker_embeddings
+
+    @staticmethod
+    def _save_speaker_bank(
+        output_dir: Path,
+        segments: list[dict],
+        speaker_embeddings: dict[str, np.ndarray],
+    ) -> None:
+        """Save a SpeakerBankManager populated with diarization results."""
+        from yorishiro.audio.speaker_bank import SpeakerBankManager
+
+        bank = SpeakerBankManager()
+        speakers = sorted({t["speaker"] for t in segments})
+        first_appearance = {}
+        for t in segments:
+            if t["speaker"] not in first_appearance:
+                first_appearance[t["speaker"]] = t["start"]
+
+        for spk_id in speakers:
+            bank.speaker_bank.add_speaker(spk_id, first_appearance.get(spk_id, 0.0))
+            if spk_id in speaker_embeddings:
+                bank._embeddings[spk_id] = speaker_embeddings[spk_id]
+
+        bank.save(output_dir)
+        print(f"    [Diarization] Speaker bank saved with {len(speakers)} speaker(s)")
 
     def _run_diarization(self, audio_path: Path, output_dir: Path | None = None, force: bool = False) -> list[dict]:
         """Run speaker diarization with per-chunk checkpointing."""
@@ -472,12 +537,26 @@ class SpeechPipeline:
             if num_chunks == 1:
                 # No merging needed — remap to canonical names
                 all_turns = []
-                mapping = {s: f"SPEAKER_{i:02d}" for i, s in enumerate(sorted(set(t["speaker"] for t in chunk_results[0]["turns"])))}
+                sorted_speakers = sorted(set(t["speaker"] for t in chunk_results[0]["turns"]))
+                mapping = {s: f"SPEAKER_{i:02d}" for i, s in enumerate(sorted_speakers)}
                 for t in chunk_results[0]["turns"]:
                     all_turns.append({**t, "speaker": mapping.get(t["speaker"], t["speaker"])})
                 segments = all_turns
+
+                # Build per-speaker embeddings from single chunk
+                speaker_embeddings: dict[str, np.ndarray] = {}
+                emb = chunk_results[0].get("embeddings")
+                speakers_local = chunk_results[0].get("speakers_local", [])
+                if emb is not None:
+                    for i, local_id in enumerate(speakers_local):
+                        global_id = mapping.get(local_id, local_id)
+                        speaker_embeddings[global_id] = emb[i]
             else:
-                segments = self._merge_chunk_speakers(chunk_results)
+                segments, speaker_embeddings = self._merge_chunk_speakers(chunk_results)
+
+            # Populate speaker bank with discovered speakers and embeddings
+            if output_dir and segments:
+                self._save_speaker_bank(output_dir, segments, speaker_embeddings)
 
             return segments if segments else [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
 
@@ -656,73 +735,95 @@ class SpeechPipeline:
         return best_speaker
 
     def _analyze_emotions(self, audio_path: Path, transcript: Transcript) -> Transcript:
-        """Analyze emotion for each transcript entry. Reads segments lazily, caps at 10s each."""
-        import contextlib
+        """Analyze emotion for each transcript entry using emotion2vec loaded directly."""
         import gc
-        import io
         import time
-        from funasr import AutoModel
+        import torch.nn.functional as F
         from tqdm import tqdm
 
-        try:
-            if self._emotion_model is None:
-                self._emotion_model = AutoModel(
-                    model=self.config.emotion_model,
-                    hub="hf",
-                    disable_update=True,
-                    device=get_device(),
-                )
-        except Exception as e:
-            print(f"    [Emotion] Failed to load model: {e}")
-            return transcript
-
         info = sf.info(str(audio_path))
-        sample_rate = info.samplerate
-        max_samples = sample_rate * 10
+        file_sr = info.samplerate
+        target_sr = 16000  # emotion2vec expects 16kHz
+        max_samples = int(file_sr * 10)  # 10s cap at file sample rate
 
         total = len(transcript.entries)
         errors = 0
         total_inference_time = 0.0
 
-        print(f"    [Emotion] Analyzing {total} segment(s) ...")
-        with tqdm(total=total, desc="    [Emotion]", unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
+        device_str = get_device()
+        use_mps = torch.backends.mps.is_available()
+        print(f"    [Emotion] Loading model on {device_str} ...")
+        model, labels = _load_emotion2vec(self.config.emotion_model, device_str)
+        normalize = model.cfg.get("normalize", True)
+
+        # Lazy-import resampler only if file isn't already 16kHz
+        need_resample = file_sr != target_sr
+        if need_resample:
+            import librosa
+
+        print(f"    [Emotion] Analyzing {total} segment(s) (file_sr={file_sr}) ...")
+        with tqdm(total=total, desc="    [Emotion]", unit="seg",
+                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
             for i, entry in enumerate(transcript.entries):
                 seg_duration = entry.end - entry.start
                 pbar.set_postfix_str(f"seg={seg_duration:.1f}s")
 
-                start_sample = int(entry.start * sample_rate)
-                end_sample = min(int(entry.end * sample_rate), start_sample + max_samples)
-                if end_sample - start_sample < int(sample_rate * 0.1):
+                start_sample = int(entry.start * file_sr)
+                end_sample = min(int(entry.end * file_sr), start_sample + max_samples)
+                if end_sample - start_sample < int(file_sr * 0.1):
                     pbar.update(1)
                     continue
 
                 try:
                     chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
-                    infer_start = time.perf_counter()
-                    with torch.no_grad(), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                        result = self._emotion_model.generate(
-                            input=chunk,
-                            sample_rate=int(sample_rate),
-                            granularity="utterance",
-                            extract_embedding=False,
-                        )
-                    infer_time = time.perf_counter() - infer_start
-                    total_inference_time += infer_time
+                except Exception as e:
+                    errors += 1
+                    pbar.write(f"    [Emotion] Warning: entry {i} read error: {e}")
+                    pbar.update(1)
+                    continue
 
-                    if result and result[0].get("scores"):
-                        scores = result[0]["scores"]
-                        labels = result[0]["labels"]
-                        best_idx = int(max(range(len(scores)), key=lambda j: scores[j]))
-                        raw_label = labels[best_idx]
-                        entry.emotion = raw_label.split("/")[-1] if "/" in raw_label else raw_label
-                        entry.confidence = max(entry.confidence, scores[best_idx])
+                try:
+                    # Convert to mono
+                    if chunk.ndim > 1:
+                        chunk = chunk.mean(axis=1)
+                    # Resample to 16kHz (model expects 16kHz input)
+                    if need_resample:
+                        chunk = librosa.resample(chunk, orig_sr=file_sr, target_sr=target_sr)
+
+                    infer_start = time.perf_counter()
+                    source = torch.from_numpy(chunk).float().to(device_str)
+                    if normalize:
+                        source = F.layer_norm(source, source.shape)
+                    source = source.view(1, -1)
+
+                    with torch.no_grad():
+                        feats = model.extract_features(source, padding_mask=None)
+                        x = feats["x"].mean(dim=1)  # (1, T, D) → (1, D)
+                        logits = model.proj(x)  # (1, num_labels)
+                        logits[:, -1] = float("-inf")  # mask <unk>
+                        probs = torch.softmax(logits, dim=-1)
+                        scores = probs[0].cpu().tolist()
+
+                    total_inference_time += time.perf_counter() - infer_start
+
+                    best_idx = int(max(range(len(scores)), key=lambda j: scores[j]))
+                    raw_label = labels[best_idx]
+                    entry.emotion = raw_label.split("/")[-1] if "/" in raw_label else raw_label
+                    entry.confidence = max(entry.confidence, scores[best_idx])
                 except Exception as e:
                     errors += 1
                     pbar.write(f"    [Emotion] Warning: entry {i} failed: {e}")
 
-                if i % 20 == 0:
-                    gc.collect()
                 pbar.update(1)
+
+                # Periodic MPS cache flush to prevent unified memory accumulation
+                if use_mps and i % 50 == 49:
+                    torch.mps.empty_cache()
+
+        del model
+        gc.collect()
+        if use_mps:
+            torch.mps.empty_cache()
 
         print(f"    [Emotion] Done — {total} segment(s), {errors} error(s), {total_inference_time:.1f}s inference")
         return transcript

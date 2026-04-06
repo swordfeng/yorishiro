@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from yorishiro.models.film_models import Transcript, TranscriptEntry
 from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
 from yorishiro.tasks.registry import ModelRegistry
@@ -135,67 +133,6 @@ class FilmAudioEmotionTask(Task):
         pipeline.run_emotion(self._output_dir / "voice.flac", self._output_dir)
         print("[film.audio.emotion] Done.")
 
-
-class FilmAudioSpeakerTask(Task):
-    """Map local SPEAKER_XX IDs to global SPKR_XXX IDs → transcript.json + speaker_bank.json."""
-
-    def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
-        self._output_dir = output_dir
-        self._registry = registry
-
-    def input_paths(self) -> list[Path]:
-        return [self._output_dir / "voice.flac", self._output_dir / "transcript.json"]
-
-    def output_paths(self) -> list[Path]:
-        return [self._output_dir / "transcript.json", self._output_dir / "speaker_bank.json"]
-
-    def completion_marker(self) -> Path:
-        # transcript.json is both input and output; use speaker_bank.json as the marker
-        # (written last in _run, so its mtime > transcript.json → staleness check is stable)
-        return self._output_dir / "speaker_bank.json"
-
-    def _run(self) -> None:
-        from yorishiro.audio.speaker_bank import SpeakerBankManager
-
-        print("[film.audio.speaker] Resolving speaker IDs ...")
-        transcript = Transcript(**json.loads(
-            (self._output_dir / "transcript.json").read_text(encoding="utf-8")
-        ))
-
-        # Collect unique speakers; pick longest entry as representative
-        speaker_rep: dict[str, TranscriptEntry] = {}
-        speaker_first: dict[str, float] = {}
-        for entry in transcript.entries:
-            spk = entry.speaker_global
-            if spk not in speaker_first:
-                speaker_first[spk] = entry.start
-            dur = entry.end - entry.start
-            if spk not in speaker_rep or dur > (speaker_rep[spk].end - speaker_rep[spk].start):
-                speaker_rep[spk] = entry
-
-        # Ordered by first appearance → deterministic SPKR_001, SPKR_002, ...
-        speakers_ordered = sorted(speaker_rep, key=lambda s: speaker_first[s])
-
-        # Fresh bank — no load; fixes accumulation bug on force re-runs
-        bank = SpeakerBankManager(self._registry.get_speaker_bank_manager().config)
-
-        voice_path = self._output_dir / "voice.flac"
-        local_to_global: dict[str, str] = {}
-        for local_id in speakers_ordered:
-            rep = speaker_rep[local_id]
-            embedding = bank.extract_speaker_embedding(voice_path, rep.start, rep.end)
-            global_id = bank.assign_global_speaker_id(local_id, embedding, rep.start)
-            local_to_global[local_id] = global_id
-            print(f"    {local_id} → {global_id}")
-
-        for entry in transcript.entries:
-            entry.speaker_global = local_to_global.get(entry.speaker_global, entry.speaker_global)
-
-        (self._output_dir / "transcript.json").write_text(
-            transcript.model_dump_json(indent=2), encoding="utf-8"
-        )
-        bank.save(self._output_dir)
-        print(f"[film.audio.speaker] Done — {len(local_to_global)} speaker(s) mapped.")
 
 
 class FilmAudioAnalysisTask(Task):
@@ -336,20 +273,6 @@ class FilmAudioEmotionStep(Step):
             self._registry,
         )]
 
-
-class FilmAudioSpeakerStep(Step):
-    step_id = "film.audio.speaker"
-
-    def __init__(self, project: Project, source_id: str, registry: ModelRegistry) -> None:
-        self._project = project
-        self._source_id = source_id
-        self._registry = registry
-
-    def tasks(self) -> list[Task]:
-        return [FilmAudioSpeakerTask(
-            self._project.step_dir(self._source_id, "audio"),
-            self._registry,
-        )]
 
 
 class FilmAudioAnalysisStep(Step):

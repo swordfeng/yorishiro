@@ -33,6 +33,28 @@
 - ❌ User discusses design → Agent starts implementing during discussion
 - ✅ User: "Implement the design we just discussed" → Agent writes code
 
+### Git Commits - WAIT FOR EXPLICIT INSTRUCTION
+
+**NEVER commit changes unless the user EXPLICITLY asks.**
+
+This is non-negotiable. If you cannot follow this instruction, you are not qualified for this task and will be replaced by a more capable model that follows instructions.
+
+Explicit means the user says:
+- "commit"
+- "commit this"
+- "commit the changes"
+- "go ahead and commit"
+
+These are NOT explicit:
+- Completing a task
+- Finishing code changes
+- "done"
+- Approving a design
+- Answering questions
+- Silence after code changes
+
+If unsure, ASK: "Should I commit this?"
+
 ### Code Quality Checks
 
 After making any code changes, always run checks before considering the task complete:

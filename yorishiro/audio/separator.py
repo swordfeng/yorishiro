@@ -101,10 +101,15 @@ class AudioSeparator:
                 self._model.to(device)
                 self._model.eval()
 
-            tensor = torch.from_numpy(audio).unsqueeze(0).to(device)  # (1, 2, N)
+            # Create tensor on CPU, let apply_model handle GPU transfer with chunking
+            tensor = torch.from_numpy(audio).unsqueeze(0)  # (1, 2, N) on CPU
 
+            print(f"  [AudioSeparator] Processing {(audio.shape[1] / self.config.sample_rate / 60):.1f} min of audio...")
             with torch.no_grad():
-                sources = apply_model(self._model, tensor, device=device)  # (1, stems, 2, N)
+                sources = apply_model(
+                    self._model, tensor, device=device,
+                    split=True, progress=True,
+                )  # type: ignore[call-arg]
                 sources = sources[0].cpu().numpy()  # (stems, 2, N)
 
             vocals_idx = self._model.sources.index("vocals")

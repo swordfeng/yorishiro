@@ -30,6 +30,68 @@ _DIARIZATION_CHUNK_SECONDS = 1200.0   # target chunk duration; actual cuts snap 
 _SPEAKER_SIM_THRESHOLD = 0.75         # cosine similarity threshold for cross-chunk speaker matching
 
 
+def _prosody_segment_worker(args):
+    """Worker for multiprocessing prosody analysis."""
+    idx_info, audio_path_str, sr, max_samples = args
+    
+    i = idx_info["i"]
+    start_sample = idx_info["start_sample"]
+    end_sample = idx_info["end_sample"]
+    
+    if end_sample - start_sample < int(sr * 0.1):
+        return (i, None, None, None, None, None)
+    
+    import numpy as np
+    import librosa
+    
+    try:
+        chunk, _ = sf.read(audio_path_str, start=start_sample, stop=end_sample, dtype="float32")
+        if chunk.ndim > 1:
+            chunk = chunk.mean(axis=1)
+        
+        volume = None
+        speech_rate = None
+        pitch_trend = None
+        
+        # Volume
+        rms_frames = librosa.feature.rms(y=chunk)[0]
+        db = 20.0 * np.log10(float(np.mean(rms_frames)) + 1e-9)
+        volume = "quiet" if db < -38.0 else ("loud" if db > -20.0 else "normal")
+        
+        # Speech rate
+        duration = idx_info["duration"]
+        if duration >= 0.3:
+            onsets = librosa.onset.onset_detect(y=chunk, sr=sr, units="time", normalize=True)
+            rate = len(onsets) / duration
+            speech_rate = "slow" if rate < 2.0 else ("fast" if rate > 4.0 else "normal")
+        
+        # Pitch trend
+        f0, voiced_flag, _ = librosa.pyin(
+            chunk,
+            fmin=float(librosa.note_to_hz('C2')),
+            fmax=float(librosa.note_to_hz('C7')),
+            sr=sr,
+        )
+        voiced_f0 = f0[voiced_flag]
+        if len(voiced_f0) >= 4:
+            mean_f0 = float(np.mean(voiced_f0))
+            rel_std = float(np.std(voiced_f0)) / mean_f0
+            norm_slope = float(np.polyfit(np.arange(len(voiced_f0)), voiced_f0, 1)[0]) / mean_f0
+            if rel_std > 0.25:
+                pitch_trend = "variable"
+            elif norm_slope > 0.003:
+                pitch_trend = "rising"
+            elif norm_slope < -0.003:
+                pitch_trend = "falling"
+            else:
+                pitch_trend = "steady"
+        
+        return (i, volume, speech_rate, pitch_trend, None, None)
+    
+    except Exception as e:
+        return (i, None, None, None, None, str(e))
+
+
 def _load_emotion2vec(model_name: str, device: str):
     """Load emotion2vec model directly via torch, bypassing funasr.AutoModel overhead."""
     import yaml
@@ -832,10 +894,9 @@ class SpeechPipeline:
         """Classify pitch trend, speech rate, and volume for each transcript entry.
 
         Pure librosa signal processing — no ML model, no GPU.
-        Same lazy per-entry sf.read(start=, stop=) pattern as _analyze_emotions.
+        Uses multiprocessing for parallel CPU utilization.
         """
-        import gc
-        import librosa
+        import multiprocessing as mp
         from tqdm import tqdm
 
         info = sf.info(str(audio_path))
@@ -845,63 +906,49 @@ class SpeechPipeline:
         total = len(transcript.entries)
         errors = 0
 
+        # Prepare segment infos for parallel processing
+        segments = []
+        for i, entry in enumerate(transcript.entries):
+            start_sample = int(entry.start * sr)
+            end_sample = min(int(entry.end * sr), start_sample + max_samples)
+            segments.append({
+                "i": i,
+                "start_sample": start_sample,
+                "end_sample": end_sample,
+                "duration": entry.end - entry.start,
+            })
+
         print(f"    [Prosody] Analyzing {total} segment(s) ...")
-        with tqdm(total=total, desc="    [Prosody]", unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
-            for i, entry in enumerate(transcript.entries):
-                seg_duration = entry.end - entry.start
-                pbar.set_postfix_str(f"seg={seg_duration:.1f}s")
-
-                start_sample = int(entry.start * sr)
-                end_sample = min(int(entry.end * sr), start_sample + max_samples)
-                if end_sample - start_sample < int(sr * 0.1):
+        
+        # Use all CPU cores
+        num_workers = mp.cpu_count()
+        ctx = mp.get_context("spawn")
+        
+        pool = ctx.Pool(processes=num_workers)
+        try:
+            with tqdm(total=total, desc="    [Prosody]", unit="seg", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
+                for i, volume, speech_rate, pitch_trend, _, error in pool.imap(_prosody_segment_worker, [
+                    (seg, str(audio_path), sr, max_samples) for seg in segments
+                ]):
+                    if error:
+                        errors += 1
+                        pbar.write(f"    [Prosody] Warning: entry {i} failed: {error}")
+                    else:
+                        if volume:
+                            transcript.entries[i].volume = volume
+                        if speech_rate:
+                            transcript.entries[i].speech_rate = speech_rate
+                        if pitch_trend:
+                            transcript.entries[i].pitch_trend = pitch_trend
                     pbar.update(1)
-                    continue
-
-                try:
-                    chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
-                    if chunk.ndim > 1:
-                        chunk = chunk.mean(axis=1)
-
-                    # volume — mean RMS in dBFS
-                    rms_frames = librosa.feature.rms(y=chunk)[0]
-                    db = 20.0 * np.log10(float(np.mean(rms_frames)) + 1e-9)
-                    entry.volume = "quiet" if db < -38.0 else ("loud" if db > -20.0 else "normal")
-
-                    # speech_rate — onset density per second
-                    duration = entry.end - entry.start
-                    if duration >= 0.3:
-                        onsets = librosa.onset.onset_detect(y=chunk, sr=sr, units="time", normalize=True)
-                        rate = len(onsets) / duration
-                        entry.speech_rate = "slow" if rate < 2.0 else ("fast" if rate > 4.0 else "normal")
-
-                    # pitch_trend — pyin F0, classify by slope + CoV
-                    f0, voiced_flag, _ = librosa.pyin(
-                        chunk,
-                        fmin=float(librosa.note_to_hz('C2')),
-                        fmax=float(librosa.note_to_hz('C7')),
-                        sr=sr,
-                    )
-                    voiced_f0 = f0[voiced_flag]
-                    if len(voiced_f0) >= 4:
-                        mean_f0 = float(np.mean(voiced_f0))
-                        rel_std = float(np.std(voiced_f0)) / mean_f0
-                        norm_slope = float(np.polyfit(np.arange(len(voiced_f0)), voiced_f0, 1)[0]) / mean_f0
-                        if rel_std > 0.25:
-                            entry.pitch_trend = "variable"
-                        elif norm_slope > 0.003:
-                            entry.pitch_trend = "rising"
-                        elif norm_slope < -0.003:
-                            entry.pitch_trend = "falling"
-                        else:
-                            entry.pitch_trend = "steady"
-
-                except Exception as e:
-                    errors += 1
-                    pbar.write(f"    [Prosody] Warning: entry {i} failed: {e}")
-
-                if i % 20 == 0:
-                    gc.collect()
-                pbar.update(1)
+        except KeyboardInterrupt:
+            print("\n    [Prosody] Interrupted, terminating workers...")
+            pool.terminate()
+            pool.join()
+            raise
+        finally:
+            pool.close()
+            pool.join()
 
         print(f"    [Prosody] Done — {total} segment(s), {errors} error(s)")
         return transcript

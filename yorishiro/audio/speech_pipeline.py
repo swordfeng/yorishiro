@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from pathlib import Path
 
 import av
@@ -28,6 +29,27 @@ from yorishiro.utils import get_device
 
 _DIARIZATION_CHUNK_SECONDS = 1200.0   # target chunk duration; actual cuts snap to VAD silence gaps
 _SPEAKER_SIM_THRESHOLD = 0.75         # cosine similarity threshold for cross-chunk speaker matching
+_STT_WORD_GAP_SPLIT_SECONDS = 0.35
+_STT_TEXT_SPLIT_MIN_CHARS = 24
+_STT_JA_CLAUSE_ENDINGS = (
+    "けれども",
+    "けども",
+    "けれど",
+    "だったり",
+    "でしたり",
+    "なくて",
+    "たり",
+    "だり",
+    "けど",
+    "ので",
+    "のに",
+    "から",
+    "して",
+    "くて",
+    "て",
+    "で",
+)
+_STT_PUNCT_SPLIT_RE = re.compile(r"(?<=[。！？!?、,])")
 
 
 def _prosody_segment_worker(args):
@@ -102,6 +124,9 @@ class SpeechPipelineConfig:
     stt_model: str = "large-v3"
     stt_cpu_threads: int = 0    # 0 = use all available cores
     stt_num_workers: int = 1    # parallel CTranslate2 replicas (num_workers in WhisperModel)
+    stt_word_timestamps: bool = False
+    stt_vad_filter: bool = False
+    stt_vad_min_silence_duration_ms: int = 500
     language: str | None = None
     emotion_backend: str = "emotion2vec"
     emotion_model: str = "emotion2vec/emotion2vec_plus_base"
@@ -699,31 +724,41 @@ class SpeechPipeline:
             if file_sample_rate != 16000:
                 chunk_audio = librosa.resample(chunk_audio, orig_sr=file_sample_rate, target_sr=16000)
             print(f"    [STT] chunk {chunk_idx + 1}/{num_chunks}  {chunk_start:.0f}s–{chunk_end:.0f}s ...", flush=True)
-            segments, info = whisper_model.transcribe(
-                chunk_audio,
-                language=language or None,
-                task="transcribe",
-                vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 500},
-            )
+            transcribe_kwargs = {
+                "language": language or None,
+                "task": "transcribe",
+                "vad_filter": self.config.stt_vad_filter,
+                "word_timestamps": self.config.stt_word_timestamps,
+                "condition_on_previous_text": False,
+            }
+            if self.config.stt_vad_filter:
+                transcribe_kwargs["vad_parameters"] = {
+                    "min_silence_duration_ms": self.config.stt_vad_min_silence_duration_ms,
+                }
+
+            try:
+                segments, info = whisper_model.transcribe(chunk_audio, **transcribe_kwargs)
+            except MemoryError:
+                if not self.config.stt_word_timestamps:
+                    raise
+                print(
+                    f"    [STT] chunk {chunk_idx + 1}/{num_chunks} — word timestamp alignment ran out of memory; retrying without word timestamps",
+                    flush=True,
+                )
+                transcribe_kwargs["word_timestamps"] = False
+                segments, info = whisper_model.transcribe(chunk_audio, **transcribe_kwargs)
             from tqdm import tqdm
             chunk_duration = chunk_end - chunk_start
             chunk_entries: list[TranscriptEntry] = []
             with tqdm(total=chunk_duration, desc=f"    [STT] chunk {chunk_idx + 1}/{num_chunks}", unit="s", bar_format="{l_bar}{bar}| {elapsed}<{remaining}") as pbar:
                 last_end = 0.0
+                detected = getattr(info, "language", None)
+                chunk_language = language or detected
                 for segment in segments:
-                    abs_start = chunk_start + segment.start
-                    abs_end = chunk_start + segment.end
-                    chunk_entries.append(TranscriptEntry(
-                        speaker_global=self._assign_speaker(abs_start, abs_end, diarization),
-                        start=abs_start,
-                        end=abs_end,
-                        text=segment.text.strip(),
-                        confidence=segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9,
-                    ))
+                    for entry in self._segment_to_entries(segment, chunk_start, diarization, chunk_language):
+                        chunk_entries.append(entry)
                     pbar.update(min(segment.end, chunk_duration) - last_end)
                     last_end = min(segment.end, chunk_duration)
-            detected = getattr(info, "language", None)
             if ckpt_file:
                 ckpt_data = {
                     "chunk_idx": chunk_idx,
@@ -753,6 +788,188 @@ class SpeechPipeline:
             language=detected_language or "unknown",
             entries=entries,
         )
+
+    def _segment_to_entries(
+        self,
+        segment,
+        chunk_start: float,
+        diarization: list[dict],
+        language: str | None,
+    ) -> list[TranscriptEntry]:
+        text = segment.text.strip()
+        if not text:
+            return []
+
+        confidence = segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9
+        word_entries = self._split_segment_from_words(segment, chunk_start, diarization, confidence, language)
+        if word_entries:
+            return word_entries
+
+        abs_start = chunk_start + segment.start
+        abs_end = chunk_start + segment.end
+        return [
+            TranscriptEntry(
+                speaker_global=self._assign_speaker(abs_start, abs_end, diarization),
+                start=abs_start,
+                end=abs_end,
+                text=text,
+                confidence=confidence,
+            )
+        ]
+
+    def _split_segment_from_words(
+        self,
+        segment,
+        chunk_start: float,
+        diarization: list[dict],
+        confidence: float,
+        language: str | None,
+    ) -> list[TranscriptEntry]:
+        words = getattr(segment, "words", None) or []
+        timed_words: list[tuple[float, float, str]] = []
+        for word in words:
+            start = getattr(word, "start", None)
+            end = getattr(word, "end", None)
+            token = getattr(word, "word", "")
+            if start is None or end is None:
+                continue
+            token = token.strip()
+            if not token:
+                continue
+            timed_words.append((float(start), float(end), token))
+
+        if len(timed_words) < 2:
+            return []
+
+        groups: list[list[tuple[float, float, str]]] = []
+        current = [timed_words[0]]
+        for prev, cur in zip(timed_words, timed_words[1:]):
+            prev_end = prev[1]
+            cur_start, cur_end, cur_token = cur
+            pause = cur_start - prev_end
+            should_split = pause >= _STT_WORD_GAP_SPLIT_SECONDS
+            if not should_split:
+                prev_token = prev[2]
+                should_split = prev_token.endswith(("。", "！", "？", "!", "?", "、", ","))
+
+            if should_split:
+                groups.append(current)
+                current = [cur]
+            else:
+                current.append(cur)
+        groups.append(current)
+
+        if len(groups) == 1:
+            return []
+
+        entries: list[TranscriptEntry] = []
+        for group in groups:
+            group_text = "".join(token for _, _, token in group).strip()
+            if not group_text:
+                continue
+            abs_start = chunk_start + group[0][0]
+            abs_end = chunk_start + group[-1][1]
+            entries.extend(self._split_entry_text(abs_start, abs_end, group_text, confidence, diarization, language))
+        return entries
+
+    def _split_entry_text(
+        self,
+        start: float,
+        end: float,
+        text: str,
+        confidence: float,
+        diarization: list[dict],
+        language: str | None,
+    ) -> list[TranscriptEntry]:
+        pieces = self._split_text_heuristically(text, language)
+        if len(pieces) <= 1:
+            return [
+                TranscriptEntry(
+                    speaker_global=self._assign_speaker(start, end, diarization),
+                    start=start,
+                    end=end,
+                    text=text,
+                    confidence=confidence,
+                )
+            ]
+
+        total_chars = sum(len(piece) for piece in pieces)
+        duration = max(end - start, 0.0)
+        cursor = start
+        entries: list[TranscriptEntry] = []
+        for idx, piece in enumerate(pieces):
+            piece_duration = duration * (len(piece) / total_chars) if total_chars else 0.0
+            piece_end = end if idx == len(pieces) - 1 else min(end, cursor + piece_duration)
+            entries.append(TranscriptEntry(
+                speaker_global=self._assign_speaker(cursor, piece_end, diarization),
+                start=cursor,
+                end=piece_end,
+                text=piece,
+                confidence=confidence,
+            ))
+            cursor = piece_end
+        return entries
+
+    @staticmethod
+    def _split_text_heuristically(text: str, language: str | None) -> list[str]:
+        pieces = [part.strip() for part in _STT_PUNCT_SPLIT_RE.split(text) if part.strip()]
+        if len(pieces) > 1:
+            return pieces
+        if len(text) < _STT_TEXT_SPLIT_MIN_CHARS:
+            return [text]
+        normalized_language = SpeechPipeline._normalize_language(language)
+        if normalized_language == "ja":
+            return SpeechPipeline._split_japanese_clause_text(text)
+        return [text]
+
+    @staticmethod
+    def _normalize_language(language: str | None) -> str | None:
+        if not language:
+            return None
+        normalized = language.strip().lower().replace("_", "-")
+        if normalized.startswith("ja"):
+            return "ja"
+        if normalized.startswith("en"):
+            return "en"
+        if normalized.startswith("zh"):
+            return "zh"
+        if normalized.startswith("ko"):
+            return "ko"
+        return normalized
+
+    @staticmethod
+    def _split_japanese_clause_text(text: str) -> list[str]:
+        break_points: list[int] = []
+        min_piece_chars = 6
+        for ending in _STT_JA_CLAUSE_ENDINGS:
+            search_from = min_piece_chars
+            while True:
+                idx = text.find(ending, search_from)
+                if idx < 0:
+                    break
+                split_at = idx + len(ending)
+                left_len = split_at
+                right_len = len(text) - split_at
+                if left_len >= min_piece_chars and right_len >= min_piece_chars:
+                    next_char = text[split_at]
+                    if re.match(r"[一-龯ぁ-んァ-ヶー]", next_char):
+                        break_points.append(split_at)
+                search_from = split_at
+
+        if not break_points:
+            return [text]
+
+        pieces: list[str] = []
+        start = 0
+        for split_at in sorted(set(break_points)):
+            piece = text[start:split_at].strip()
+            if piece:
+                pieces.append(piece)
+            start = split_at
+        tail = text[start:].strip()
+        if tail:
+            pieces.append(tail)
+        return pieces or [text]
 
     @staticmethod
     def _assign_speaker(start: float, end: float, diarization: list[dict]) -> str:

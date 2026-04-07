@@ -2,7 +2,7 @@
 
 Usage:
     python -m yorishiro run --project <dir> --source <id> --step film.audio
-    python -m yorishiro run --project <dir> --source <id> --step film.audio.speech
+    python -m yorishiro run --project <dir> --source <id> --step film.audio.sound_events
     python -m yorishiro run --project <dir> --source <id> --step film
     python -m yorishiro run --project <dir> --source <id> --step novel.scenes --task ch003
     python -m yorishiro run --project <dir> --all

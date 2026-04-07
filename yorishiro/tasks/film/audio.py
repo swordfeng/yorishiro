@@ -1,4 +1,4 @@
-"""film.audio.* steps: extract audio, separate stems, speech pipeline, analysis."""
+"""film.audio.* steps: stem separation, speech pipeline stages, non-speech analysis."""
 
 from __future__ import annotations
 
@@ -134,9 +134,38 @@ class FilmAudioEmotionTask(Task):
         print("[film.audio.emotion] Done.")
 
 
+class FilmAudioSoundEventsTask(Task):
+    """Run stem-aware sound event detection on voice/nonvoice flac → sound_events.json."""
 
-class FilmAudioAnalysisTask(Task):
-    """Run sound event detection + music analysis on nonvoice.flac."""
+    def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
+        self._output_dir = output_dir
+        self._registry = registry
+
+    def input_paths(self) -> list[Path]:
+        # transcript.json is used to infer spoken-content tail for better filtering,
+        # but sound detection still works if transcript is unavailable.
+        return [
+            self._output_dir / "voice.flac",
+            self._output_dir / "nonvoice.flac",
+            self._output_dir / "transcript.json",
+        ]
+
+    def output_paths(self) -> list[Path]:
+        return [self._output_dir / "sound_events.json"]
+
+    def _run(self) -> None:
+        voice_path = self._output_dir / "voice.flac"
+        nonvoice_path = self._output_dir / "nonvoice.flac"
+        transcript_path = self._output_dir / "transcript.json"
+
+        sound_detector = self._registry.get_sound_event_detector()
+        print("[film.audio.sound_events] Running sound event detection on voice + non-voice stems ...")
+        sound_detector.detect(voice_path, nonvoice_path, self._output_dir, transcript_path=transcript_path, force=True)
+        print("[film.audio.sound_events] Done.")
+
+
+class FilmAudioMusicTask(Task):
+    """Run music analysis on nonvoice.flac → music_analysis.json."""
 
     def __init__(self, video_path: Path, output_dir: Path, registry: ModelRegistry) -> None:
         self._video_path = video_path
@@ -145,41 +174,18 @@ class FilmAudioAnalysisTask(Task):
 
     def input_paths(self) -> list[Path]:
         return [
+            self._video_path,
             self._output_dir / "nonvoice.flac",
-            self._output_dir / "transcript.json",
         ]
 
     def output_paths(self) -> list[Path]:
-        return [
-            self._output_dir / "sound_events.json",
-            self._output_dir / "music_analysis.json",
-        ]
-
-    def completion_marker(self) -> Path:
-        return self._output_dir / "music_analysis.json"
+        return [self._output_dir / "music_analysis.json"]
 
     def _run(self) -> None:
-        import json
-
         nonvoice_path = self._output_dir / "nonvoice.flac"
 
-        transcript_end = 0.0
-        transcript_path = self._output_dir / "transcript.json"
-        if transcript_path.exists():
-            try:
-                data = json.loads(transcript_path.read_text(encoding="utf-8"))
-                entries = data.get("entries", [])
-                if entries:
-                    transcript_end = entries[-1].get("end", 0.0)
-            except Exception:
-                pass
-
-        sound_detector = self._registry.get_sound_event_detector()
-        print("[film.audio.analysis] Running sound event detection on non-voice stem ...")
-        sound_detector.detect(nonvoice_path, self._output_dir, transcript_end=transcript_end, force=True)
-
         music_analyzer = self._registry.get_music_analyzer()
-        print("[film.audio.analysis] Running music analysis on non-voice stem ...")
+        print("[film.audio.music] Running music analysis on non-voice stem ...")
         music_analyzer.analyze(
             self._video_path,
             nonvoice_path,
@@ -187,7 +193,7 @@ class FilmAudioAnalysisTask(Task):
             force=True,
             nonvoice_path=nonvoice_path,
         )
-        print("[film.audio.analysis] Done.")
+        print("[film.audio.music] Done.")
 
 
 # ---------------------------------------------------------------------------
@@ -274,9 +280,8 @@ class FilmAudioEmotionStep(Step):
         )]
 
 
-
-class FilmAudioAnalysisStep(Step):
-    step_id = "film.audio.analysis"
+class FilmAudioSoundEventsStep(Step):
+    step_id = "film.audio.sound_events"
 
     def __init__(self, project: Project, source_id: str, registry: ModelRegistry) -> None:
         self._project = project
@@ -284,7 +289,22 @@ class FilmAudioAnalysisStep(Step):
         self._registry = registry
 
     def tasks(self) -> list[Task]:
-        return [FilmAudioAnalysisTask(
+        return [FilmAudioSoundEventsTask(
+            self._project.step_dir(self._source_id, "audio"),
+            self._registry,
+        )]
+
+
+class FilmAudioMusicStep(Step):
+    step_id = "film.audio.music"
+
+    def __init__(self, project: Project, source_id: str, registry: ModelRegistry) -> None:
+        self._project = project
+        self._source_id = source_id
+        self._registry = registry
+
+    def tasks(self) -> list[Task]:
+        return [FilmAudioMusicTask(
             self._project.get_source_path(self._source_id),
             self._project.step_dir(self._source_id, "audio"),
             self._registry,

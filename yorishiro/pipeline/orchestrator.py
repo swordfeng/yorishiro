@@ -29,7 +29,8 @@ FILM_STEPS = [
     "film.audio.diarize",
     "film.audio.stt",
     "film.audio.emotion",
-    "film.audio.analysis",
+    "film.audio.sound_events",
+    "film.audio.music",
     "film.shot_groups",
     "film.scenes",
 ]
@@ -50,7 +51,7 @@ def expand_step_prefix(prefix: str) -> list[str]:
     """Expand a step prefix to all matching leaf step IDs in canonical order.
 
     Examples:
-        "film.audio" → ["film.audio.extract", "film.audio.separate", ...]
+        "film.audio" → ["film.audio.separate", "film.audio.vad", ...]
         "film"       → all FILM_STEPS
         "novel"      → all NOVEL_STEPS
         "film.shots" → ["film.shots"]  (exact match, returned as-is)
@@ -102,9 +103,12 @@ def _build_step(step_id: str, source_id: str, project: Project, registry: ModelR
     if step_id == "film.audio.emotion":
         from yorishiro.tasks.film.audio import FilmAudioEmotionStep
         return FilmAudioEmotionStep(project, source_id, registry)
-    if step_id == "film.audio.analysis":
-        from yorishiro.tasks.film.audio import FilmAudioAnalysisStep
-        return FilmAudioAnalysisStep(project, source_id, registry)
+    if step_id == "film.audio.sound_events":
+        from yorishiro.tasks.film.audio import FilmAudioSoundEventsStep
+        return FilmAudioSoundEventsStep(project, source_id, registry)
+    if step_id == "film.audio.music":
+        from yorishiro.tasks.film.audio import FilmAudioMusicStep
+        return FilmAudioMusicStep(project, source_id, registry)
     if step_id == "film.shot_groups":
         from yorishiro.tasks.film.shot_groups import FilmShotGroupsStep
         return FilmShotGroupsStep(project, source_id, registry)

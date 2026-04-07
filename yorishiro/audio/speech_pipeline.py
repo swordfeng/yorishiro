@@ -92,35 +92,6 @@ def _prosody_segment_worker(args):
         return (i, None, None, None, None, str(e))
 
 
-def _load_emotion2vec(model_name: str, device: str):
-    """Load emotion2vec model directly via torch, bypassing funasr.AutoModel overhead."""
-    import yaml
-    from huggingface_hub import hf_hub_download
-    from funasr.models.emotion2vec.model import Emotion2vec
-
-    config_path = hf_hub_download(model_name, "config.yaml")
-    weights_path = hf_hub_download(model_name, "model.pt")
-    tokens_path = hf_hub_download(model_name, "tokens.txt")
-
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-    # yaml.safe_load mis-parses bare scientific notation (e.g. "1e-05") as str
-    mc = config["model_conf"]
-    if isinstance(mc.get("norm_eps"), str):
-        mc["norm_eps"] = float(mc["norm_eps"])
-    with open(tokens_path) as f:
-        labels = [line.strip() for line in f if line.strip() and line.strip() != "<unk>"]
-
-    # vocab_size = labels + <unk>
-    model = Emotion2vec(model_conf=config["model_conf"], vocab_size=len(labels) + 1)
-    state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
-    model.load_state_dict(state_dict, strict=False)
-    del state_dict
-
-    model = model.to(device).eval()
-    return model, labels
-
-
 @dataclass
 class SpeechPipelineConfig:
     vad_backend: str = "silero-vad"
@@ -797,16 +768,18 @@ class SpeechPipeline:
         return best_speaker
 
     def _analyze_emotions(self, audio_path: Path, transcript: Transcript) -> Transcript:
-        """Analyze emotion for each transcript entry using emotion2vec loaded directly."""
+        """Analyze emotion for each transcript entry using emotion2vec via funasr AutoModel."""
+        import contextlib
         import gc
+        import io
         import time
-        import torch.nn.functional as F
+        from funasr import AutoModel
         from tqdm import tqdm
 
         info = sf.info(str(audio_path))
         file_sr = info.samplerate
-        target_sr = 16000  # emotion2vec expects 16kHz
-        max_samples = int(file_sr * 10)  # 10s cap at file sample rate
+        target_sr = 16000
+        max_samples = int(file_sr * 10)
 
         total = len(transcript.entries)
         errors = 0
@@ -815,10 +788,13 @@ class SpeechPipeline:
         device_str = get_device()
         use_mps = torch.backends.mps.is_available()
         print(f"    [Emotion] Loading model on {device_str} ...")
-        model, labels = _load_emotion2vec(self.config.emotion_model, device_str)
-        normalize = model.cfg.get("normalize", True)
+        model = AutoModel(
+            model=self.config.emotion_model,
+            hub="hf",
+            disable_update=True,
+            device=device_str,
+        )
 
-        # Lazy-import resampler only if file isn't already 16kHz
         need_resample = file_sr != target_sr
         if need_resample:
             import librosa
@@ -845,47 +821,48 @@ class SpeechPipeline:
                     continue
 
                 try:
-                    # Convert to mono
                     if chunk.ndim > 1:
                         chunk = chunk.mean(axis=1)
-                    # Resample to 16kHz (model expects 16kHz input)
                     if need_resample:
                         chunk = librosa.resample(chunk, orig_sr=file_sr, target_sr=target_sr)
 
                     infer_start = time.perf_counter()
-                    source = torch.from_numpy(chunk).float().to(device_str)
-                    if normalize:
-                        source = F.layer_norm(source, source.shape)
-                    source = source.view(1, -1)
-
-                    with torch.no_grad():
-                        feats = model.extract_features(source, padding_mask=None)
-                        x = feats["x"].mean(dim=1)  # (1, T, D) → (1, D)
-                        logits = model.proj(x)  # (1, num_labels)
-                        logits[:, -1] = float("-inf")  # mask <unk>
-                        probs = torch.softmax(logits, dim=-1)
-                        scores = probs[0].cpu().tolist()
-
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        result = model.generate(
+                            input=chunk,
+                            sample_rate=int(target_sr),
+                            granularity="utterance",
+                            extract_embedding=False,
+                        )
                     total_inference_time += time.perf_counter() - infer_start
 
-                    best_idx = int(max(range(len(scores)), key=lambda j: scores[j]))
-                    raw_label = labels[best_idx]
-                    entry.emotion = raw_label.split("/")[-1] if "/" in raw_label else raw_label
-                    entry.confidence = max(entry.confidence, scores[best_idx])
+                    if result and result[0].get("scores"):
+                        scores = result[0]["scores"]
+                        labels = result[0]["labels"]
+                        best_idx = int(max(range(len(scores)), key=lambda j: scores[j]))
+                        raw_label = labels[best_idx]
+                        entry.emotion = raw_label.split("/")[-1] if "/" in raw_label else raw_label
+                        entry.confidence = max(entry.confidence, scores[best_idx])
+
                 except Exception as e:
                     errors += 1
                     pbar.write(f"    [Emotion] Warning: entry {i} failed: {e}")
 
                 pbar.update(1)
 
-                # Periodic MPS cache flush to prevent unified memory accumulation
-                if use_mps and i % 50 == 49:
-                    torch.mps.empty_cache()
+                if i % 50 == 49:
+                    gc.collect()
+                    if use_mps:
+                        torch.mps.empty_cache()
+                    elif torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
         del model
         gc.collect()
         if use_mps:
             torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         print(f"    [Emotion] Done — {total} segment(s), {errors} error(s), {total_inference_time:.1f}s inference")
         return transcript

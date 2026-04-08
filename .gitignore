@@ -23,6 +23,7 @@ venv/
 *.egg-info/
 .eggs/
 .ruff_cache/
+.coverage
 
 # Environment
 .env

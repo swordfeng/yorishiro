@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "coverage[toml]>=7.10.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
@@ -48,6 +49,18 @@ packages = ["yorishiro"]
 
 [dependency-groups]
 dev = [
+    "coverage[toml]>=7.10.0",
     "ruff>=0.15.7",
     "ty>=0.0.27",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["yorishiro"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.coverage.html]
+directory = "htmlcov"

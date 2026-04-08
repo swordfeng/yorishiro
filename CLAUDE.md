@@ -55,6 +55,32 @@ These are NOT explicit:
 
 If unsure, ASK: "Should I commit this?"
 
+### Commit Message Format
+
+When creating or rewriting a commit, use:
+
+1. A short summary line in conventional style, such as:
+   - `feat: ...`
+   - `fix: ...`
+   - `docs: ...`
+   - `test: ...`
+   - `chore: ...`
+2. A blank line
+3. A short body describing the important changes
+
+Do not stop at the first summary line when the commit is non-trivial. Include a body that explains what changed in concrete terms.
+
+Example:
+
+```text
+feat: improve novel chapter splitting
+
+Move EPUB chapter extraction into the task module.
+Add text and Markdown chapter extraction support.
+Infer Markdown heading levels automatically.
+Add tests for splitter regressions and edge cases.
+```
+
 ### Code Quality Checks
 
 After making any code changes, always run checks before considering the task complete:
@@ -62,6 +88,15 @@ After making any code changes, always run checks before considering the task com
 - `uv run ty check` - type checking
 
 Fix all errors before reporting completion.
+
+### Unit Tests
+
+When code changes affect behavior, parsing, heuristics, serialization, prompts, or pipeline wiring, add or update unit tests unless the user explicitly says not to.
+
+- Prefer small focused tests near the changed behavior
+- Cover edge cases and regressions, not only the happy path
+- If fixing a bug, add a regression test that would have caught it
+- If a change is difficult to test directly, explain the gap explicitly
 
 ---
 

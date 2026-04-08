@@ -294,6 +294,42 @@ class TranscriberTests(unittest.TestCase):
         self.assertEqual([entry.text for entry in entries], ["Alpha。", "Beta。"])
         self.assertEqual([entry.speaker_global for entry in entries], ["SPEAKER_00", "SPEAKER_01"])
 
+    def test_segment_to_entries_filters_low_confidence(self) -> None:
+        transcriber = Transcriber(TranscriberConfig(stt_min_confidence=-0.5))
+        segment = SimpleNamespace(
+            text="hello",
+            start=0.0,
+            end=1.0,
+            avg_logprob=-0.9,
+        )
+
+        entries = transcriber._segment_to_entries(
+            segment,
+            0.0,
+            [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}],
+            "en",
+        )
+
+        self.assertEqual(entries, [])
+
+    def test_segment_to_entries_filters_impossible_chars_per_second(self) -> None:
+        transcriber = Transcriber(TranscriberConfig(stt_max_chars_per_second=20.0))
+        segment = SimpleNamespace(
+            text="これは不自然に長いテキストです",
+            start=0.0,
+            end=0.1,
+            avg_logprob=-0.2,
+        )
+
+        entries = transcriber._segment_to_entries(
+            segment,
+            0.0,
+            [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}],
+            "ja",
+        )
+
+        self.assertEqual(entries, [])
+
 
 class EmotionAnalyzerTests(unittest.TestCase):
     def test_run_writes_transcript_json_after_enrichment(self) -> None:

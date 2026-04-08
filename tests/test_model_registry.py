@@ -139,6 +139,36 @@ models:
         self.assertEqual(build_transcriber.call_count, 1)
         self.assertEqual(build_emotion.call_count, 1)
 
+    def test_transcriber_step_reads_grouping_and_filter_config(self) -> None:
+        project = load_project(
+            """project:
+  name: Demo
+  code: demo
+sources: []
+steps:
+  film.audio.stt:
+    backend: faster-whisper
+    model: large-v3
+    cpu_threads: 4
+    num_workers: 2
+    checkpoint_shard_size: 321
+    group_max_duration_seconds: 18.5
+    group_max_gap_seconds: 0.4
+    min_confidence: -0.7
+    max_chars_per_second: 19.0
+"""
+        )
+        registry = ModelRegistry(project)
+
+        runtime = registry.for_step("film.audio.stt")
+        transcriber = runtime.instance()
+
+        self.assertEqual(transcriber.config.stt_checkpoint_shard_size, 321)
+        self.assertEqual(transcriber.config.stt_group_max_duration_seconds, 18.5)
+        self.assertEqual(transcriber.config.stt_group_max_gap_seconds, 0.4)
+        self.assertEqual(transcriber.config.stt_min_confidence, -0.7)
+        self.assertEqual(transcriber.config.stt_max_chars_per_second, 19.0)
+
     def test_instance_runtime_rejects_agent_access(self) -> None:
         project = load_project(
             """project:

@@ -202,6 +202,11 @@ class ModelRegistry:
             str(cfg.get("word_timestamps", "")),
             str(cfg.get("vad_filter", "")),
             str(cfg.get("vad_min_silence_duration_ms", "")),
+            str(cfg.get("checkpoint_shard_size", "")),
+            str(cfg.get("group_max_duration_seconds", "")),
+            str(cfg.get("group_max_gap_seconds", "")),
+            str(cfg.get("min_confidence", "")),
+            str(cfg.get("max_chars_per_second", "")),
         ]
         return "film.audio.stt::" + "|".join(parts)
 
@@ -266,6 +271,11 @@ class ModelRegistry:
             stt_word_timestamps=bool(cfg.get("word_timestamps", False)),
             stt_vad_filter=bool(cfg.get("vad_filter", False)),
             stt_vad_min_silence_duration_ms=int(cfg.get("vad_min_silence_duration_ms", 500)),
+            stt_checkpoint_shard_size=int(cfg.get("checkpoint_shard_size", 500)),
+            stt_group_max_duration_seconds=float(cfg.get("group_max_duration_seconds", 30.0)),
+            stt_group_max_gap_seconds=float(cfg.get("group_max_gap_seconds", 0.6)),
+            stt_min_confidence=float(cfg.get("min_confidence", -0.5)),
+            stt_max_chars_per_second=float(cfg.get("max_chars_per_second", 28.0)),
             language=cfg.get("language"),
         ))
 

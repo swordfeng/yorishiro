@@ -23,10 +23,6 @@ from yorishiro.audio._speech_support import (
 )
 from yorishiro.models.film_models import Transcript, TranscriptEntry
 
-_STT_CHECKPOINT_SHARD_SIZE = 500
-_STT_GROUP_MAX_DURATION_SECONDS = 30.0
-_STT_GROUP_MAX_GAP_SECONDS = 0.6
-
 
 @dataclass(frozen=True)
 class TranscriberConfig:
@@ -37,6 +33,11 @@ class TranscriberConfig:
     stt_word_timestamps: bool = False
     stt_vad_filter: bool = False
     stt_vad_min_silence_duration_ms: int = 500
+    stt_checkpoint_shard_size: int = 500
+    stt_group_max_duration_seconds: float = 30.0
+    stt_group_max_gap_seconds: float = 0.6
+    stt_min_confidence: float = -0.5
+    stt_max_chars_per_second: float = 28.0
     language: str | None = None
 
 
@@ -335,7 +336,10 @@ class Transcriber:
             prev = current[-1]
             candidate_duration = span.end - current[0].start
             gap = span.start - prev.end
-            if gap <= _STT_GROUP_MAX_GAP_SECONDS and candidate_duration <= _STT_GROUP_MAX_DURATION_SECONDS:
+            if (
+                gap <= self.config.stt_group_max_gap_seconds
+                and candidate_duration <= self.config.stt_group_max_duration_seconds
+            ):
                 current.append(span)
                 continue
             groups.append(self._speech_group_from_spans(current))
@@ -373,7 +377,7 @@ class Transcriber:
         return results
 
     def _save_group_result(self, checkpoint_dir: Path, result: GroupResult) -> None:
-        shard_idx = result.span_start_idx // _STT_CHECKPOINT_SHARD_SIZE
+        shard_idx = result.span_start_idx // self.config.stt_checkpoint_shard_size
         shard_path = checkpoint_dir / f"groups_{shard_idx:04d}.json"
         existing: dict[str, GroupResult] = {}
         if shard_path.exists():
@@ -418,6 +422,12 @@ class Transcriber:
             return []
 
         confidence = segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9
+        duration = max(float(segment.end) - float(segment.start), 0.0)
+        chars_per_second = (len(text) / duration) if duration > 0 else float("inf")
+        if confidence < self.config.stt_min_confidence:
+            return []
+        if chars_per_second > self.config.stt_max_chars_per_second:
+            return []
         abs_start = chunk_start + segment.start
         abs_end = chunk_start + segment.end
         return [

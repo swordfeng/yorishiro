@@ -7,13 +7,9 @@ from unittest.mock import patch
 
 import yaml
 
-from yorishiro.project import Project
-from yorishiro.tasks.registry import ModelRegistry
-from yorishiro.tasks.novel.chapters import (
+from yorishiro.novel.chapter_extraction import (
     Chapter,
     MarkdownHeading,
-    NovelChaptersStep,
-    NovelChaptersTask,
     build_text_chapter,
     choose_markdown_chapter_level,
     detect_chapter_heading,
@@ -30,6 +26,9 @@ from yorishiro.tasks.novel.chapters import (
     split_text_chapters,
     strip_markdown_frontmatter,
 )
+from yorishiro.project import Project
+from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.novel.chapters import NovelChaptersStep, NovelChaptersTask
 
 
 class SplitTextChaptersTests(unittest.TestCase):
@@ -459,7 +458,7 @@ Beta.
                 Chapter(index=1, title="End", content="Beta", path="OPS/ch2.xhtml"),
             ]
 
-            with patch("yorishiro.tasks.novel.chapters.parse_epub", return_value=iter(fake_chapters)) as mock_parse:
+            with patch("yorishiro.novel.chapter_extraction.parse_epub", return_value=iter(fake_chapters)) as mock_parse:
                 saved = extract_chapters(source, output_dir)
 
             mock_parse.assert_called_once_with(source, remove_furigana=True)
@@ -476,7 +475,7 @@ Beta.
             output_dir = root / "out"
             source.write_text("body", encoding="utf-8")
 
-            with patch("yorishiro.tasks.novel.chapters.parse_text_source", return_value=iter([])) as mock_parse:
+            with patch("yorishiro.novel.chapter_extraction.parse_text_source", return_value=iter([])) as mock_parse:
                 extract_chapters(source, output_dir, source_config={"chapter_split": {"mode": "none"}})
 
             mock_parse.assert_called_once_with(source, source_config={"chapter_split": {"mode": "none"}})

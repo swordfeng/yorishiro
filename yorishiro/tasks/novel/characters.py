@@ -5,7 +5,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
+from typing import cast
 
+from yorishiro.agent_utils import build_agent_from_args
+from yorishiro.novel.character_extraction import (
+    EXTRACTION_SYSTEM_PROMPT,
+    CharacterExtractionAgent,
+    build_batches,
+    load_aliases,
+    load_all_scenes,
+    make_extraction_models,
+    process_all_batches,
+)
 from yorishiro.project import ModelConfig, Project
 from yorishiro.tasks.base import Step, Task
 from yorishiro.tasks.registry import ModelRegistry
@@ -46,16 +57,6 @@ class NovelCharactersTask(Task):
         return existing[-1] if existing else self._output_dir / "__placeholder__"
 
     def _run(self) -> None:
-        from yorishiro.agent_utils import build_agent_from_args
-        from yorishiro.character import (
-            EXTRACTION_SYSTEM_PROMPT,
-            build_batches,
-            load_aliases,
-            load_all_scenes,
-            make_extraction_models,
-            process_all_batches,
-        )
-
         aliases = load_aliases(self._aliases_file)
         target_characters = self._target_characters or list(aliases.keys())
 
@@ -94,7 +95,7 @@ class NovelCharactersTask(Task):
                 target_characters=target_characters,
                 characters_dir=self._output_dir,
                 output_dir=self._output_dir,
-                agent=agent,
+                agent=cast(CharacterExtractionAgent, agent),
             )
 
         asyncio.run(run())

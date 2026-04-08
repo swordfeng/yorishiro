@@ -14,20 +14,27 @@ sources:
     title: "竹取物語"
     year: N/A
 
-model:
-  default:
+models:
+  gpt:
     provider: openrouter
-    # name: anthropic/claude-sonnet-4.6
     name: openai/gpt-5.4
     thinking: medium
     output_mode: tool
     api_key_env: YORISHIRO_API_KEY_OPENROUTER
-  
-  steps:
-    character:
-      thinking: high
-    synthesize:
-      thinking: high
+  sonnet:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4-6
+    thinking: medium
+    output_mode: tool
+    api_key_env: YORISHIRO_API_KEY_OPENROUTER
 
-runtime:
-  batch_tokens: 32000
+steps:
+  novel.scenes:
+    model: sonnet
+  novel.aliases:
+    model: gpt
+  novel.characters:
+    model: gpt
+  cross.synthesize:
+    model: sonnet
+    thinking: high

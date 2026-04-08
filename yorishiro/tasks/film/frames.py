@@ -7,7 +7,7 @@ from pathlib import Path
 
 from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class FilmFramesTask(Task):
@@ -18,12 +18,12 @@ class FilmFramesTask(Task):
         video_path: Path,
         shots_json: Path,
         output_dir: Path,
-        registry: ModelRegistry,
+        runtime: StepRuntime,
     ) -> None:
         self._video_path = video_path
         self._shots_json = shots_json
         self._output_dir = output_dir
-        self._registry = registry
+        self._runtime = runtime
 
     def input_paths(self) -> list[Path]:
         return [self._video_path, self._shots_json]
@@ -38,7 +38,7 @@ class FilmFramesTask(Task):
             raise FileNotFoundError(f"shots.json not found: {self._shots_json}")
 
         shot_list = ShotList(**json.loads(self._shots_json.read_text(encoding="utf-8")))
-        extractor = self._registry.get_keyframe_extractor()
+        extractor = self._runtime.instance()
 
         print(f"[film.frames] Extracting keyframes for {len(shot_list.shots)} shots ...")
         keyframes = extractor.extract(self._video_path, shot_list, self._output_dir, force=True)
@@ -57,4 +57,9 @@ class FilmFramesStep(Step):
         video_path = self._project.get_source_path(self._source_id)
         shots_dir = self._project.step_dir(self._source_id, "shots")
         frames_dir = self._project.step_dir(self._source_id, "frames")
-        return [FilmFramesTask(video_path, shots_dir / "shots.json", frames_dir, self._registry)]
+        return [FilmFramesTask(
+            video_path,
+            shots_dir / "shots.json",
+            frames_dir,
+            self._registry.for_step(self.step_id),
+        )]

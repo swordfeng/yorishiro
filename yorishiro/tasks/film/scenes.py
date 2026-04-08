@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import datetime
 import json
 from pathlib import Path
 
-from yorishiro.project import ModelConfig, Project
+from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class FilmScenesTask(Task):
@@ -24,7 +23,7 @@ class FilmScenesTask(Task):
         audio_dir: Path,
         output_dir: Path,
         project_name: str,
-        model_config: ModelConfig,
+        runtime: StepRuntime,
         max_frames_per_scene: int = 8,
     ) -> None:
         self._shot_groups_json = shot_groups_json
@@ -33,7 +32,7 @@ class FilmScenesTask(Task):
         self._audio_dir = audio_dir
         self._output_dir = output_dir
         self._project_name = project_name
-        self._model_config = model_config
+        self._runtime = runtime
         self._max_frames_per_scene = max_frames_per_scene
 
     def input_paths(self) -> list[Path]:
@@ -52,6 +51,7 @@ class FilmScenesTask(Task):
         from yorishiro.models.film_models import (
             Frame,
             FilmSceneIndex,
+            FilmSceneContent,
             FilmSceneMetadata,
             KeyFrameSet,
             MusicSegment,
@@ -94,16 +94,12 @@ class FilmScenesTask(Task):
         ))
         frame_base_path = self._frames_dir
 
-        cfg = self._model_config
-        args = argparse.Namespace(
-            provider=cfg.provider,
-            model=cfg.name,
-            thinking=cfg.thinking,
-            output_mode=cfg.output_mode,
-            base_url=cfg.base_url,
-            api_key_env=cfg.api_key_env,
+        analysis_agent = SceneAnalysisAgent(
+            self._runtime.agent(
+                output_type=FilmSceneContent,
+                system_prompt=SceneAnalysisAgent.SYSTEM_PROMPT,
+            )
         )
-        analysis_agent = SceneAnalysisAgent.create(args, cfg)
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -219,8 +215,8 @@ class FilmScenesStep(Step):
         self._registry = registry
 
     def tasks(self) -> list[Task]:
-        cfg = self._registry.cloud_config("film.scenes")
-        step_cfg = self._registry.step_config("film.scenes")
+        runtime = self._registry.for_step(self.step_id)
+        step_cfg = self._project.step_config(self.step_id)
         max_frames = step_cfg.get("max_frames_per_scene", 8)
 
         return [
@@ -231,7 +227,7 @@ class FilmScenesStep(Step):
                 audio_dir=self._project.step_dir(self._source_id, "audio"),
                 output_dir=self._project.step_dir(self._source_id, "scenes"),
                 project_name=self._project.name,
-                model_config=cfg,
+                runtime=runtime,
                 max_frames_per_scene=max_frames,
             )
         ]

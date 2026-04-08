@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import argparse
 import re
 from pathlib import Path
 
 from yorishiro.novel.scene_segmentation import SceneSegmentationConfig, process_chapter
-from yorishiro.project import ModelConfig, Project
+from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class NovelScenesTask(Task):
@@ -20,14 +19,14 @@ class NovelScenesTask(Task):
         chapter_path: Path,
         output_dir: Path,
         project_yaml: Path,
-        model_config: ModelConfig,
+        runtime: StepRuntime,
         segmentation_config: SceneSegmentationConfig,
     ) -> None:
         self.key = chapter_path.stem
         self._chapter_path = chapter_path
         self._output_dir = output_dir
         self._project_yaml = project_yaml
-        self._model_config = model_config
+        self._runtime = runtime
         self._segmentation_config = segmentation_config
 
     def input_paths(self) -> list[Path]:
@@ -39,22 +38,11 @@ class NovelScenesTask(Task):
     def _run(self) -> None:
         print(f"[novel.scenes] Processing {self._chapter_path.name} ...")
         self._output_dir.mkdir(parents=True, exist_ok=True)
-
-        cfg = self._model_config
-        args = argparse.Namespace(
-            provider=cfg.provider,
-            model=cfg.name,
-            thinking=cfg.thinking,
-            output_mode=cfg.output_mode,
-            base_url=cfg.base_url,
-            api_key_env=cfg.api_key_env,
-        )
         process_chapter(
             chapter_file=self._chapter_path,
             output_dir=self._output_dir,
             force=True,
-            args=args,
-            config=cfg,
+            runtime=self._runtime,
             segmentation_config=self._segmentation_config,
             material_yaml=self._project_yaml,
         )
@@ -69,8 +57,8 @@ class NovelScenesStep(Step):
         self._registry = registry
 
     def tasks(self) -> list[Task]:
-        config = self._registry.cloud_config("novel.scenes")
-        step_config = self._registry.step_config("novel.scenes")
+        runtime = self._registry.for_step(self.step_id)
+        step_config = self._project.step_config(self.step_id)
         segmentation_config = SceneSegmentationConfig.from_step_config(step_config)
         chapters = self._project.list_chapters(self._source_id)
         scenes_dir = self._project.step_dir(self._source_id, "scenes")
@@ -81,7 +69,7 @@ class NovelScenesStep(Step):
                 chapter_path=chapter_path,
                 output_dir=scenes_dir / chapter_path.stem,
                 project_yaml=project_yaml,
-                model_config=config,
+                runtime=runtime,
                 segmentation_config=segmentation_config,
             )
             for chapter_path in chapters

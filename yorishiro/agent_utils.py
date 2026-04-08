@@ -123,6 +123,48 @@ def build_agent(
     return cast(Agent[None, _OutputT], agent)
 
 
+def build_agent_from_config(
+    config: ModelConfig,
+    output_type: type[_OutputT],
+    system_prompt: str,
+    tools: list | None = None,
+) -> Agent[None, _OutputT]:
+    """Build a pydantic-ai Agent from resolved ModelConfig only.
+
+    This is the non-CLI path used by the task runtime layer. The provided config
+    is expected to already include project-level fallbacks via
+    Project.resolved_model_config().
+    """
+    provider = config.provider
+    model_name = config.name
+    thinking = config.thinking or "medium"
+    output_mode = config.output_mode or "tool"
+    base_url = config.base_url or ""
+    api_key_env = config.api_key_env or "YORISHIRO_API_KEY"
+
+    if provider is None:
+        raise ValueError("No provider specified in ModelConfig")
+    if model_name is None:
+        raise ValueError("No model specified in ModelConfig")
+
+    api_key = os.environ.get(api_key_env)
+    if not api_key:
+        print(f"Error: {api_key_env} environment variable is not set", file=sys.stderr)
+        sys.exit(1)
+
+    return build_agent(
+        model_name=model_name,
+        provider_name=provider,
+        api_key=api_key,
+        base_url=base_url,
+        output_type=output_type,
+        system_prompt=system_prompt,
+        thinking=thinking,
+        output_mode=output_mode,
+        tools=tools,
+    )
+
+
 def build_agent_from_args(
     args: argparse.Namespace,
     output_type: type[_OutputT],
@@ -175,21 +217,16 @@ def build_agent_from_args(
             "set 'model.default.name' in project.yaml"
         )
     
-    # Resolve API key
-    key_env = api_key_env or "YORISHIRO_API_KEY"
-    api_key = os.environ.get(key_env)
-    if not api_key:
-        print(f"Error: {key_env} environment variable is not set", file=sys.stderr)
-        sys.exit(1)
-    
-    return build_agent(
-        model_name=model_name,
-        provider_name=provider,
-        api_key=api_key,
-        base_url=base_url or "",
+    return build_agent_from_config(
+        ModelConfig(
+            provider=provider,
+            name=model_name,
+            thinking=thinking,
+            output_mode=output_mode,
+            base_url=base_url,
+            api_key_env=api_key_env,
+        ),
         output_type=output_type,
         system_prompt=system_prompt,
-        thinking=thinking,
-        output_mode=output_mode,
         tools=tools,
     )

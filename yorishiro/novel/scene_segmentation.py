@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import re
@@ -15,8 +14,7 @@ import regex as _regex
 import yaml
 from pydantic import BaseModel, Field
 
-from yorishiro.agent_utils import build_agent_from_args
-from yorishiro.project import ModelConfig
+from yorishiro.tasks.registry import StepRuntime
 from yorishiro.utils import is_output_stale
 
 
@@ -502,8 +500,7 @@ def process_chapter(
     chapter_file: Path,
     output_dir: Path,
     force: bool,
-    args: argparse.Namespace,
-    config: ModelConfig,
+    runtime: StepRuntime,
     segmentation_config: SceneSegmentationConfig | None = None,
     material_yaml: Path | None = None,
 ) -> bool:
@@ -521,15 +518,12 @@ def process_chapter(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    agent = build_agent_from_args(
-        args,
+    agent = runtime.agent(
         output_type=SegmentationResult,
         system_prompt=SYSTEM_PROMPT,
-        config=config,
     )
 
-    model_display = args.model or config.name or "unknown"
-    print(f"Segmenting {chapter_file.name} ({total_length} chars) with {model_display} ...")
+    print(f"Segmenting {chapter_file.name} ({total_length} chars) ...")
 
     scenes = asyncio.run(
         segment_chapter(

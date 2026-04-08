@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 from pathlib import Path
 
-from yorishiro.project import ModelConfig, Project
+from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class CrossSynthesizeTask(Task):
@@ -18,11 +17,11 @@ class CrossSynthesizeTask(Task):
         self,
         characters_dirs: list[Path],
         souls_dir: Path,
-        model_config: ModelConfig,
+        runtime: StepRuntime,
     ) -> None:
         self._characters_dirs = characters_dirs
         self._souls_dir = souls_dir
-        self._model_config = model_config
+        self._runtime = runtime
 
     def input_paths(self) -> list[Path]:
         paths: list[Path] = []
@@ -40,7 +39,6 @@ class CrossSynthesizeTask(Task):
         return existing[-1] if existing else self._souls_dir / "__placeholder__"
 
     def _run(self) -> None:
-        from yorishiro.agent_utils import build_agent_from_args
         from yorishiro.synthesize import FINALIZATION_SYSTEM_PROMPT, SoulDocOutput, synthesize_character
 
         # Collect all characters across all source character dirs
@@ -56,21 +54,9 @@ class CrossSynthesizeTask(Task):
 
         print(f"[cross.synthesize] Synthesizing {len(target_characters)} characters ...")
 
-        cfg = self._model_config
-        args = argparse.Namespace(
-            provider=cfg.provider,
-            model=cfg.name,
-            thinking=cfg.thinking,
-            output_mode=cfg.output_mode,
-            base_url=cfg.base_url,
-            api_key_env=cfg.api_key_env,
-        )
-
-        agent = build_agent_from_args(
-            args,
+        agent = self._runtime.agent(
             output_type=SoulDocOutput,
             system_prompt=FINALIZATION_SYSTEM_PROMPT,
-            config=cfg,
         )
 
         self._souls_dir.mkdir(parents=True, exist_ok=True)
@@ -97,8 +83,6 @@ class CrossSynthesizeStep(Step):
         self._registry = registry
 
     def tasks(self) -> list[Task]:
-        cfg = self._registry.cloud_config("cross.synthesize")
-
         # Collect characters dirs from all novel sources
         characters_dirs = [
             self._project.step_dir(source.id, "characters")
@@ -115,6 +99,6 @@ class CrossSynthesizeStep(Step):
             CrossSynthesizeTask(
                 characters_dirs=characters_dirs,
                 souls_dir=self._project.souls_dir(),
-                model_config=cfg,
+                runtime=self._registry.for_step(self.step_id),
             )
         ]

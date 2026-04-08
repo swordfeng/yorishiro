@@ -10,7 +10,6 @@ from typing import Any
 
 from pydantic_ai.messages import BinaryContent
 
-from yorishiro.agent_utils import build_agent_from_args
 from yorishiro.models.film_models import ShotGroup, GroupingBatchResult, Shot, KeyFrameSet
 
 _MEDIA_TYPES = {".avif": "image/avif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
@@ -77,19 +76,10 @@ After processing each batch, update the summary with:
 class ShotGroupingAgent:
     """Agent for grouping shots into narrative scenes."""
 
+    SYSTEM_PROMPT = SHOT_GROUPING_SYSTEM_PROMPT
+
     def __init__(self, agent: Any):
         self.agent = agent
-
-    @classmethod
-    def create(cls, args: Any, config: Any) -> ShotGroupingAgent:
-        """Create agent from CLI args and config."""
-        agent = build_agent_from_args(
-            args,
-            output_type=GroupingBatchResult,
-            system_prompt=SHOT_GROUPING_SYSTEM_PROMPT,
-            config=config,
-        )
-        return cls(agent)
 
     def build_batch_prompt(
         self,

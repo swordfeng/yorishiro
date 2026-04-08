@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 from pathlib import Path
 from typing import cast
 
-from yorishiro.agent_utils import build_agent_from_args
 from yorishiro.novel.character_extraction import (
     EXTRACTION_SYSTEM_PROMPT,
     CharacterExtractionAgent,
@@ -17,9 +15,9 @@ from yorishiro.novel.character_extraction import (
     make_extraction_models,
     process_all_batches,
 )
-from yorishiro.project import ModelConfig, Project
+from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class NovelCharactersTask(Task):
@@ -31,7 +29,7 @@ class NovelCharactersTask(Task):
         aliases_file: Path,
         output_dir: Path,
         project_yaml: Path,
-        model_config: ModelConfig,
+        runtime: StepRuntime,
         batch_tokens: int = 32000,
         target_characters: list[str] | None = None,
     ) -> None:
@@ -39,7 +37,7 @@ class NovelCharactersTask(Task):
         self._aliases_file = aliases_file
         self._output_dir = output_dir
         self._project_yaml = project_yaml
-        self._model_config = model_config
+        self._runtime = runtime
         self._batch_tokens = batch_tokens
         self._target_characters = target_characters
 
@@ -70,25 +68,13 @@ class NovelCharactersTask(Task):
         batches = build_batches(all_scenes, self._batch_tokens)
         print(f"[novel.characters] {len(all_scenes)} scenes → {len(batches)} batches.")
 
-        cfg = self._model_config
-        args = argparse.Namespace(
-            provider=cfg.provider,
-            model=cfg.name,
-            thinking=cfg.thinking,
-            output_mode=cfg.output_mode,
-            base_url=cfg.base_url,
-            api_key_env=cfg.api_key_env,
-        )
-
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
         async def run() -> None:
             _, BatchExtractionResult = make_extraction_models(target_characters)
-            agent = build_agent_from_args(
-                args,
+            agent = self._runtime.agent(
                 output_type=BatchExtractionResult,
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
-                config=cfg,
             )
             await process_all_batches(
                 batches=batches,
@@ -111,8 +97,8 @@ class NovelCharactersStep(Step):
         self._registry = registry
 
     def tasks(self) -> list[Task]:
-        cfg = self._registry.cloud_config("novel.characters")
-        step_cfg = self._registry.step_config("novel.characters")
+        runtime = self._registry.for_step(self.step_id)
+        step_cfg = self._project.step_config(self.step_id)
         batch_tokens = step_cfg.get("batch_tokens", 32000)
         return [
             NovelCharactersTask(
@@ -120,7 +106,7 @@ class NovelCharactersStep(Step):
                 aliases_file=self._project.step_dir(self._source_id, "aliases") / "character_aliases.json",
                 output_dir=self._project.step_dir(self._source_id, "characters"),
                 project_yaml=self._project.root / "project.yaml",
-                model_config=cfg,
+                runtime=runtime,
                 batch_tokens=batch_tokens,
             )
         ]

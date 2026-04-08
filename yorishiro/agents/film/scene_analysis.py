@@ -10,7 +10,6 @@ from typing import Any
 
 from pydantic_ai.messages import BinaryContent
 
-from yorishiro.agent_utils import build_agent_from_args
 from yorishiro.models.film_models import (
     FilmSceneContent,
     ShotGroup,
@@ -98,19 +97,10 @@ You will receive a `speaker_map` showing current SPKR_XXX → name mappings.
 class SceneAnalysisAgent:
     """Agent for analyzing merged scenes."""
 
+    SYSTEM_PROMPT = SCENE_ANALYSIS_SYSTEM_PROMPT
+
     def __init__(self, agent: Any):
         self.agent = agent
-
-    @classmethod
-    def create(cls, args: Any, config: Any) -> SceneAnalysisAgent:
-        """Create agent from CLI args and config."""
-        agent = build_agent_from_args(
-            args,
-            output_type=FilmSceneContent,
-            system_prompt=SCENE_ANALYSIS_SYSTEM_PROMPT,
-            config=config,
-        )
-        return cls(agent)
 
     def build_analysis_prompt(
         self,

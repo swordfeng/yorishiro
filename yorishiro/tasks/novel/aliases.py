@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 from pathlib import Path
 from typing import cast
 
-from yorishiro.agent_utils import build_agent_from_args
 from yorishiro.novel.alias_resolution import (
     AliasAgent,
     BATCH_SYSTEM_PROMPT,
@@ -24,9 +22,9 @@ from yorishiro.novel.alias_resolution import (
     write_character_aliases,
     write_insight_drafts,
 )
-from yorishiro.project import ModelConfig, Project
+from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class NovelAliasesTask(Task):
@@ -37,13 +35,13 @@ class NovelAliasesTask(Task):
         scenes_dir: Path,
         output_dir: Path,
         project_yaml: Path,
-        model_config: ModelConfig,
+        runtime: StepRuntime,
         batch_tokens: int = 32000,
     ) -> None:
         self._scenes_dir = scenes_dir
         self._output_dir = output_dir
         self._project_yaml = project_yaml
-        self._model_config = model_config
+        self._runtime = runtime
         self._batch_tokens = batch_tokens
 
     def input_paths(self) -> list[Path]:
@@ -66,36 +64,20 @@ class NovelAliasesTask(Task):
         batches = build_batches(all_scenes, self._batch_tokens)
         print(f"  Split into {len(batches)} batches.")
 
-        cfg = self._model_config
-        args = argparse.Namespace(
-            provider=cfg.provider,
-            model=cfg.name,
-            thinking=cfg.thinking,
-            output_mode=cfg.output_mode,
-            base_url=cfg.base_url,
-            api_key_env=cfg.api_key_env,
-        )
-
         async def run() -> GlobalState:
-            batch_agent = build_agent_from_args(
-                args,
+            batch_agent = self._runtime.agent(
                 output_type=BatchUpdateResult,
                 system_prompt=BATCH_SYSTEM_PROMPT,
-                config=cfg,
             )
-            retry_agent = build_agent_from_args(
-                args,
+            retry_agent = self._runtime.agent(
                 output_type=MissedAliasResolution,
                 system_prompt=RETRY_SYSTEM_PROMPT,
-                config=cfg,
             )
             initial_state = GlobalState()
             if self._output_dir.exists():
-                seed_agent = build_agent_from_args(
-                    args,
+                seed_agent = self._runtime.agent(
                     output_type=SeedFromSoulDocsResult,
                     system_prompt=SEED_SYSTEM_PROMPT,
-                    config=cfg,
                 )
                 initial_state = await seed_from_insight_drafts(self._output_dir, cast(AliasAgent, seed_agent))
             return await process_all_batches(
@@ -105,7 +87,7 @@ class NovelAliasesTask(Task):
                 cast(AliasAgent, retry_agent),
             )
 
-        print(f"[novel.aliases] Processing with {cfg.name or 'unknown'} ...")
+        print("[novel.aliases] Processing ...")
         state = asyncio.run(run())
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -124,15 +106,15 @@ class NovelAliasesStep(Step):
         self._registry = registry
 
     def tasks(self) -> list[Task]:
-        cfg = self._registry.cloud_config("novel.aliases")
-        step_cfg = self._registry.step_config("novel.aliases")
+        runtime = self._registry.for_step(self.step_id)
+        step_cfg = self._project.step_config(self.step_id)
         batch_tokens = step_cfg.get("batch_tokens", 32000)
         return [
             NovelAliasesTask(
                 scenes_dir=self._project.step_dir(self._source_id, "scenes"),
                 output_dir=self._project.step_dir(self._source_id, "aliases"),
                 project_yaml=self._project.root / "project.yaml",
-                model_config=cfg,
+                runtime=runtime,
                 batch_tokens=batch_tokens,
             )
         ]

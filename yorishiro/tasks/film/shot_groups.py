@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 from pathlib import Path
 
-from yorishiro.project import ModelConfig, Project
+from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class FilmShotGroupsTask(Task):
@@ -23,7 +22,7 @@ class FilmShotGroupsTask(Task):
         sound_events_json: Path,
         music_json: Path,
         output_dir: Path,
-        model_config: ModelConfig,
+        runtime: StepRuntime,
         batch_size: int = 15,
     ) -> None:
         self._shots_json = shots_json
@@ -32,7 +31,7 @@ class FilmShotGroupsTask(Task):
         self._sound_events_json = sound_events_json
         self._music_json = music_json
         self._output_dir = output_dir
-        self._model_config = model_config
+        self._runtime = runtime
         self._batch_size = batch_size
 
     def input_paths(self) -> list[Path]:
@@ -48,6 +47,7 @@ class FilmShotGroupsTask(Task):
     def _run(self) -> None:
         from yorishiro.agents.film.shot_grouping import ShotGroupingAgent, build_shot_audio_summary
         from yorishiro.models.film_models import (
+            GroupingBatchResult,
             KeyFrameSet,
             MusicSegment,
             ShotGroup,
@@ -73,17 +73,12 @@ class FilmShotGroupsTask(Task):
             m_data = json.loads(self._music_json.read_text(encoding="utf-8"))
             music_segments = [MusicSegment(**m) for m in m_data.get("segments", [])]
 
-        cfg = self._model_config
-        args = argparse.Namespace(
-            provider=cfg.provider,
-            model=cfg.name,
-            thinking=cfg.thinking,
-            output_mode=cfg.output_mode,
-            base_url=cfg.base_url,
-            api_key_env=cfg.api_key_env,
+        grouping_agent = ShotGroupingAgent(
+            self._runtime.agent(
+                output_type=GroupingBatchResult,
+                system_prompt=ShotGroupingAgent.SYSTEM_PROMPT,
+            )
         )
-
-        grouping_agent = ShotGroupingAgent.create(args, cfg)
         shots = shot_list.shots
         frame_base_path = self._frames_dir  # frame_path is relative to frames_dir
 
@@ -154,8 +149,8 @@ class FilmShotGroupsStep(Step):
         self._registry = registry
 
     def tasks(self) -> list[Task]:
-        cfg = self._registry.cloud_config("film.shot_groups")
-        step_cfg = self._registry.step_config("film.shot_groups")
+        runtime = self._registry.for_step(self.step_id)
+        step_cfg = self._project.step_config(self.step_id)
         batch_size = step_cfg.get("batch_size", 15)
 
         shots_dir = self._project.step_dir(self._source_id, "shots")
@@ -171,7 +166,7 @@ class FilmShotGroupsStep(Step):
                 sound_events_json=audio_dir / "sound_events.json",
                 music_json=audio_dir / "music_analysis.json",
                 output_dir=output_dir,
-                model_config=cfg,
+                runtime=runtime,
                 batch_size=batch_size,
             )
         ]

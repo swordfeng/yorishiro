@@ -6,7 +6,7 @@ from pathlib import Path
 
 from yorishiro.project import Project
 from yorishiro.tasks.base import Step, Task
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 # ---------------------------------------------------------------------------
@@ -17,10 +17,10 @@ from yorishiro.tasks.registry import ModelRegistry
 class FilmAudioSeparateTask(Task):
     """Separate voice / non-voice stems via Demucs → voice.flac + nonvoice.flac."""
 
-    def __init__(self, video_path: Path, output_dir: Path, registry: ModelRegistry) -> None:
+    def __init__(self, video_path: Path, output_dir: Path, runtime: StepRuntime) -> None:
         self._video_path = video_path
         self._output_dir = output_dir
-        self._registry = registry
+        self._runtime = runtime
 
     def input_paths(self) -> list[Path]:
         return [self._video_path]
@@ -33,7 +33,7 @@ class FilmAudioSeparateTask(Task):
 
     def _run(self) -> None:
         self._output_dir.mkdir(parents=True, exist_ok=True)
-        separator = self._registry.get_audio_separator()
+        separator = self._runtime.instance()
         print("[film.audio.separate] Separating voice / non-voice stems ...")
         separator.separate(self._video_path, self._output_dir, force=True)
         print("[film.audio.separate] Done.")
@@ -42,9 +42,9 @@ class FilmAudioSeparateTask(Task):
 class FilmAudioVADTask(Task):
     """Run Voice Activity Detection on voice.flac → vad.json."""
 
-    def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
+    def __init__(self, output_dir: Path, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
-        self._registry = registry
+        self._runtime = runtime
 
     def input_paths(self) -> list[Path]:
         return [self._output_dir / "voice.flac"]
@@ -54,16 +54,16 @@ class FilmAudioVADTask(Task):
 
     def _run(self) -> None:
         print("[film.audio.vad] Running VAD on voice stem ...")
-        pipeline = self._registry.get_speech_pipeline()
+        pipeline = self._runtime.instance()
         pipeline.run_vad(self._output_dir / "voice.flac", self._output_dir)
 
 
 class FilmAudioDiarizeTask(Task):
     """Run speaker diarization on voice.flac → diarization.json."""
 
-    def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
+    def __init__(self, output_dir: Path, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
-        self._registry = registry
+        self._runtime = runtime
         self._force = False
 
     def input_paths(self) -> list[Path]:
@@ -78,17 +78,17 @@ class FilmAudioDiarizeTask(Task):
 
     def _run(self) -> None:
         print("[film.audio.diarize] Running speaker diarization on voice stem ...")
-        pipeline = self._registry.get_speech_pipeline()
+        pipeline = self._runtime.instance()
         pipeline.run_diarization(self._output_dir / "voice.flac", self._output_dir, force=self._force)
 
 
 class FilmAudioSTTTask(Task):
     """Run speech-to-text using vad.json + diarization.json → transcript_raw.json."""
 
-    def __init__(self, output_dir: Path, language: str | None, registry: ModelRegistry) -> None:
+    def __init__(self, output_dir: Path, language: str | None, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
         self._language = language
-        self._registry = registry
+        self._runtime = runtime
         self._force = False
 
     def input_paths(self) -> list[Path]:
@@ -107,16 +107,16 @@ class FilmAudioSTTTask(Task):
 
     def _run(self) -> None:
         print("[film.audio.stt] Running speech-to-text ...")
-        pipeline = self._registry.get_speech_pipeline()
+        pipeline = self._runtime.instance()
         pipeline.run_stt(self._output_dir / "voice.flac", self._output_dir, self._language, force=self._force)
 
 
 class FilmAudioEmotionTask(Task):
     """Run emotion + prosody analysis on transcript_raw.json → transcript.json."""
 
-    def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
+    def __init__(self, output_dir: Path, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
-        self._registry = registry
+        self._runtime = runtime
 
     def input_paths(self) -> list[Path]:
         return [
@@ -129,7 +129,7 @@ class FilmAudioEmotionTask(Task):
 
     def _run(self) -> None:
         print("[film.audio.emotion] Running emotion analysis ...")
-        pipeline = self._registry.get_speech_pipeline()
+        pipeline = self._runtime.instance()
         pipeline.run_emotion(self._output_dir / "voice.flac", self._output_dir)
         print("[film.audio.emotion] Done.")
 
@@ -137,9 +137,9 @@ class FilmAudioEmotionTask(Task):
 class FilmAudioSoundEventsTask(Task):
     """Run stem-aware sound event detection on voice/nonvoice flac → sound_events.json."""
 
-    def __init__(self, output_dir: Path, registry: ModelRegistry) -> None:
+    def __init__(self, output_dir: Path, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
-        self._registry = registry
+        self._runtime = runtime
 
     def input_paths(self) -> list[Path]:
         # transcript.json is used to infer spoken-content tail for better filtering,
@@ -158,7 +158,7 @@ class FilmAudioSoundEventsTask(Task):
         nonvoice_path = self._output_dir / "nonvoice.flac"
         transcript_path = self._output_dir / "transcript.json"
 
-        sound_detector = self._registry.get_sound_event_detector()
+        sound_detector = self._runtime.instance()
         print("[film.audio.sound_events] Running sound event detection on voice + non-voice stems ...")
         sound_detector.detect(voice_path, nonvoice_path, self._output_dir, transcript_path=transcript_path, force=True)
         print("[film.audio.sound_events] Done.")
@@ -167,10 +167,10 @@ class FilmAudioSoundEventsTask(Task):
 class FilmAudioMusicTask(Task):
     """Run music analysis on nonvoice.flac → music_analysis.json."""
 
-    def __init__(self, video_path: Path, output_dir: Path, registry: ModelRegistry) -> None:
+    def __init__(self, video_path: Path, output_dir: Path, runtime: StepRuntime) -> None:
         self._video_path = video_path
         self._output_dir = output_dir
-        self._registry = registry
+        self._runtime = runtime
 
     def input_paths(self) -> list[Path]:
         return [
@@ -184,7 +184,7 @@ class FilmAudioMusicTask(Task):
     def _run(self) -> None:
         nonvoice_path = self._output_dir / "nonvoice.flac"
 
-        music_analyzer = self._registry.get_music_analyzer()
+        music_analyzer = self._runtime.instance()
         print("[film.audio.music] Running music analysis on non-voice stem ...")
         music_analyzer.analyze(
             self._video_path,
@@ -213,7 +213,7 @@ class FilmAudioSeparateStep(Step):
         return [FilmAudioSeparateTask(
             self._project.get_source_path(self._source_id),
             self._project.step_dir(self._source_id, "audio"),
-            self._registry,
+            self._registry.for_step(self.step_id),
         )]
 
 
@@ -228,7 +228,7 @@ class FilmAudioVADStep(Step):
     def tasks(self) -> list[Task]:
         return [FilmAudioVADTask(
             self._project.step_dir(self._source_id, "audio"),
-            self._registry,
+            self._registry.for_step(self.step_id),
         )]
 
 
@@ -243,7 +243,7 @@ class FilmAudioDiarizeStep(Step):
     def tasks(self) -> list[Task]:
         return [FilmAudioDiarizeTask(
             self._project.step_dir(self._source_id, "audio"),
-            self._registry,
+            self._registry.for_step(self.step_id),
         )]
 
 
@@ -261,7 +261,7 @@ class FilmAudioSTTStep(Step):
         return [FilmAudioSTTTask(
             self._project.step_dir(self._source_id, "audio"),
             language,
-            self._registry,
+            self._registry.for_step(self.step_id),
         )]
 
 
@@ -276,7 +276,7 @@ class FilmAudioEmotionStep(Step):
     def tasks(self) -> list[Task]:
         return [FilmAudioEmotionTask(
             self._project.step_dir(self._source_id, "audio"),
-            self._registry,
+            self._registry.for_step(self.step_id),
         )]
 
 
@@ -291,7 +291,7 @@ class FilmAudioSoundEventsStep(Step):
     def tasks(self) -> list[Task]:
         return [FilmAudioSoundEventsTask(
             self._project.step_dir(self._source_id, "audio"),
-            self._registry,
+            self._registry.for_step(self.step_id),
         )]
 
 
@@ -307,5 +307,5 @@ class FilmAudioMusicStep(Step):
         return [FilmAudioMusicTask(
             self._project.get_source_path(self._source_id),
             self._project.step_dir(self._source_id, "audio"),
-            self._registry,
+            self._registry.for_step(self.step_id),
         )]

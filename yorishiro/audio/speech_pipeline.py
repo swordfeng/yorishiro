@@ -14,6 +14,7 @@ import math
 import os
 import re
 from pathlib import Path
+from typing import Literal, NotRequired, TypedDict
 
 import av
 import numpy as np
@@ -50,6 +51,15 @@ _STT_JA_CLAUSE_ENDINGS = (
     "で",
 )
 _STT_PUNCT_SPLIT_RE = re.compile(r"(?<=[。！？!?、,])")
+
+
+class _TranscribeKwargs(TypedDict):
+    language: str | None
+    task: Literal["transcribe"]
+    vad_filter: bool
+    word_timestamps: bool
+    condition_on_previous_text: bool
+    vad_parameters: NotRequired[dict[str, int]]
 
 
 def _prosody_segment_worker(args):
@@ -724,7 +734,7 @@ class SpeechPipeline:
             if file_sample_rate != 16000:
                 chunk_audio = librosa.resample(chunk_audio, orig_sr=file_sample_rate, target_sr=16000)
             print(f"    [STT] chunk {chunk_idx + 1}/{num_chunks}  {chunk_start:.0f}s–{chunk_end:.0f}s ...", flush=True)
-            transcribe_kwargs = {
+            transcribe_kwargs: _TranscribeKwargs = {
                 "language": language or None,
                 "task": "transcribe",
                 "vad_filter": self.config.stt_vad_filter,

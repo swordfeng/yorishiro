@@ -9,12 +9,11 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 import regex as _regex
 import yaml
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
 
 from yorishiro.agent_utils import build_agent_from_args
 from yorishiro.project import ModelConfig
@@ -154,6 +153,14 @@ class SegmentationResult(BaseModel):
             "Used as a compacted context."
         )
     )
+
+
+class _AgentRunResult(Protocol):
+    output: SegmentationResult
+
+
+class SegmentationAgent(Protocol):
+    async def run(self, prompt: str) -> _AgentRunResult: ...
 
 
 @dataclass
@@ -387,7 +394,7 @@ def grow_chunk_or_raise(
 
 async def segment_chapter(
     chapter_text: str,
-    agent: Agent[None, SegmentationResult],
+    agent: SegmentationAgent,
     segmentation_config: SceneSegmentationConfig | None = None,
 ) -> list[SceneData]:
     """Progressive LLM segmentation. Returns SceneData list with exact codepoint offsets."""
@@ -524,7 +531,13 @@ def process_chapter(
     model_display = args.model or config.name or "unknown"
     print(f"Segmenting {chapter_file.name} ({total_length} chars) with {model_display} ...")
 
-    scenes = asyncio.run(segment_chapter(chapter_text, agent, segmentation_config=segmentation_config))
+    scenes = asyncio.run(
+        segment_chapter(
+            chapter_text,
+            cast(SegmentationAgent, agent),
+            segmentation_config=segmentation_config,
+        )
+    )
 
     print("Verifying offsets ...")
     verify_coverage(scenes, total_length)

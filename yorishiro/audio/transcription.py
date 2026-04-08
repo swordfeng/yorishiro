@@ -17,11 +17,10 @@ import torch
 
 from yorishiro.audio._speech_support import (
     TranscribeKwargs,
-    assign_speaker,
     get_whisper_model,
     split_text_heuristically,
 )
-from yorishiro.models.film_models import Transcript, TranscriptEntry
+from yorishiro.models.film_models import STTEntry, STTTranscript
 
 
 @dataclass(frozen=True)
@@ -70,7 +69,7 @@ class GroupResult:
 
 
 class Transcriber:
-    """Run STT using existing VAD and diarization outputs."""
+    """Run STT using existing VAD output."""
 
     def __init__(self, config: TranscriberConfig | None = None) -> None:
         self.config = config or TranscriberConfig()
@@ -81,23 +80,20 @@ class Transcriber:
         output_dir: Path,
         language: str | None = None,
         force: bool = False,
-    ) -> Transcript:
+    ) -> STTTranscript:
         output_dir.mkdir(parents=True, exist_ok=True)
         vad_path = output_dir / "vad.json"
-        diar_path = output_dir / "diarization.json"
         speech_segments = cast(list[dict[str, Any]], json.loads(vad_path.read_text(encoding="utf-8")))
-        diarization = cast(list[dict[str, Any]], json.loads(diar_path.read_text(encoding="utf-8")))
         detected_language = language or self.config.language
         print(f"  [STT] Transcribing {audio_path.name} ...")
         transcript = self._run_transcription(
             audio_path,
-            diarization,
             speech_segments,
             detected_language,
             output_dir=output_dir,
             force=force,
         )
-        out = output_dir / "transcription.json"
+        out = output_dir / "stt.json"
         out.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
         print(f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}")
         return transcript
@@ -105,12 +101,11 @@ class Transcriber:
     def _run_transcription(
         self,
         audio_path: Path,
-        diarization: list[dict[str, Any]],
         speech_segments: list[dict[str, Any]],
         language: str | None,
         output_dir: Path | None = None,
         force: bool = False,
-    ) -> Transcript:
+    ) -> STTTranscript:
         import librosa
         from tqdm import tqdm
 
@@ -164,7 +159,6 @@ class Transcriber:
                 pending_groups,
                 audio_path=audio_path,
                 file_sample_rate=file_sample_rate,
-                diarization=diarization,
                 language=language,
                 librosa_module=librosa,
                 update_progress=update_progress,
@@ -180,7 +174,6 @@ class Transcriber:
         *,
         audio_path: Path,
         file_sample_rate: int,
-        diarization: list[dict[str, Any]],
         language: str | None,
         librosa_module: Any,
         update_progress: Any,
@@ -205,7 +198,6 @@ class Transcriber:
                 worker_config=worker_configs[0],
                 audio_path=audio_path,
                 file_sample_rate=file_sample_rate,
-                diarization=diarization,
                 language=language,
                 librosa_module=librosa_module,
                 update_progress=update_progress,
@@ -222,7 +214,6 @@ class Transcriber:
                     worker_config=worker_configs[worker_idx],
                     audio_path=audio_path,
                     file_sample_rate=file_sample_rate,
-                    diarization=diarization,
                     language=language,
                     librosa_module=librosa_module,
                     update_progress=update_progress,
@@ -243,7 +234,6 @@ class Transcriber:
         worker_config: TranscriberConfig,
         audio_path: Path,
         file_sample_rate: int,
-        diarization: list[dict[str, Any]],
         language: str | None,
         librosa_module: Any,
         update_progress: Any,
@@ -282,7 +272,7 @@ class Transcriber:
             chunk_language = language or detected
             entries: list[dict[str, Any]] = []
             for segment in segments:
-                for entry in self._segment_to_entries(segment, group.start, diarization, chunk_language):
+                for entry in self._segment_to_entries(segment, group.start, chunk_language):
                     entries.append(entry.model_dump())
             results.append(
                 GroupResult(
@@ -397,26 +387,25 @@ class Transcriber:
         groups: list[SpeechGroup],
         group_results: dict[str, GroupResult],
         language: str | None,
-    ) -> Transcript:
-        entries: list[TranscriptEntry] = []
+    ) -> STTTranscript:
+        entries: list[STTEntry] = []
         detected_language = language
         for group in groups:
             result = group_results.get(group.group_id)
             if result is None:
                 continue
-            entries.extend(TranscriptEntry(**entry) for entry in result.entries)
+            entries.extend(STTEntry(**entry) for entry in result.entries)
             if detected_language is None and result.detected_language:
                 detected_language = result.detected_language
         entries.sort(key=lambda entry: (entry.start, entry.end))
-        return Transcript(language=detected_language or "unknown", entries=entries)
+        return STTTranscript(language=detected_language or "unknown", entries=entries)
 
     def _segment_to_entries(
         self,
         segment: Any,
         chunk_start: float,
-        diarization: list[dict[str, Any]],
         language: str | None,
-    ) -> list[TranscriptEntry]:
+    ) -> list[STTEntry]:
         text = segment.text.strip()
         if not text:
             return []
@@ -431,8 +420,7 @@ class Transcriber:
         abs_start = chunk_start + segment.start
         abs_end = chunk_start + segment.end
         return [
-            TranscriptEntry(
-                speaker_global=assign_speaker(abs_start, abs_end, diarization),
+            STTEntry(
                 start=abs_start,
                 end=abs_end,
                 text=text,
@@ -444,10 +432,9 @@ class Transcriber:
         self,
         segment: Any,
         chunk_start: float,
-        diarization: list[dict[str, Any]],
         confidence: float,
         language: str | None,
-    ) -> list[TranscriptEntry]:
+    ) -> list[STTEntry]:
         words = getattr(segment, "words", None) or []
         timed_words: list[tuple[float, float, str]] = []
         for word in words:
@@ -485,14 +472,14 @@ class Transcriber:
         if len(groups) == 1:
             return []
 
-        entries: list[TranscriptEntry] = []
+        entries: list[STTEntry] = []
         for group in groups:
             group_text = "".join(token for _, _, token in group).strip()
             if not group_text:
                 continue
             abs_start = chunk_start + group[0][0]
             abs_end = chunk_start + group[-1][1]
-            entries.extend(self._split_entry_text(abs_start, abs_end, group_text, confidence, diarization, language))
+            entries.extend(self._split_entry_text(abs_start, abs_end, group_text, confidence, language))
         return entries
 
     def _split_entry_text(
@@ -501,14 +488,12 @@ class Transcriber:
         end: float,
         text: str,
         confidence: float,
-        diarization: list[dict[str, Any]],
         language: str | None,
-    ) -> list[TranscriptEntry]:
+    ) -> list[STTEntry]:
         pieces = split_text_heuristically(text, language)
         if len(pieces) <= 1:
             return [
-                TranscriptEntry(
-                    speaker_global=assign_speaker(start, end, diarization),
+                STTEntry(
                     start=start,
                     end=end,
                     text=text,
@@ -519,13 +504,12 @@ class Transcriber:
         total_chars = sum(len(piece) for piece in pieces)
         duration = max(end - start, 0.0)
         cursor = start
-        entries: list[TranscriptEntry] = []
+        entries: list[STTEntry] = []
         for idx, piece in enumerate(pieces):
             piece_duration = duration * (len(piece) / total_chars) if total_chars else 0.0
             piece_end = end if idx == len(pieces) - 1 else min(end, cursor + piece_duration)
             entries.append(
-                TranscriptEntry(
-                    speaker_global=assign_speaker(cursor, piece_end, diarization),
+                STTEntry(
                     start=cursor,
                     end=piece_end,
                     text=piece,

@@ -68,6 +68,32 @@ class SpeakerSegment(BaseModel):
     end: float = Field(description="End time in seconds")
 
 
+class STTEntry(BaseModel):
+    start: float = Field(description="Start time in seconds")
+    end: float = Field(description="End time in seconds")
+    text: str = Field(description="Transcribed text")
+    confidence: float = Field(description="Transcription confidence")
+
+
+class STTTranscript(BaseModel):
+    language: str = Field(description="Detected or configured language")
+    entries: list[STTEntry] = Field(default_factory=list)
+
+
+class SpeakerAttributionEntry(BaseModel):
+    entry_id: str = Field(description="Stable STT entry identifier")
+    start: float = Field(description="Entry start time in seconds")
+    end: float = Field(description="Entry end time in seconds")
+    speaker_id: str = Field(description="Attributed global speaker ID or UNKNOWN")
+    similarity: float | None = Field(default=None, description="Best speaker similarity score if available")
+    embedding_present: bool = Field(description="Whether an embedding was available for attribution")
+    enrolled: bool = Field(description="Whether this entry was used to update the speaker bank")
+
+
+class SpeakerAttribution(BaseModel):
+    entries: list[SpeakerAttributionEntry] = Field(default_factory=list)
+
+
 class TranscriptEntry(BaseModel):
     speaker_global: str = Field(description="Global speaker ID (e.g., 'SPKR_001')")
     start: float = Field(description="Start time in seconds")

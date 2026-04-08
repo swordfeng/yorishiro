@@ -105,38 +105,32 @@ steps:
     model: large-v3
     cpu_threads: 4
     num_workers: 2
-  film.audio.diarize:
-    diarization_model: diarizer
+  film.audio.speakers:
+    speaker_similarity_threshold: 0.8
   film.audio.emotion:
     model: emotion2vec/emotion2vec_plus_base
-models:
-  diarizer:
-    backend: pyannote
-    model: pyannote/speaker-diarization-3.1
-    batch_size: 32
-    hf_token_env: HF_TOKEN
 """
         )
         registry = ModelRegistry(project)
 
         vad_runner = object()
-        diarizer = object()
         transcriber = object()
+        speaker_attributor = object()
         emotion_analyzer = object()
         with (
             patch.object(registry, "_build_vad_runner", return_value=vad_runner) as build_vad,
-            patch.object(registry, "_build_diarizer", return_value=diarizer) as build_diarizer,
             patch.object(registry, "_build_transcriber", return_value=transcriber) as build_transcriber,
+            patch.object(registry, "_build_speaker_attributor", return_value=speaker_attributor) as build_speakers,
             patch.object(registry, "_build_emotion_analyzer", return_value=emotion_analyzer) as build_emotion,
         ):
             self.assertIs(registry.for_step("film.audio.vad").instance(), vad_runner)
-            self.assertIs(registry.for_step("film.audio.diarize").instance(), diarizer)
             self.assertIs(registry.for_step("film.audio.stt").instance(), transcriber)
+            self.assertIs(registry.for_step("film.audio.speakers").instance(), speaker_attributor)
             self.assertIs(registry.for_step("film.audio.emotion").instance(), emotion_analyzer)
 
         self.assertEqual(build_vad.call_count, 1)
-        self.assertEqual(build_diarizer.call_count, 1)
         self.assertEqual(build_transcriber.call_count, 1)
+        self.assertEqual(build_speakers.call_count, 1)
         self.assertEqual(build_emotion.call_count, 1)
 
     def test_transcriber_step_reads_grouping_and_filter_config(self) -> None:

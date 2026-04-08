@@ -83,7 +83,7 @@ class FilmAudioDiarizeTask(Task):
 
 
 class FilmAudioSTTTask(Task):
-    """Run speech-to-text using vad.json + diarization.json → transcription.json."""
+    """Run speech-to-text using vad.json → stt.json."""
 
     def __init__(self, output_dir: Path, language: str | None, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
@@ -95,11 +95,10 @@ class FilmAudioSTTTask(Task):
         return [
             self._output_dir / "voice.flac",
             self._output_dir / "vad.json",
-            self._output_dir / "diarization.json",
         ]
 
     def output_paths(self) -> list[Path]:
-        return [self._output_dir / "transcription.json"]
+        return [self._output_dir / "stt.json"]
 
     def run(self, force: bool = False) -> None:
         self._force = force
@@ -111,8 +110,8 @@ class FilmAudioSTTTask(Task):
         transcriber.run(self._output_dir / "voice.flac", self._output_dir, self._language, force=self._force)
 
 
-class FilmAudioEmotionTask(Task):
-    """Run emotion + prosody analysis on transcription.json → transcript.json."""
+class FilmAudioSpeakersTask(Task):
+    """Run speaker attribution on stt.json → speaker_attribution.json + speaker bank."""
 
     def __init__(self, output_dir: Path, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
@@ -121,7 +120,30 @@ class FilmAudioEmotionTask(Task):
     def input_paths(self) -> list[Path]:
         return [
             self._output_dir / "voice.flac",
-            self._output_dir / "transcription.json",
+            self._output_dir / "stt.json",
+        ]
+
+    def output_paths(self) -> list[Path]:
+        return [self._output_dir / "speaker_attribution.json"]
+
+    def _run(self) -> None:
+        print("[film.audio.speakers] Running speaker attribution ...")
+        attributor = self._runtime.instance()
+        attributor.run(self._output_dir / "voice.flac", self._output_dir)
+
+
+class FilmAudioEmotionTask(Task):
+    """Run emotion + prosody analysis on stt.json + speaker_attribution.json → transcript.json."""
+
+    def __init__(self, output_dir: Path, runtime: StepRuntime) -> None:
+        self._output_dir = output_dir
+        self._runtime = runtime
+
+    def input_paths(self) -> list[Path]:
+        return [
+            self._output_dir / "voice.flac",
+            self._output_dir / "stt.json",
+            self._output_dir / "speaker_attribution.json",
         ]
 
     def output_paths(self) -> list[Path]:
@@ -261,6 +283,21 @@ class FilmAudioSTTStep(Step):
         return [FilmAudioSTTTask(
             self._project.step_dir(self._source_id, "audio"),
             language,
+            self._registry.for_step(self.step_id),
+        )]
+
+
+class FilmAudioSpeakersStep(Step):
+    step_id = "film.audio.speakers"
+
+    def __init__(self, project: Project, source_id: str, registry: ModelRegistry) -> None:
+        self._project = project
+        self._source_id = source_id
+        self._registry = registry
+
+    def tasks(self) -> list[Task]:
+        return [FilmAudioSpeakersTask(
+            self._project.step_dir(self._source_id, "audio"),
             self._registry.for_step(self.step_id),
         )]
 

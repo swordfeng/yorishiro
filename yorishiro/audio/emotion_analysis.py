@@ -16,7 +16,7 @@ import torch
 from tqdm import tqdm
 
 from yorishiro.audio._speech_support import get_emotion_model, prosody_segment_worker
-from yorishiro.models.film_models import Transcript
+from yorishiro.models.film_models import SpeakerAttribution, STTTranscript, Transcript, TranscriptEntry
 
 
 @dataclass(frozen=True)
@@ -26,15 +26,18 @@ class EmotionAnalyzerConfig:
 
 
 class EmotionAnalyzer:
-    """Run emotion and prosody enrichment on `transcription.json`."""
+    """Run emotion and prosody enrichment on `stt.json` + `speaker_attribution.json`."""
 
     def __init__(self, config: EmotionAnalyzerConfig | None = None) -> None:
         self.config = config or EmotionAnalyzerConfig()
 
     def run(self, audio_path: Path, output_dir: Path) -> Transcript:
         output_dir.mkdir(parents=True, exist_ok=True)
-        raw_path = output_dir / "transcription.json"
-        transcript = Transcript(**json.loads(raw_path.read_text(encoding="utf-8")))
+        stt_path = output_dir / "stt.json"
+        attribution_path = output_dir / "speaker_attribution.json"
+        stt = STTTranscript(**json.loads(stt_path.read_text(encoding="utf-8")))
+        attribution = SpeakerAttribution(**json.loads(attribution_path.read_text(encoding="utf-8")))
+        transcript = self._merge_stt_and_attribution(stt, attribution)
         print(f"  [Emotion] Analyzing {len(transcript.entries)} segment(s) ...")
         transcript = self._analyze_emotions(audio_path, transcript)
         gc.collect()
@@ -45,6 +48,21 @@ class EmotionAnalyzer:
         out.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
         print(f"  [Emotion] Done — {', '.join(sorted(emotions)) if emotions else 'none'}")
         return transcript
+
+    def _merge_stt_and_attribution(self, stt: STTTranscript, attribution: SpeakerAttribution) -> Transcript:
+        speaker_ids_by_key = {entry.entry_id: entry.speaker_id for entry in attribution.entries}
+        transcript_entries: list[TranscriptEntry] = []
+        for idx, entry in enumerate(stt.entries):
+            transcript_entries.append(
+                TranscriptEntry(
+                    speaker_global=speaker_ids_by_key.get(f"utt_{idx:06d}", "UNKNOWN"),
+                    start=entry.start,
+                    end=entry.end,
+                    text=entry.text,
+                    confidence=entry.confidence,
+                )
+            )
+        return Transcript(language=stt.language, entries=transcript_entries)
 
     def _analyze_emotions(self, audio_path: Path, transcript: Transcript) -> Transcript:
         info = sf.info(str(audio_path))

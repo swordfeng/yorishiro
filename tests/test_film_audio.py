@@ -14,17 +14,18 @@ import numpy as np
 
 from yorishiro.audio.diarization import Diarizer, DiarizerConfig
 from yorishiro.audio.emotion_analysis import EmotionAnalyzer
+from yorishiro.audio.speaker_attribution import SpeakerAttributor, SpeakerAttributorConfig
 from yorishiro.audio.transcription import SpeechGroup, Transcriber, TranscriberConfig
 from yorishiro.audio.vad import VadRunner
-from yorishiro.models.film_models import Transcript, TranscriptEntry
+from yorishiro.models.film_models import STTEntry, SpeakerAttribution, SpeakerAttributionEntry, STTTranscript, Transcript
 from yorishiro.project import Project
 from yorishiro.tasks.film.audio import (
-    FilmAudioDiarizeStep,
     FilmAudioEmotionStep,
+    FilmAudioSpeakersStep,
     FilmAudioSTTStep,
     FilmAudioVADStep,
-    FilmAudioDiarizeTask,
     FilmAudioEmotionTask,
+    FilmAudioSpeakersTask,
     FilmAudioSTTTask,
     FilmAudioVADTask,
 )
@@ -106,10 +107,6 @@ class TranscriberTests(unittest.TestCase):
             output_dir = Path(tmp_dir) / "audio"
             output_dir.mkdir()
             (output_dir / "vad.json").write_text(json.dumps([{"start": 0.0, "end": 1.0}]), encoding="utf-8")
-            (output_dir / "diarization.json").write_text(
-                json.dumps([{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}]),
-                encoding="utf-8",
-            )
             ckpt_dir = output_dir / ".stt_checkpoints"
             ckpt_dir.mkdir()
             source_mtime = audio_path.stat().st_mtime
@@ -124,7 +121,6 @@ class TranscriberTests(unittest.TestCase):
                         "source_mtime": source_mtime,
                         "entries": [
                             {
-                                "speaker_global": "SPEAKER_00",
                                 "start": 0.0,
                                 "end": 1.0,
                                 "text": "hello",
@@ -159,7 +155,7 @@ class TranscriberTests(unittest.TestCase):
 
             self.assertEqual(transcript.language, "en")
             self.assertEqual(transcript.entries[0].text, "hello")
-            saved = json.loads((output_dir / "transcription.json").read_text(encoding="utf-8"))
+            saved = json.loads((output_dir / "stt.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["entries"][0]["text"], "hello")
 
     def test_run_uses_vad_segment_offsets_for_transcript_timestamps(self) -> None:
@@ -172,10 +168,6 @@ class TranscriberTests(unittest.TestCase):
             output_dir = Path(tmp_dir) / "audio"
             output_dir.mkdir()
             (output_dir / "vad.json").write_text(json.dumps([{"start": 26.1, "end": 27.5}]), encoding="utf-8")
-            (output_dir / "diarization.json").write_text(
-                json.dumps([{"speaker": "SPEAKER_00", "start": 26.1, "end": 27.5}]),
-                encoding="utf-8",
-            )
 
             class FakeSoundFile:
                 samplerate = 16000
@@ -218,7 +210,7 @@ class TranscriberTests(unittest.TestCase):
             self.assertEqual(len(transcript.entries), 1)
             self.assertEqual(transcript.entries[0].start, 26.1)
             self.assertEqual(transcript.entries[0].end, 27.5)
-            self.assertEqual(transcript.entries[0].speaker_global, "SPEAKER_00")
+            self.assertEqual(transcript.entries[0].text, "hello")
 
     def test_run_worker_groups_saves_each_completed_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -267,7 +259,6 @@ class TranscriberTests(unittest.TestCase):
                     worker_config=TranscriberConfig(),
                     audio_path=audio_path,
                     file_sample_rate=16000,
-                    diarization=[{"speaker": "SPEAKER_00", "start": 0.0, "end": 3.0}],
                     language="en",
                     librosa_module=types.SimpleNamespace(resample=lambda audio, **_kwargs: audio),
                     update_progress=lambda _delta: None,
@@ -277,22 +268,20 @@ class TranscriberTests(unittest.TestCase):
             self.assertEqual([result.group_id for result in results], ["g_000000_000000", "g_000001_000001"])
             self.assertEqual(saved_group_ids, ["g_000000_000000", "g_000001_000001"])
 
-    def test_split_entry_text_uses_overlap_assignment(self) -> None:
+    def test_split_entry_text_preserves_pieces(self) -> None:
         transcriber = Transcriber()
         entries = transcriber._split_entry_text(
             0.0,
             2.0,
             "Alpha。Beta。",
             0.9,
-            [
-                {"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0},
-                {"speaker": "SPEAKER_01", "start": 1.0, "end": 2.0},
-            ],
             "ja",
         )
 
         self.assertEqual([entry.text for entry in entries], ["Alpha。", "Beta。"])
-        self.assertEqual([entry.speaker_global for entry in entries], ["SPEAKER_00", "SPEAKER_01"])
+        self.assertEqual(entries[0].start, 0.0)
+        self.assertGreater(entries[1].start, entries[0].start)
+        self.assertEqual(entries[-1].end, 2.0)
 
     def test_segment_to_entries_filters_low_confidence(self) -> None:
         transcriber = Transcriber(TranscriberConfig(stt_min_confidence=-0.5))
@@ -306,7 +295,6 @@ class TranscriberTests(unittest.TestCase):
         entries = transcriber._segment_to_entries(
             segment,
             0.0,
-            [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}],
             "en",
         )
 
@@ -324,11 +312,41 @@ class TranscriberTests(unittest.TestCase):
         entries = transcriber._segment_to_entries(
             segment,
             0.0,
-            [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}],
             "ja",
         )
 
         self.assertEqual(entries, [])
+
+
+class SpeakerAttributorTests(unittest.TestCase):
+    def test_run_writes_attribution_and_speaker_bank(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            stt = STTTranscript(
+                language="ja",
+                entries=[
+                    STTEntry(start=0.0, end=1.2, text="a", confidence=0.1),
+                    STTEntry(start=1.5, end=2.8, text="b", confidence=0.2),
+                ],
+            )
+            (output_dir / "stt.json").write_text(stt.model_dump_json(indent=2), encoding="utf-8")
+
+            emb1 = np.array([1.0, 0.0], dtype=np.float32)
+            emb2 = np.array([0.99, 0.01], dtype=np.float32)
+            attributor = SpeakerAttributor(SpeakerAttributorConfig())
+            with patch(
+                "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
+                side_effect=[emb1, emb2],
+            ):
+                result = attributor.run(audio_path, output_dir)
+
+            self.assertEqual([entry.speaker_id for entry in result.entries], ["SPKR_001", "SPKR_001"])
+            saved = SpeakerAttribution(**json.loads((output_dir / "speaker_attribution.json").read_text(encoding="utf-8")))
+            self.assertEqual(saved.entries[0].speaker_id, "SPKR_001")
+            self.assertTrue((output_dir / "speaker_bank.json").exists())
 
 
 class EmotionAnalyzerTests(unittest.TestCase):
@@ -338,11 +356,10 @@ class EmotionAnalyzerTests(unittest.TestCase):
             output_dir.mkdir()
             audio_path = Path(tmp_dir) / "voice.flac"
             audio_path.write_bytes(b"stub")
-            transcript = Transcript(
+            stt = STTTranscript(
                 language="ja",
                 entries=[
-                    TranscriptEntry(
-                        speaker_global="SPEAKER_00",
+                    STTEntry(
                         start=0.0,
                         end=1.0,
                         text="hello",
@@ -350,7 +367,21 @@ class EmotionAnalyzerTests(unittest.TestCase):
                     )
                 ],
             )
-            (output_dir / "transcription.json").write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
+            attribution = SpeakerAttribution(
+                entries=[
+                    SpeakerAttributionEntry(
+                        entry_id="utt_000000",
+                        start=0.0,
+                        end=1.0,
+                        speaker_id="SPKR_001",
+                        similarity=0.9,
+                        embedding_present=True,
+                        enrolled=True,
+                    )
+                ]
+            )
+            (output_dir / "stt.json").write_text(stt.model_dump_json(indent=2), encoding="utf-8")
+            (output_dir / "speaker_attribution.json").write_text(attribution.model_dump_json(indent=2), encoding="utf-8")
 
             analyzer = EmotionAnalyzer()
 
@@ -391,8 +422,8 @@ sources:
       language: ja
 steps:
   film.audio.vad: {}
-  film.audio.diarize: {}
   film.audio.stt: {}
+  film.audio.speakers: {}
   film.audio.emotion: {}
 """,
                 encoding="utf-8",
@@ -401,17 +432,18 @@ steps:
             registry = ModelRegistry(project)
 
             vad_task = FilmAudioVADStep(project, "film-src", registry).tasks()[0]
-            diarize_task = FilmAudioDiarizeStep(project, "film-src", registry).tasks()[0]
             stt_task = FilmAudioSTTStep(project, "film-src", registry).tasks()[0]
+            speakers_task = FilmAudioSpeakersStep(project, "film-src", registry).tasks()[0]
             emotion_task = FilmAudioEmotionStep(project, "film-src", registry).tasks()[0]
 
             self.assertIsInstance(vad_task, FilmAudioVADTask)
-            self.assertIsInstance(diarize_task, FilmAudioDiarizeTask)
             self.assertIsInstance(stt_task, FilmAudioSTTTask)
+            self.assertIsInstance(speakers_task, FilmAudioSpeakersTask)
             self.assertIsInstance(emotion_task, FilmAudioEmotionTask)
             assert isinstance(stt_task, FilmAudioSTTTask)
             self.assertEqual(stt_task._language, "ja")
             self.assertEqual(vad_task.output_paths(), [project.step_dir("film-src", "audio") / "vad.json"])
+            self.assertEqual(speakers_task.output_paths(), [project.step_dir("film-src", "audio") / "speaker_attribution.json"])
             self.assertEqual(
                 emotion_task.output_paths(),
                 [project.step_dir("film-src", "audio") / "transcript.json"],

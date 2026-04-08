@@ -94,15 +94,15 @@ class ModelRegistry:
                 "film.audio.vad", "vad_backend", "backend", fallback="vad-runner"
             ),
         ),
-        "film.audio.diarize": _RuntimeSpec(
-            kind="instance",
-            instance_builder=lambda registry: registry._build_diarizer(),
-            cache_key_builder=lambda registry: registry._diarizer_cache_key(),
-        ),
         "film.audio.stt": _RuntimeSpec(
             kind="instance",
             instance_builder=lambda registry: registry._build_transcriber(),
             cache_key_builder=lambda registry: registry._transcriber_cache_key(),
+        ),
+        "film.audio.speakers": _RuntimeSpec(
+            kind="instance",
+            instance_builder=lambda registry: registry._build_speaker_attributor(),
+            cache_key_builder=lambda registry: registry._speaker_attributor_cache_key(),
         ),
         "film.audio.emotion": _RuntimeSpec(
             kind="instance",
@@ -178,19 +178,6 @@ class ModelRegistry:
             return f"film.audio.separate::{sep_name}::{identity}"
         return self._cache_key_for_step("film.audio.separate", fallback="audio-separator")
 
-    def _diarizer_cache_key(self) -> str:
-        diar_step_cfg = self._project.steps.get("film.audio.diarize", {})
-        diar_name = diar_step_cfg.get("diarization_model")
-        diar_cfg = dict(self._project.models.get(diar_name, {})) if diar_name else {}
-        parts = [
-            "diarizer",
-            str(diar_cfg.get("backend", "")),
-            str(diar_cfg.get("model", "")),
-            str(diar_cfg.get("batch_size", "")),
-            str(diar_cfg.get("hf_token_env", "")),
-        ]
-        return "film.audio.diarize::" + "|".join(parts)
-
     def _transcriber_cache_key(self) -> str:
         cfg = self._project.step_config("film.audio.stt")
         parts = [
@@ -209,6 +196,19 @@ class ModelRegistry:
             str(cfg.get("max_chars_per_second", "")),
         ]
         return "film.audio.stt::" + "|".join(parts)
+
+    def _speaker_attributor_cache_key(self) -> str:
+        cfg = self._project.step_config("film.audio.speakers")
+        parts = [
+            "speaker-attributor",
+            str(cfg.get("backend", "")),
+            str(cfg.get("speaker_similarity_threshold", "")),
+            str(cfg.get("speaker_embedding_min_duration_seconds", "")),
+            str(cfg.get("speaker_bank_enroll_min_duration_seconds", "")),
+            str(cfg.get("speaker_bank_enroll_min_confidence", "")),
+            str(cfg.get("hf_token_env", "")),
+        ]
+        return "film.audio.speakers::" + "|".join(parts)
 
     def _emotion_analyzer_cache_key(self) -> str:
         cfg = self._project.steps.get("film.audio.emotion", {})
@@ -246,19 +246,6 @@ class ModelRegistry:
             vad_backend=cfg.get("vad_backend", cfg.get("backend", "silero-vad")),
         ))
 
-    def _build_diarizer(self) -> Any:
-        from yorishiro.audio.diarization import Diarizer, DiarizerConfig
-
-        diar_step_cfg = self._project.steps.get("film.audio.diarize", {})
-        diar_name = diar_step_cfg.get("diarization_model")
-        diar_cfg = dict(self._project.models.get(diar_name, {})) if diar_name else {}
-        return Diarizer(DiarizerConfig(
-            diarization_backend=diar_cfg.get("backend", "pyannote"),
-            diarization_model=diar_cfg.get("model", "pyannote/speaker-diarization-3.1"),
-            diarization_batch_size=int(diar_cfg.get("batch_size", 32)),
-            hf_token_env=diar_cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
-        ))
-
     def _build_transcriber(self) -> Any:
         from yorishiro.audio.transcription import Transcriber, TranscriberConfig
 
@@ -277,6 +264,19 @@ class ModelRegistry:
             stt_min_confidence=float(cfg.get("min_confidence", -0.5)),
             stt_max_chars_per_second=float(cfg.get("max_chars_per_second", 28.0)),
             language=cfg.get("language"),
+        ))
+
+    def _build_speaker_attributor(self) -> Any:
+        from yorishiro.audio.speaker_attribution import SpeakerAttributor, SpeakerAttributorConfig
+
+        cfg = self._project.step_config("film.audio.speakers")
+        return SpeakerAttributor(SpeakerAttributorConfig(
+            embedding_backend=cfg.get("backend", "pyannote"),
+            similarity_threshold=float(cfg.get("speaker_similarity_threshold", 0.75)),
+            embedding_min_duration_seconds=float(cfg.get("speaker_embedding_min_duration_seconds", 0.5)),
+            bank_enroll_min_duration_seconds=float(cfg.get("speaker_bank_enroll_min_duration_seconds", 1.0)),
+            bank_enroll_min_confidence=float(cfg.get("speaker_bank_enroll_min_confidence", -0.3)),
+            hf_token_env=cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
         ))
 
     def _build_emotion_analyzer(self) -> Any:

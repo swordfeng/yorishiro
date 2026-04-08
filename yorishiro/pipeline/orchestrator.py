@@ -26,8 +26,8 @@ FILM_STEPS = [
     "film.frames",
     "film.audio.separate",
     "film.audio.vad",
-    "film.audio.diarize",
     "film.audio.stt",
+    "film.audio.speakers",
     "film.audio.emotion",
     "film.audio.sound_events",
     "film.audio.music",
@@ -94,12 +94,12 @@ def _build_step(step_id: str, source_id: str, project: Project, registry: ModelR
     if step_id == "film.audio.vad":
         from yorishiro.tasks.film.audio import FilmAudioVADStep
         return FilmAudioVADStep(project, source_id, registry)
-    if step_id == "film.audio.diarize":
-        from yorishiro.tasks.film.audio import FilmAudioDiarizeStep
-        return FilmAudioDiarizeStep(project, source_id, registry)
     if step_id == "film.audio.stt":
         from yorishiro.tasks.film.audio import FilmAudioSTTStep
         return FilmAudioSTTStep(project, source_id, registry)
+    if step_id == "film.audio.speakers":
+        from yorishiro.tasks.film.audio import FilmAudioSpeakersStep
+        return FilmAudioSpeakersStep(project, source_id, registry)
     if step_id == "film.audio.emotion":
         from yorishiro.tasks.film.audio import FilmAudioEmotionStep
         return FilmAudioEmotionStep(project, source_id, registry)

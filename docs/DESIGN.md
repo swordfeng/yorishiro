@@ -1,6 +1,6 @@
 # Yorishiro（依り代）— 技术设计
 
-> **版本**: 0.4 · **状态**: 草案 · **最后更新**: 2026-04-03
+> **版本**: 0.4 · **状态**: 草案 · **最后更新**: 2026-04-07
 
 产品目标与规格见 [REQUIREMENTS.md](./REQUIREMENTS.md)。
 
@@ -50,6 +50,15 @@ sources:
     authority: PRIMARY | SECONDARY | RUMOR
     config:
       language: ja | zh-CN | en
+      chapter_split:
+        mode: auto | markdown_headers | text_markers | none
+        markdown:
+          levels: [2, 4]        # 可选: 允许作为 chapter 边界的 Markdown heading level
+          matcher: ".*"         # 可选: heading 文本正则, 命中才算 chapter
+          exclude_matcher: "^目次$"
+          title_levels: [1]     # 可选: 更像文档标题而非 chapter 的 heading level
+        text:
+          matcher: "^第.+[章話]$"  # 可选: 纯文本 chapter 标题正则
 
 # 命名模型定义 — 本地模型 (backend 字段) 或云端模型 (provider 字段), 定义一次, steps 中引用
 models:
@@ -88,6 +97,48 @@ step_groups:
                film.shots, film.frames, film.audio, film.shot_groups, film.scenes,
                cross.synthesize]
 ```
+
+### 0.2.1 `novel.chapters` Source Formats
+
+`novel.chapters` 现在直接实现于 `yorishiro/tasks/novel/chapters.py`，支持以下输入：
+
+- `.epub`
+  - 使用 `ebooklib` 读取 document item
+  - 提取 HTML 纯文本
+  - 自动移除 ruby/furigana（默认）
+- `.md` / `.markdown`
+  - 优先使用 Markdown heading 结构切分
+  - 自动推断章节所使用的 heading level（`h1` / `h2` / `h3` / `h4` / ... 均可）
+  - 可通过 source `config.chapter_split.markdown.*` 强制指定 level / matcher
+- `.txt`
+  - 通过纯文本 chapter marker 正则切分
+  - 若无法可靠切分，则退化为单章
+
+输出格式保持不变：
+
+```text
+processed/{source-id}/steps/chapters/
+├── ch000.txt
+├── ch001.txt
+└── ...
+```
+
+每个文件仍为 YAML frontmatter + 正文：
+
+```yaml
+---
+index: 0
+title: "かぐや姫おひたち"
+length: 12345
+source_file: "BambooCutter.md"
+path: "line:3"
+---
+```
+
+其中 `path` 的含义取决于 source 类型：
+
+- EPUB: 原始 item 路径（如 `OEBPS/chapter001.xhtml`）
+- Markdown / text: 稳定逻辑位置（如 `line:3`）
 
 ### 0.3 Task / Step Abstraction | 任务抽象
 
@@ -140,6 +191,58 @@ python -m yorishiro status --project projects/CPK
 ---
 
 ## 1. Phase 1: 提取层 (Extraction)
+
+### 1.0 `novel.chapters` 切分策略
+
+#### Markdown 自动策略
+
+对于 Markdown，章节切分不再依赖标题文本必须形如 `Chapter 1` 或 `第1章`。而是：
+
+1. 解析所有 ATX heading（`#` 到 `######`）
+2. 过滤 `config.chapter_split.markdown` 中显式允许/排除的 heading
+3. 推断“重复出现的章节层级”
+   - 例如文档开头只有一个 `# 竹取物語`
+   - 后续有多个 `## ...`
+   - 则推断 `##` 为 chapter level
+4. 仅以该层级的 heading 作为 chapter 边界
+5. 若 Markdown 结构不足以可靠切分，则根据 `mode` 回退到 text marker 或单章
+
+这使下列形式都能工作：
+
+- `# Chapter 1`, `# Chapter 2`
+- `# 书名` + `## 第一回`, `## 第二回`
+- `# Book` + `### One`, `### Two`
+- `#### Scene A`, `#### Scene B`（若配置指定 `levels: [4]`）
+
+#### Source Config 覆盖
+
+当自动推断不适合某个作品时，可在 source `config` 中覆盖：
+
+```yaml
+sources:
+  - id: bamboo
+    type: novel
+    path: raw/BambooCutter.md
+    authority: PRIMARY
+    config:
+      chapter_split:
+        mode: markdown_headers
+        markdown:
+          levels: [2]
+          matcher: ".*"
+          title_levels: [1]
+```
+
+常见模式：
+
+- `mode: auto`
+  - Markdown 先尝试结构切分，再回退到 text marker
+- `mode: markdown_headers`
+  - 只按 Markdown 标题层级切分
+- `mode: text_markers`
+  - 忽略 Markdown 结构，只用文本正则
+- `mode: none`
+  - 不切分，整篇作为单章
 
 ### 1.1 影片处理链路
 

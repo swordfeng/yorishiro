@@ -8,7 +8,7 @@ Example:
     uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --chapter 3
 
 Input:
-    YAML frontmatter chapter file produced by yorishiro.chapters_epub
+    YAML frontmatter chapter file produced by the novel.chapters task
 
 Output:
     scenes_manifest.json  -- chapter metadata + scene list with offsets

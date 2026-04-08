@@ -1,6 +1,6 @@
 # Yorishiro — Project Plan
 
-> **Version**: 0.4 · **State**: Active · **Last updated**: 2026-04-03
+> **Version**: 0.4 · **State**: Active · **Last updated**: 2026-04-07
 
 ---
 
@@ -8,7 +8,7 @@
 
 | Step | Module | Status |
 |------|--------|--------|
-| `novel.chapters` | `chapters_epub.py` | ✅ Done |
+| `novel.chapters` | `tasks/novel/chapters.py` | ✅ Done |
 | `novel.scenes` | `scene.py` | ✅ Done |
 | `novel.aliases` | `aliases.py` | ✅ Done |
 | `novel.characters` | `character.py` | ✅ Done |
@@ -22,6 +22,12 @@
 | Phase 2: Index Layer | — | 🔲 Not started |
 | Phase 3: Alignment Layer | — | 🔲 Not started |
 | Phase 5: MCP Server | — | 🔲 Not started |
+
+### Notes
+
+- `novel.chapters` no longer uses the removed `chapters_epub.py`.
+- Chapter extraction now supports `.epub`, `.md`, `.markdown`, and `.txt`.
+- Markdown chapter splitting supports inferred heading levels (`h1`/`h2`/`h3`/`h4`/...) and source-level `chapter_split` config overrides.
 
 ---
 

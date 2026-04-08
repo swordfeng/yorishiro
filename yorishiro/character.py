@@ -15,7 +15,7 @@ Example:
 Input:
     <scenes_base_dir>/ -- scene text files and manifests (produced by the novel.scenes task)
     character_aliases.json -- canonical-name → alias occurrence mapping
-    souls/*.md -- seed soul docs (produced by yorishiro.aliases)
+    souls/*.md -- seed soul docs (produced by the novel.aliases task)
 
 Output:
     <output_dir>/{canonical_name}/ch{N:03d}.json -- per-chapter CharacterSceneNote arrays
@@ -723,7 +723,7 @@ def main() -> None:
     
     if not aliases_file.exists():
         print(
-            f"Error: {aliases_file} not found. Run yorishiro.aliases first.",
+            f"Error: {aliases_file} not found. Run the novel.aliases task first.",
             file=sys.stderr,
         )
         sys.exit(1)

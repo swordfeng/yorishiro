@@ -5,7 +5,25 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
+from typing import cast
 
+from yorishiro.agent_utils import build_agent_from_args
+from yorishiro.novel.alias_resolution import (
+    AliasAgent,
+    BATCH_SYSTEM_PROMPT,
+    RETRY_SYSTEM_PROMPT,
+    SEED_SYSTEM_PROMPT,
+    BatchUpdateResult,
+    GlobalState,
+    MissedAliasResolution,
+    SeedFromSoulDocsResult,
+    build_batches,
+    load_all_scenes,
+    process_all_batches,
+    seed_from_insight_drafts,
+    write_character_aliases,
+    write_insight_drafts,
+)
 from yorishiro.project import ModelConfig, Project
 from yorishiro.tasks.base import Step, Task
 from yorishiro.tasks.registry import ModelRegistry
@@ -36,23 +54,6 @@ class NovelAliasesTask(Task):
         return [self._output_dir / "character_aliases.json"]
 
     def _run(self) -> None:
-        from yorishiro.agent_utils import build_agent_from_args
-        from yorishiro.aliases import (
-            BATCH_SYSTEM_PROMPT,
-            RETRY_SYSTEM_PROMPT,
-            SEED_SYSTEM_PROMPT,
-            BatchUpdateResult,
-            GlobalState,
-            MissedAliasResolution,
-            SeedFromSoulDocsResult,
-            build_batches,
-            load_all_scenes,
-            process_all_batches,
-            seed_from_insight_drafts,
-            write_character_aliases,
-            write_insight_drafts,
-        )
-
         print(f"[novel.aliases] Loading scenes from {self._scenes_dir} ...")
         all_scenes = load_all_scenes(self._scenes_dir)
         if not all_scenes:
@@ -96,8 +97,13 @@ class NovelAliasesTask(Task):
                     system_prompt=SEED_SYSTEM_PROMPT,
                     config=cfg,
                 )
-                initial_state = await seed_from_insight_drafts(self._output_dir, seed_agent)
-            return await process_all_batches(batches, initial_state, batch_agent, retry_agent)
+                initial_state = await seed_from_insight_drafts(self._output_dir, cast(AliasAgent, seed_agent))
+            return await process_all_batches(
+                batches,
+                initial_state,
+                cast(AliasAgent, batch_agent),
+                cast(AliasAgent, retry_agent),
+            )
 
         print(f"[novel.aliases] Processing with {cfg.name or 'unknown'} ...")
         state = asyncio.run(run())

@@ -1,65 +1,17 @@
-"""Alias resolution pipeline: derive character_aliases.json from scene manifests.
-
-Usage:
-    uv run python -m yorishiro.aliases --project <project_dir> --source <source_id>
-        [--model MODEL] [--provider PROVIDER] [--api-key-env VAR]
-        [--base-url URL] [--thinking {none,low,medium,high}]
-        [--output-mode {tool,native,prompted}]
-        [--batch-tokens N]
-        [--no-seed] [--force]
-
-Example:
-    uv run python -m yorishiro.aliases --project projects/CPK --source cpk-novel \\
-        --model anthropic/claude-opus-4-6 --thinking medium
-
-Input:
-    <scenes_base_dir>/ containing ch{N}/ subdirectories, each with:
-        scenes_manifest.json  -- scene metadata including characters list
-        scene_000.txt, ...    -- scene text files
-
-Output:
-    character_aliases.json in the established format:
-        {
-          "canonical_name": [{"chapter": "ch003", "scene": 0, "alias": "name_as_in_text"}, ...],
-          ...
-          "UNRESOLVED": [{"chapter": ..., "scene": ..., "alias": ...}, ...]
-        }
-
-    souls/<canonical_name>.md  -- initial seed soul doc per character
-
-Process:
-    1. Load all scene texts (sorted by chapter / scene index).
-    2. Optionally seed GlobalState from existing soul docs in souls/.
-    3. Split scenes into batches (~batch_tokens tokens each).
-    4. For each batch: send scene texts + metadata + current global state to LLM;
-       receive updated character entries, merge instructions, and updated knowledge summary.
-    5. Apply updates to GlobalState (occurrence map, character registry).
-    6. Validate that all alias names in scene metadata are covered.
-    7. Write character_aliases.json and per-character seed soul docs.
-"""
+"""Alias resolution engine for novel scene batches."""
 
 from __future__ import annotations
 
-import argparse
-import asyncio
 import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
-from pydantic import BaseModel, Field
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from yorishiro.agent_utils import add_model_args, build_agent_from_args, estimate_tokens
-from yorishiro.backup import ProjectBackup
-from yorishiro.project import Project
-from yorishiro.utils import is_output_stale
-
-
-# ---------------------------------------------------------------------------
-# Pydantic models for LLM I/O
-# ---------------------------------------------------------------------------
+from yorishiro.agent_utils import estimate_tokens
 
 
 class RefutedBelief(BaseModel):
@@ -72,9 +24,7 @@ class AliasAssignment(BaseModel):
 
     chapter: str = Field(description="Chapter directory name, e.g. 'ch003'.")
     scene_index: int = Field(description="Scene index within the chapter (0-based).")
-    alias: str = Field(
-        description="Exact alias string as it appears in the scene metadata."
-    )
+    alias: str = Field(description="Exact alias string as it appears in the scene metadata.")
     canonical_name: str = Field(
         description="Canonical name of the character this alias refers to IN THIS SCENE."
     )
@@ -113,9 +63,7 @@ class CharacterEntry(BaseModel):
     )
     current_state: str = Field(
         default="",
-        description=(
-            "Character's last known state: location, emotional state, arc position, etc."
-        ),
+        description="Character's last known state: location, emotional state, arc position, etc.",
     )
     refuted_beliefs: list[RefutedBelief] = Field(
         default_factory=list,
@@ -126,9 +74,7 @@ class CharacterEntry(BaseModel):
     )
     extra_notes: str = Field(
         default="",
-        description=(
-            "Any other relevant notes (composite persona, special narrative role, etc.)."
-        ),
+        description="Any other relevant notes (composite persona, special narrative role, etc.).",
     )
 
 
@@ -142,11 +88,9 @@ class MergeInstruction(BaseModel):
         )
     )
     absorb: str = Field(
-        description="Canonical name being absorbed (will be deleted from the registry).",
+        description="Canonical name being absorbed (will be deleted from the registry)."
     )
-    reason: str = Field(
-        description="Why these two entries are the same person/persona.",
-    )
+    reason: str = Field(description="Why these two entries are the same person/persona.")
 
 
 class UnresolvedAlias(BaseModel):
@@ -211,11 +155,11 @@ class MissedAliasResolution(BaseModel):
     """LLM output for a retry covering only missed aliases."""
 
     alias_assignments: list[AliasAssignment] = Field(
-        description="Assignments for the missed aliases listed in the prompt.",
+        description="Assignments for the missed aliases listed in the prompt."
     )
     unresolved_aliases: list[UnresolvedAlias] = Field(
         default_factory=list,
-        description="Any of the missed aliases that still cannot be resolved.",
+        description="Any of the missed aliases that still cannot be resolved."
     )
 
 
@@ -223,13 +167,8 @@ class SeedFromSoulDocsResult(BaseModel):
     """Output when parsing existing soul docs into registry entries."""
 
     characters: list[CharacterEntry] = Field(
-        description="Character entries parsed from the provided soul documents.",
+        description="Character entries parsed from the provided soul documents."
     )
-
-
-# ---------------------------------------------------------------------------
-# Internal data structures
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -246,15 +185,9 @@ class SceneRecord:
 class GlobalState:
     characters: dict[str, CharacterEntry] = field(default_factory=dict)
     knowledge_summary: str = ""
-    # (chapter, scene_index, alias_string) -> canonical_name
     occurrence_map: dict[tuple[str, int, str], str] = field(default_factory=dict)
-    # (chapter, scene_index, alias_string) -> reason string  (LLM-declared unresolvable)
     unresolved_map: dict[tuple[str, int, str], str] = field(default_factory=dict)
 
-
-# ---------------------------------------------------------------------------
-# System prompts
-# ---------------------------------------------------------------------------
 
 BATCH_SYSTEM_PROMPT = """\
 You are an expert novel analyst maintaining a living character database and story knowledge base.
@@ -346,9 +279,12 @@ Parse all provided documents and return one CharacterEntry per character.
 """
 
 
-# ---------------------------------------------------------------------------
-# Scene loading
-# ---------------------------------------------------------------------------
+class AgentRunResult(Protocol):
+    output: BatchUpdateResult | MissedAliasResolution | SeedFromSoulDocsResult
+
+
+class AliasAgent(Protocol):
+    async def run(self, prompt: str) -> AgentRunResult: ...
 
 
 def load_all_scenes(scenes_base_dir: Path) -> list[SceneRecord]:
@@ -363,19 +299,14 @@ def load_all_scenes(scenes_base_dir: Path) -> list[SceneRecord]:
             scene_index = scene["scene_index"]
             scene_file = manifest_path.parent / f"scene_{scene_index:03d}.txt"
             if not scene_file.exists():
-                print(
-                    f"  Warning: {scene_file} not found, skipping",
-                    file=sys.stderr,
-                )
+                print(f"  Warning: {scene_file} not found, skipping", file=sys.stderr)
                 continue
-
-            characters = list(scene.get("characters", []))
 
             scenes.append(
                 SceneRecord(
                     chapter=chapter,
                     scene_index=scene_index,
-                    characters=characters,
+                    characters=list(scene.get("characters", [])),
                     location=scene.get("location", ""),
                     time=scene.get("time", ""),
                     text=scene_file.read_text(encoding="utf-8"),
@@ -385,20 +316,8 @@ def load_all_scenes(scenes_base_dir: Path) -> list[SceneRecord]:
     return sorted(scenes, key=lambda s: (s.chapter, s.scene_index))
 
 
-# ---------------------------------------------------------------------------
-# Batch building
-# ---------------------------------------------------------------------------
-
-
-def build_batches(
-    scenes: list[SceneRecord],
-    batch_tokens: int,
-) -> list[list[SceneRecord]]:
-    """Group scenes into batches not exceeding batch_tokens estimated tokens.
-
-    Scenes are never split across batches. Each scene is added to the current
-    batch until the token budget would be exceeded, then a new batch is started.
-    """
+def build_batches(scenes: list[SceneRecord], batch_tokens: int) -> list[list[SceneRecord]]:
+    """Group scenes into batches not exceeding batch_tokens estimated tokens."""
     batches: list[list[SceneRecord]] = []
     current_batch: list[SceneRecord] = []
     current_tokens = 0
@@ -416,11 +335,6 @@ def build_batches(
         batches.append(current_batch)
 
     return batches
-
-
-# ---------------------------------------------------------------------------
-# Prompt formatting
-# ---------------------------------------------------------------------------
 
 
 def format_global_state(state: GlobalState) -> str:
@@ -477,11 +391,7 @@ def format_batch_prompt(
     ]
 
     for scene in scenes_batch:
-        char_list = (
-            ", ".join(f"「{c}」" for c in scene.characters)
-            if scene.characters
-            else "(none)"
-        )
+        char_list = ", ".join(f"「{c}」" for c in scene.characters) if scene.characters else "(none)"
         parts.append(
             f"---\n"
             f"**{scene.chapter} / scene_{scene.scene_index:03d}**"
@@ -501,22 +411,12 @@ def format_batch_prompt(
     return "\n".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# State update
-# ---------------------------------------------------------------------------
-
-
-def apply_result(
-    result: BatchUpdateResult | MissedAliasResolution,
-    state: GlobalState,
-) -> None:
-    """Apply any batch result to GlobalState in place (shared by main and retry calls)."""
+def apply_result(result: BatchUpdateResult | MissedAliasResolution, state: GlobalState) -> None:
+    """Apply any batch result to GlobalState in place."""
     if isinstance(result, BatchUpdateResult):
-        # Apply updated characters
         for entry in result.updated_characters:
             state.characters[entry.canonical_name] = entry
 
-        # Apply merges
         for merge in result.merges:
             if merge.absorb != merge.keep and merge.absorb in state.characters:
                 del state.characters[merge.absorb]
@@ -532,14 +432,11 @@ def apply_result(
         if result.batch_notes:
             print(f"  [Batch notes] {result.batch_notes}", file=sys.stderr)
 
-    # Apply alias assignments (shared by both result types)
     for assignment in result.alias_assignments:
         key = (assignment.chapter, assignment.scene_index, assignment.alias)
         state.occurrence_map[key] = assignment.canonical_name
-        # If previously marked unresolved, clear it now
         state.unresolved_map.pop(key, None)
 
-    # Record explicitly unresolved aliases (shared by both result types)
     for ua in result.unresolved_aliases:
         key = (ua.chapter, ua.scene_index, ua.alias)
         if key not in state.occurrence_map:
@@ -551,8 +448,8 @@ def find_missed(
     scenes_batch: list[SceneRecord],
     state: GlobalState,
 ) -> list[tuple[str, int, str]]:
-    """Return (chapter, scene_index, alias) triples not in occurrence_map or unresolved_map."""
-    missed = []
+    """Return alias triples not in occurrence_map or unresolved_map."""
+    missed: list[tuple[str, int, str]] = []
     for scene in scenes_batch:
         for alias in scene.characters:
             key = (scene.chapter, scene.scene_index, alias)
@@ -561,13 +458,12 @@ def find_missed(
     return missed
 
 
-# ---------------------------------------------------------------------------
-# Soul doc seeding
-# ---------------------------------------------------------------------------
-
-
-async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
-    """Run agent, retrying on ValidationError (model produced invalid schema output)."""
+async def agent_run_with_retry(
+    agent: AliasAgent,
+    prompt: str,
+    max_attempts: int = 3,
+) -> AgentRunResult:
+    """Run agent, retrying on invalid schema output."""
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -582,45 +478,32 @@ async def agent_run_with_retry(agent, prompt: str, max_attempts: int = 3):
     raise last_exc
 
 
-async def seed_from_insight_drafts(
-    characters_dir: Path,
-    agent,
-) -> GlobalState:
-    """Parse existing insight drafts in characters_dir/*/insights.md and return a seeded GlobalState."""
+async def seed_from_insight_drafts(characters_dir: Path, agent: AliasAgent) -> GlobalState:
+    """Parse existing insight drafts in characters_dir/*/insights.md."""
     insight_files = sorted(characters_dir.glob("*/insights.md"))
     if not insight_files:
         return GlobalState()
 
-    print(
-        f"Seeding from {len(insight_files)} insight drafts in {characters_dir} ...",
-        file=sys.stderr,
-    )
+    print(f"Seeding from {len(insight_files)} insight drafts in {characters_dir} ...", file=sys.stderr)
 
-    doc_sections = [
+    combined = "\n\n".join(
         f"=== {f.parent.name} ===\n{f.read_text(encoding='utf-8')}" for f in insight_files
-    ]
-    combined = "\n\n".join(doc_sections)
+    )
     prompt = (
         f"Parse the following {len(insight_files)} character insight drafts "
         f"into CharacterEntry records.\n\n{combined}"
     )
 
     result = await agent_run_with_retry(agent, prompt)
+    output = result.output
+    assert isinstance(output, SeedFromSoulDocsResult)
 
     state = GlobalState()
-    for entry in result.output.characters:
+    for entry in output.characters:
         state.characters[entry.canonical_name] = entry
 
-    print(
-        f"  Seeded {len(state.characters)} characters from insight drafts.",
-        file=sys.stderr,
-    )
+    print(f"  Seeded {len(state.characters)} characters from insight drafts.", file=sys.stderr)
     return state
-
-
-# ---------------------------------------------------------------------------
-# Main processing loop
-# ---------------------------------------------------------------------------
 
 
 def format_retry_prompt(
@@ -639,9 +522,7 @@ def format_retry_prompt(
     seen_scenes: set[tuple[str, int]] = set()
     for chapter, scene_index, alias in missed:
         scene_key = (chapter, scene_index)
-        parts.append(
-            f"- **{chapter}/scene_{scene_index:03d}**: 「{alias}」"
-        )
+        parts.append(f"- **{chapter}/scene_{scene_index:03d}**: 「{alias}」")
         if scene_key not in seen_scenes:
             seen_scenes.add(scene_key)
             scene = scene_lookup.get(scene_key)
@@ -653,64 +534,58 @@ def format_retry_prompt(
                     f" | All characters: {char_list}\n\n"
                     f"  {scene.text}\n"
                 )
-    parts.append(
-        "\nProvide alias_assignments and/or unresolved_aliases covering all missed aliases above."
-    )
+    parts.append("\nProvide alias_assignments and/or unresolved_aliases covering all missed aliases above.")
     return "\n".join(parts)
 
 
 async def process_all_batches(
     batches: list[list[SceneRecord]],
     initial_state: GlobalState,
-    batch_agent,
-    retry_agent,
+    batch_agent: AliasAgent,
+    retry_agent: AliasAgent,
     max_retries: int = 2,
 ) -> GlobalState:
     """Process all scene batches sequentially, with retry for missed aliases."""
     state = initial_state
     total = len(batches)
-
-    # Build a flat lookup for quick scene retrieval during retries
-    all_scenes_flat = [scene for batch in batches for scene in batch]
-    scene_lookup: dict[tuple[str, int], SceneRecord] = {
-        (s.chapter, s.scene_index): s for s in all_scenes_flat
+    scene_lookup = {
+        (scene.chapter, scene.scene_index): scene
+        for batch in batches
+        for scene in batch
     }
 
     for i, batch in enumerate(batches, 1):
         print(f"Processing batch {i}/{total}  ({len(batch)} scenes) ...", file=sys.stderr)
 
         prompt = format_batch_prompt(batch, state, i, total)
-        state_chars = len(format_global_state(state))
-        scene_chars = sum(len(s.text) for s in batch)
         print(
-            f"  Prompt sizes: global_state={state_chars} chars, scenes={scene_chars} chars, "
-            f"total={len(prompt)} chars",
+            f"  Prompt sizes: global_state={len(format_global_state(state))} chars, "
+            f"scenes={sum(len(s.text) for s in batch)} chars, total={len(prompt)} chars",
             file=sys.stderr,
         )
         result = await agent_run_with_retry(batch_agent, prompt)
-        apply_result(result.output, state)
+        output = result.output
+        assert isinstance(output, BatchUpdateResult)
+        apply_result(output, state)
 
-        # Retry loop for missed aliases
         for retry in range(1, max_retries + 1):
-            missed = find_missed(result.output, batch, state)
+            missed = find_missed(output, batch, state)
             if not missed:
                 break
-            print(
-                f"  [Retry {retry}/{max_retries}] {len(missed)} aliases missed, re-prompting ...",
-                file=sys.stderr,
+            print(f"  [Retry {retry}/{max_retries}] {len(missed)} aliases missed, re-prompting ...", file=sys.stderr)
+            retry_result = await agent_run_with_retry(
+                retry_agent,
+                format_retry_prompt(missed, scene_lookup, state),
             )
-            retry_prompt = format_retry_prompt(missed, scene_lookup, state)
-            retry_result = await agent_run_with_retry(retry_agent, retry_prompt)
-            apply_result(retry_result.output, state)
+            retry_output = retry_result.output
+            assert isinstance(retry_output, MissedAliasResolution)
+            apply_result(retry_output, state)
 
-        still_missed = find_missed(result.output, batch, state)
+        still_missed = find_missed(output, batch, state)
         if still_missed:
-            print(
-                f"  Warning: {len(still_missed)} aliases still unresolved after retries:",
-                file=sys.stderr,
-            )
-            for ch, si, alias in still_missed[:10]:
-                print(f"    {ch}/scene_{si:03d}: 「{alias}」", file=sys.stderr)
+            print(f"  Warning: {len(still_missed)} aliases still unresolved after retries:", file=sys.stderr)
+            for chapter, scene_index, alias in still_missed[:10]:
+                print(f"    {chapter}/scene_{scene_index:03d}: 「{alias}」", file=sys.stderr)
 
         print(
             f"  → {len(state.characters)} characters, "
@@ -722,45 +597,29 @@ async def process_all_batches(
     return state
 
 
-# ---------------------------------------------------------------------------
-# Output writing
-# ---------------------------------------------------------------------------
-
-
-def write_character_aliases(
-    state: GlobalState,
-    output_path: Path,
-) -> None:
+def write_character_aliases(state: GlobalState, output_path: Path) -> None:
     """Write character_aliases.json from state.occurrence_map and unresolved_map."""
-    # Group occurrences by canonical_name
-    by_canonical: dict[str, list[dict]] = {name: [] for name in state.characters}
+    by_canonical: dict[str, list[dict[str, int | str]]] = {name: [] for name in state.characters}
 
     for (chapter, scene_index, alias), canonical in state.occurrence_map.items():
         if canonical in by_canonical:
-            by_canonical[canonical].append(
-                {"chapter": chapter, "scene": scene_index, "alias": alias}
-            )
+            by_canonical[canonical].append({"chapter": chapter, "scene": scene_index, "alias": alias})
 
-    # Sort each group for deterministic output
     for entries in by_canonical.values():
-        entries.sort(key=lambda o: (o["chapter"], o["scene"]))
+        entries.sort(key=lambda occurrence: (str(occurrence["chapter"]), int(occurrence["scene"])))
 
-    # Unresolved: LLM-declared unresolvable aliases
-    unresolved: list[dict] = sorted(
+    unresolved = sorted(
         [
-            {"chapter": ch, "scene": si, "alias": alias, "reason": reason}
-            for (ch, si, alias), reason in state.unresolved_map.items()
+            {"chapter": chapter, "scene": scene_index, "alias": alias, "reason": reason}
+            for (chapter, scene_index, alias), reason in state.unresolved_map.items()
         ],
-        key=lambda o: (o["chapter"], o["scene"], o["alias"]),
+        key=lambda occurrence: (occurrence["chapter"], occurrence["scene"], occurrence["alias"]),
     )
 
-    output: dict = dict(by_canonical)
+    output: dict[str, object] = dict(by_canonical)
     output["UNRESOLVED"] = unresolved
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    output_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def write_insight_drafts(state: GlobalState, characters_dir: Path) -> None:
@@ -768,9 +627,7 @@ def write_insight_drafts(state: GlobalState, characters_dir: Path) -> None:
     characters_dir.mkdir(parents=True, exist_ok=True)
 
     for canonical_name, entry in state.characters.items():
-        safe_name = (
-            canonical_name.replace("/", "_").replace("\\", "_").replace("\0", "")
-        )
+        safe_name = canonical_name.replace("/", "_").replace("\\", "_").replace("\0", "")
         char_dir = characters_dir / safe_name
         char_dir.mkdir(parents=True, exist_ok=True)
         doc_path = char_dir / "insights.md"
@@ -781,7 +638,7 @@ def write_insight_drafts(state: GlobalState, characters_dir: Path) -> None:
         other_aliases = [a for a in entry.aliases if a != canonical_name]
         if other_aliases:
             lines.append("## Aliases\n")
-            lines.extend(f"- {a}" for a in other_aliases)
+            lines.extend(f"- {alias}" for alias in other_aliases)
             lines.append("")
 
         if entry.known_facts:
@@ -804,9 +661,7 @@ def write_insight_drafts(state: GlobalState, characters_dir: Path) -> None:
 
         if entry.possible_merge_candidates:
             lines.append("## Possible Identity Overlap\n")
-            lines.append(
-                f"May be same person as: {', '.join(entry.possible_merge_candidates)}"
-            )
+            lines.append(f"May be same person as: {', '.join(entry.possible_merge_candidates)}")
             if entry.merge_notes:
                 lines.append("")
                 lines.append(entry.merge_notes)
@@ -819,141 +674,4 @@ def write_insight_drafts(state: GlobalState, characters_dir: Path) -> None:
 
         doc_path.write_text("\n".join(lines), encoding="utf-8")
 
-    print(
-        f"Wrote {len(state.characters)} insight drafts to {characters_dir}",
-        file=sys.stderr,
-    )
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Resolve character name aliases from scene texts using "
-            "batched LLM processing with a global character registry."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Examples:\n"
-            "  uv run python -m yorishiro.aliases --project projects/CPK --source cpk-novel\n"
-            "  uv run python -m yorishiro.aliases --source cpk-novel  # uses cwd as project\n"
-        ),
-    )
-    
-    parser.add_argument(
-        "--project",
-        type=Path,
-        default=None,
-        help="Project directory (default: current directory)",
-    )
-    parser.add_argument(
-        "--source",
-        type=str,
-        required=True,
-        help="Source ID within project",
-    )
-    
-    parser.add_argument("--force", action="store_true", help="Overwrite existing output file")
-    parser.add_argument("--no-backup", action="store_true", help="Skip backup snapshot after processing")
-    parser.add_argument(
-        "--batch-tokens",
-        type=int,
-        default=32000,
-        help="Target token count per scene batch (default: 32000)",
-    )
-    parser.add_argument(
-        "--no-seed",
-        action="store_true",
-        help="Skip seeding from existing insight drafts",
-    )
-    add_model_args(parser)
-    args = parser.parse_args()
-
-    project_path = args.project if args.project else Path.cwd()
-    project = Project.load(project_path)
-    
-    source_config = project.get_source(args.source)
-    if not source_config:
-        print(f"Error: Source '{args.source}' not found in project", file=sys.stderr)
-        sys.exit(1)
-
-    config = project.resolved_model_config("resolve_aliases")
-    scenes_base_dir = project.source_dir(args.source) / "scenes"
-    output_path = project.source_dir(args.source) / "characters" / "character_aliases.json"
-    characters_dir = project.source_dir(args.source) / "characters"
-
-    scene_manifests = sorted(scenes_base_dir.rglob("scenes_manifest.json")) if scenes_base_dir.exists() else []
-    if not args.force and not is_output_stale(output_path, scene_manifests):
-        print(f"Skipping: {output_path} is up to date")
-        sys.exit(0)
-
-    print(f"Loading scenes from {scenes_base_dir} ...")
-    all_scenes = load_all_scenes(scenes_base_dir)
-    if not all_scenes:
-        print(
-            "No scenes found. Check that scenes_manifest.json files exist.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    chapter_count = len({s.chapter for s in all_scenes})
-    print(f"  Loaded {len(all_scenes)} scenes from {chapter_count} chapters.")
-
-    batches = build_batches(all_scenes, args.batch_tokens)
-    print(f"  Split into {len(batches)} batches (target: {args.batch_tokens} tokens each).")
-
-    async def run() -> GlobalState:
-        batch_agent = build_agent_from_args(
-            args,
-            output_type=BatchUpdateResult,
-            system_prompt=BATCH_SYSTEM_PROMPT,
-            config=config,
-        )
-        retry_agent = build_agent_from_args(
-            args,
-            output_type=MissedAliasResolution,
-            system_prompt=RETRY_SYSTEM_PROMPT,
-            config=config,
-        )
-        initial_state = GlobalState()
-        if not args.no_seed and characters_dir.exists():
-            seed_agent = build_agent_from_args(
-                args,
-                output_type=SeedFromSoulDocsResult,
-                system_prompt=SEED_SYSTEM_PROMPT,
-                config=config,
-            )
-            initial_state = await seed_from_insight_drafts(characters_dir, seed_agent)
-        return await process_all_batches(batches, initial_state, batch_agent, retry_agent)
-
-    model_display = args.model or config.name or "unknown"
-    print(f"Processing with {model_display} ...")
-    state = asyncio.run(run())
-
-    print(f"\nFinal registry: {len(state.characters)} characters")
-    for name, entry in state.characters.items():
-        alias_count = len([a for a in entry.aliases if a != name])
-        suffix = f" (+{alias_count} aliases)" if alias_count else ""
-        print(f"  {name}{suffix}")
-    if state.unresolved_map:
-        print(f"  UNRESOLVED: {len(state.unresolved_map)} alias occurrences")
-
-    print(f"\nWriting {output_path} ...")
-    write_character_aliases(state, output_path)
-
-    print(f"Writing insight drafts to {characters_dir} ...")
-    write_insight_drafts(state, characters_dir)
-
-    if not args.no_backup:
-        backup = ProjectBackup(project.root)
-        backup.snapshot(f"aliases-{args.source}")
-
-    print("Done.")
-
-
-if __name__ == "__main__":
-    main()
+    print(f"Wrote {len(state.characters)} insight drafts to {characters_dir}", file=sys.stderr)

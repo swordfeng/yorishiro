@@ -110,12 +110,12 @@ def get_diarization_pipeline(config: DiarizerConfigLike) -> DiarizationPipelineL
     return cast(DiarizationPipelineLike, pipeline)
 
 
-def get_whisper_model(config: TranscriberConfigLike) -> WhisperModelLike:
+def get_whisper_model(config: TranscriberConfigLike, *, instance_key: str = "default") -> WhisperModelLike:
     from faster_whisper import WhisperModel
 
     cpu_threads = config.stt_cpu_threads or os.cpu_count() or 4
     num_workers = config.stt_num_workers
-    key = (config.stt_model, cpu_threads, num_workers)
+    key = (f"{config.stt_model}:{instance_key}", cpu_threads, num_workers)
     cached = _WHISPER_MODELS.get(key)
     if cached is not None:
         return cached

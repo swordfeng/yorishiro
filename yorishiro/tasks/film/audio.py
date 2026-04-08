@@ -83,7 +83,7 @@ class FilmAudioDiarizeTask(Task):
 
 
 class FilmAudioSTTTask(Task):
-    """Run speech-to-text using vad.json + diarization.json → transcript_raw.json."""
+    """Run speech-to-text using vad.json + diarization.json → transcription.json."""
 
     def __init__(self, output_dir: Path, language: str | None, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
@@ -99,7 +99,7 @@ class FilmAudioSTTTask(Task):
         ]
 
     def output_paths(self) -> list[Path]:
-        return [self._output_dir / "transcript_raw.json"]
+        return [self._output_dir / "transcription.json"]
 
     def run(self, force: bool = False) -> None:
         self._force = force
@@ -112,7 +112,7 @@ class FilmAudioSTTTask(Task):
 
 
 class FilmAudioEmotionTask(Task):
-    """Run emotion + prosody analysis on transcript_raw.json → transcript.json."""
+    """Run emotion + prosody analysis on transcription.json → transcript.json."""
 
     def __init__(self, output_dir: Path, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
@@ -121,7 +121,7 @@ class FilmAudioEmotionTask(Task):
     def input_paths(self) -> list[Path]:
         return [
             self._output_dir / "voice.flac",
-            self._output_dir / "transcript_raw.json",
+            self._output_dir / "transcription.json",
         ]
 
     def output_paths(self) -> list[Path]:

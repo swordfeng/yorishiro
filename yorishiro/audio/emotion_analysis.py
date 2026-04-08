@@ -26,14 +26,14 @@ class EmotionAnalyzerConfig:
 
 
 class EmotionAnalyzer:
-    """Run emotion and prosody enrichment on `transcript_raw.json`."""
+    """Run emotion and prosody enrichment on `transcription.json`."""
 
     def __init__(self, config: EmotionAnalyzerConfig | None = None) -> None:
         self.config = config or EmotionAnalyzerConfig()
 
     def run(self, audio_path: Path, output_dir: Path) -> Transcript:
         output_dir.mkdir(parents=True, exist_ok=True)
-        raw_path = output_dir / "transcript_raw.json"
+        raw_path = output_dir / "transcription.json"
         transcript = Transcript(**json.loads(raw_path.read_text(encoding="utf-8")))
         print(f"  [Emotion] Analyzing {len(transcript.entries)} segment(s) ...")
         transcript = self._analyze_emotions(audio_path, transcript)

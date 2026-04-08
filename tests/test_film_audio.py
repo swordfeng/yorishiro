@@ -14,7 +14,7 @@ import numpy as np
 
 from yorishiro.audio.diarization import Diarizer, DiarizerConfig
 from yorishiro.audio.emotion_analysis import EmotionAnalyzer
-from yorishiro.audio.transcription import Transcriber, TranscriberConfig
+from yorishiro.audio.transcription import SpeechGroup, Transcriber, TranscriberConfig
 from yorishiro.audio.vad import VadRunner
 from yorishiro.models.film_models import Transcript, TranscriptEntry
 from yorishiro.project import Project
@@ -114,20 +114,28 @@ class TranscriberTests(unittest.TestCase):
             ckpt_dir.mkdir()
             source_mtime = audio_path.stat().st_mtime
             checkpoint = {
-                "chunk_idx": 0,
-                "source_mtime": source_mtime,
-                "entries": [
+                "groups": [
                     {
-                        "speaker_global": "SPEAKER_00",
+                        "group_id": "g_000000_000000",
+                        "span_start_idx": 0,
+                        "span_end_idx": 0,
                         "start": 0.0,
                         "end": 1.0,
-                        "text": "hello",
-                        "confidence": 0.9,
+                        "source_mtime": source_mtime,
+                        "entries": [
+                            {
+                                "speaker_global": "SPEAKER_00",
+                                "start": 0.0,
+                                "end": 1.0,
+                                "text": "hello",
+                                "confidence": 0.9,
+                            }
+                        ],
+                        "detected_language": "en",
                     }
-                ],
-                "detected_language": "en",
+                ]
             }
-            (ckpt_dir / "chunk_0000.json").write_text(json.dumps(checkpoint), encoding="utf-8")
+            (ckpt_dir / "groups_0000.json").write_text(json.dumps(checkpoint), encoding="utf-8")
 
             class FakeSoundFile:
                 samplerate = 16000
@@ -142,46 +150,132 @@ class TranscriberTests(unittest.TestCase):
                 def __exit__(self, *_args: object) -> None:
                     return None
 
-                def seek(self, _offset: int) -> None:
-                    return None
-
-                def read(self, _frames: int, dtype: str = "float32") -> np.ndarray:
-                    del dtype
-                    return np.zeros(16000, dtype=np.float32)
-
-            class ImmediateFuture:
-                def __init__(self, result: object) -> None:
-                    self._result = result
-
-                def result(self) -> object:
-                    return self._result
-
-            class ImmediateExecutor:
-                def __init__(self, max_workers: int) -> None:
-                    self.max_workers = max_workers
-
-                def __enter__(self) -> ImmediateExecutor:
-                    return self
-
-                def __exit__(self, *_args: object) -> None:
-                    return None
-
-                def submit(self, fn, *args):  # type: ignore[no-untyped-def]
-                    return ImmediateFuture(fn(*args))
-
             transcriber = Transcriber(TranscriberConfig())
-            fake_whisper = object()
             with (
                 patch("yorishiro.audio.transcription.sf.SoundFile", FakeSoundFile),
-                patch("yorishiro.audio.transcription.get_whisper_model", return_value=fake_whisper),
-                patch("yorishiro.audio.transcription.ThreadPoolExecutor", ImmediateExecutor),
+                patch("yorishiro.audio.transcription.torch.cuda.is_available", return_value=False),
             ):
                 transcript = transcriber.run(audio_path, output_dir)
 
             self.assertEqual(transcript.language, "en")
             self.assertEqual(transcript.entries[0].text, "hello")
-            saved = json.loads((output_dir / "transcript_raw.json").read_text(encoding="utf-8"))
+            saved = json.loads((output_dir / "transcription.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["entries"][0]["text"], "hello")
+
+    def test_run_uses_vad_segment_offsets_for_transcript_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir, patch.dict(
+            sys.modules,
+            {"librosa": types.SimpleNamespace(resample=lambda audio, **_kwargs: audio)},
+        ):
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            (output_dir / "vad.json").write_text(json.dumps([{"start": 26.1, "end": 27.5}]), encoding="utf-8")
+            (output_dir / "diarization.json").write_text(
+                json.dumps([{"speaker": "SPEAKER_00", "start": 26.1, "end": 27.5}]),
+                encoding="utf-8",
+            )
+
+            class FakeSoundFile:
+                samplerate = 16000
+                frames = 30 * 16000
+
+                def __init__(self, *_args, **_kwargs) -> None:
+                    pass
+
+                def __enter__(self) -> FakeSoundFile:
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    return None
+
+            class FakeSegment:
+                def __init__(self) -> None:
+                    self.start = 0.0
+                    self.end = 1.4
+                    self.text = "hello"
+                    self.avg_logprob = -0.1
+                    self.words = []
+
+            class FakeWhisper:
+                def transcribe(self, audio, **kwargs):  # type: ignore[no-untyped-def]
+                    del audio, kwargs
+                    return iter([FakeSegment()]), SimpleNamespace(language="en")
+
+            transcriber = Transcriber(TranscriberConfig())
+            with (
+                patch("yorishiro.audio.transcription.sf.SoundFile", FakeSoundFile),
+                patch(
+                    "yorishiro.audio.transcription.sf.read",
+                    return_value=(np.zeros(int(1.4 * 16000), dtype=np.float32), 16000),
+                ),
+                patch("yorishiro.audio.transcription.get_whisper_model", return_value=FakeWhisper()),
+                patch("yorishiro.audio.transcription.torch.cuda.is_available", return_value=False),
+            ):
+                transcript = transcriber.run(audio_path, output_dir)
+
+            self.assertEqual(len(transcript.entries), 1)
+            self.assertEqual(transcript.entries[0].start, 26.1)
+            self.assertEqual(transcript.entries[0].end, 27.5)
+            self.assertEqual(transcript.entries[0].speaker_global, "SPEAKER_00")
+
+    def test_run_worker_groups_saves_each_completed_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+
+            class FakeSegment:
+                def __init__(self, end: float, text: str) -> None:
+                    self.start = 0.0
+                    self.end = end
+                    self.text = text
+                    self.avg_logprob = -0.1
+                    self.words = []
+
+            class FakeWhisper:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def transcribe(self, audio, **kwargs):  # type: ignore[no-untyped-def]
+                    del audio, kwargs
+                    self.calls += 1
+                    if self.calls == 1:
+                        return iter([FakeSegment(1.0, "one")]), SimpleNamespace(language="en")
+                    return iter([FakeSegment(0.5, "two")]), SimpleNamespace(language="en")
+
+            saved_group_ids: list[str] = []
+            transcriber = Transcriber(TranscriberConfig())
+            groups = [
+                SpeechGroup(group_id="g_000000_000000", span_start_idx=0, span_end_idx=0, start=0.0, end=1.0),
+                SpeechGroup(group_id="g_000001_000001", span_start_idx=1, span_end_idx=1, start=2.0, end=2.5),
+            ]
+            fake_whisper = FakeWhisper()
+            with (
+                patch(
+                    "yorishiro.audio.transcription.sf.read",
+                    side_effect=[
+                        (np.zeros(16000, dtype=np.float32), 16000),
+                        (np.zeros(8000, dtype=np.float32), 16000),
+                    ],
+                ),
+                patch("yorishiro.audio.transcription.get_whisper_model", return_value=fake_whisper),
+            ):
+                results = transcriber._run_worker_groups(
+                    groups,
+                    worker_idx=0,
+                    worker_config=TranscriberConfig(),
+                    audio_path=audio_path,
+                    file_sample_rate=16000,
+                    diarization=[{"speaker": "SPEAKER_00", "start": 0.0, "end": 3.0}],
+                    language="en",
+                    librosa_module=types.SimpleNamespace(resample=lambda audio, **_kwargs: audio),
+                    update_progress=lambda _delta: None,
+                    save_result=lambda result: saved_group_ids.append(result.group_id),
+                )
+
+            self.assertEqual([result.group_id for result in results], ["g_000000_000000", "g_000001_000001"])
+            self.assertEqual(saved_group_ids, ["g_000000_000000", "g_000001_000001"])
 
     def test_split_entry_text_uses_overlap_assignment(self) -> None:
         transcriber = Transcriber()
@@ -220,7 +314,7 @@ class EmotionAnalyzerTests(unittest.TestCase):
                     )
                 ],
             )
-            (output_dir / "transcript_raw.json").write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
+            (output_dir / "transcription.json").write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
 
             analyzer = EmotionAnalyzer()
 

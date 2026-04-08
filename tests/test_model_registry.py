@@ -93,7 +93,7 @@ steps:
         self.assertIs(second, sentinel)
         self.assertEqual(build_detector.call_count, 1)
 
-    def test_shared_speech_pipeline_cache_is_reused_across_steps(self) -> None:
+    def test_audio_steps_resolve_distinct_stage_runtimes(self) -> None:
         project = load_project(
             """project:
   name: Demo
@@ -119,16 +119,25 @@ models:
         )
         registry = ModelRegistry(project)
 
-        sentinel = object()
-        with patch.object(registry, "_build_speech_pipeline", return_value=sentinel) as build_pipeline:
-            vad_pipeline = registry.for_step("film.audio.vad").instance()
-            stt_pipeline = registry.for_step("film.audio.stt").instance()
-            emotion_pipeline = registry.for_step("film.audio.emotion").instance()
+        vad_runner = object()
+        diarizer = object()
+        transcriber = object()
+        emotion_analyzer = object()
+        with (
+            patch.object(registry, "_build_vad_runner", return_value=vad_runner) as build_vad,
+            patch.object(registry, "_build_diarizer", return_value=diarizer) as build_diarizer,
+            patch.object(registry, "_build_transcriber", return_value=transcriber) as build_transcriber,
+            patch.object(registry, "_build_emotion_analyzer", return_value=emotion_analyzer) as build_emotion,
+        ):
+            self.assertIs(registry.for_step("film.audio.vad").instance(), vad_runner)
+            self.assertIs(registry.for_step("film.audio.diarize").instance(), diarizer)
+            self.assertIs(registry.for_step("film.audio.stt").instance(), transcriber)
+            self.assertIs(registry.for_step("film.audio.emotion").instance(), emotion_analyzer)
 
-        self.assertIs(vad_pipeline, sentinel)
-        self.assertIs(stt_pipeline, sentinel)
-        self.assertIs(emotion_pipeline, sentinel)
-        self.assertEqual(build_pipeline.call_count, 1)
+        self.assertEqual(build_vad.call_count, 1)
+        self.assertEqual(build_diarizer.call_count, 1)
+        self.assertEqual(build_transcriber.call_count, 1)
+        self.assertEqual(build_emotion.call_count, 1)
 
     def test_instance_runtime_rejects_agent_access(self) -> None:
         project = load_project(

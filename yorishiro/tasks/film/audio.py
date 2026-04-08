@@ -54,8 +54,8 @@ class FilmAudioVADTask(Task):
 
     def _run(self) -> None:
         print("[film.audio.vad] Running VAD on voice stem ...")
-        pipeline = self._runtime.instance()
-        pipeline.run_vad(self._output_dir / "voice.flac", self._output_dir)
+        vad_runner = self._runtime.instance()
+        vad_runner.run(self._output_dir / "voice.flac", self._output_dir)
 
 
 class FilmAudioDiarizeTask(Task):
@@ -78,8 +78,8 @@ class FilmAudioDiarizeTask(Task):
 
     def _run(self) -> None:
         print("[film.audio.diarize] Running speaker diarization on voice stem ...")
-        pipeline = self._runtime.instance()
-        pipeline.run_diarization(self._output_dir / "voice.flac", self._output_dir, force=self._force)
+        diarizer = self._runtime.instance()
+        diarizer.run(self._output_dir / "voice.flac", self._output_dir, force=self._force)
 
 
 class FilmAudioSTTTask(Task):
@@ -107,8 +107,8 @@ class FilmAudioSTTTask(Task):
 
     def _run(self) -> None:
         print("[film.audio.stt] Running speech-to-text ...")
-        pipeline = self._runtime.instance()
-        pipeline.run_stt(self._output_dir / "voice.flac", self._output_dir, self._language, force=self._force)
+        transcriber = self._runtime.instance()
+        transcriber.run(self._output_dir / "voice.flac", self._output_dir, self._language, force=self._force)
 
 
 class FilmAudioEmotionTask(Task):
@@ -129,8 +129,8 @@ class FilmAudioEmotionTask(Task):
 
     def _run(self) -> None:
         print("[film.audio.emotion] Running emotion analysis ...")
-        pipeline = self._runtime.instance()
-        pipeline.run_emotion(self._output_dir / "voice.flac", self._output_dir)
+        emotion_analyzer = self._runtime.instance()
+        emotion_analyzer.run(self._output_dir / "voice.flac", self._output_dir)
         print("[film.audio.emotion] Done.")
 
 

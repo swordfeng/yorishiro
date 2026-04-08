@@ -89,23 +89,25 @@ class ModelRegistry:
         ),
         "film.audio.vad": _RuntimeSpec(
             kind="instance",
-            instance_builder=lambda registry: registry._build_speech_pipeline(),
-            cache_key_builder=lambda registry: registry._speech_pipeline_cache_key(),
+            instance_builder=lambda registry: registry._build_vad_runner(),
+            cache_key_builder=lambda registry: registry._cache_key_for_step(
+                "film.audio.vad", "vad_backend", "backend", fallback="vad-runner"
+            ),
         ),
         "film.audio.diarize": _RuntimeSpec(
             kind="instance",
-            instance_builder=lambda registry: registry._build_speech_pipeline(),
-            cache_key_builder=lambda registry: registry._speech_pipeline_cache_key(),
+            instance_builder=lambda registry: registry._build_diarizer(),
+            cache_key_builder=lambda registry: registry._diarizer_cache_key(),
         ),
         "film.audio.stt": _RuntimeSpec(
             kind="instance",
-            instance_builder=lambda registry: registry._build_speech_pipeline(),
-            cache_key_builder=lambda registry: registry._speech_pipeline_cache_key(),
+            instance_builder=lambda registry: registry._build_transcriber(),
+            cache_key_builder=lambda registry: registry._transcriber_cache_key(),
         ),
         "film.audio.emotion": _RuntimeSpec(
             kind="instance",
-            instance_builder=lambda registry: registry._build_speech_pipeline(),
-            cache_key_builder=lambda registry: registry._speech_pipeline_cache_key(),
+            instance_builder=lambda registry: registry._build_emotion_analyzer(),
+            cache_key_builder=lambda registry: registry._emotion_analyzer_cache_key(),
         ),
         "film.audio.sound_events": _RuntimeSpec(
             kind="instance",
@@ -176,28 +178,36 @@ class ModelRegistry:
             return f"film.audio.separate::{sep_name}::{identity}"
         return self._cache_key_for_step("film.audio.separate", fallback="audio-separator")
 
-    def _speech_pipeline_cache_key(self) -> str:
-        stt_cfg = self._project.step_config("film.audio.stt")
+    def _diarizer_cache_key(self) -> str:
         diar_step_cfg = self._project.steps.get("film.audio.diarize", {})
-        emotion_step_cfg = self._project.steps.get("film.audio.emotion", {})
         diar_name = diar_step_cfg.get("diarization_model")
         diar_cfg = dict(self._project.models.get(diar_name, {})) if diar_name else {}
         parts = [
-            "speech-pipeline",
-            str(stt_cfg.get("backend", "")),
-            str(stt_cfg.get("model", "")),
-            str(stt_cfg.get("cpu_threads", "")),
-            str(stt_cfg.get("num_workers", "")),
-            str(stt_cfg.get("word_timestamps", "")),
-            str(stt_cfg.get("vad_filter", "")),
-            str(stt_cfg.get("vad_min_silence_duration_ms", "")),
+            "diarizer",
             str(diar_cfg.get("backend", "")),
             str(diar_cfg.get("model", "")),
             str(diar_cfg.get("batch_size", "")),
             str(diar_cfg.get("hf_token_env", "")),
-            str(emotion_step_cfg.get("model", "")),
         ]
-        return "film.audio.shared::" + "|".join(parts)
+        return "film.audio.diarize::" + "|".join(parts)
+
+    def _transcriber_cache_key(self) -> str:
+        cfg = self._project.step_config("film.audio.stt")
+        parts = [
+            "transcriber",
+            str(cfg.get("backend", "")),
+            str(cfg.get("model", "")),
+            str(cfg.get("cpu_threads", "")),
+            str(cfg.get("num_workers", "")),
+            str(cfg.get("word_timestamps", "")),
+            str(cfg.get("vad_filter", "")),
+            str(cfg.get("vad_min_silence_duration_ms", "")),
+        ]
+        return "film.audio.stt::" + "|".join(parts)
+
+    def _emotion_analyzer_cache_key(self) -> str:
+        cfg = self._project.steps.get("film.audio.emotion", {})
+        return f"film.audio.emotion::{cfg.get('model', 'emotion2vec/emotion2vec_plus_base')}"
 
     def _build_shot_detector(self) -> Any:
         from yorishiro.video.shot_detector import ShotDetector, ShotDetectorConfig
@@ -223,15 +233,32 @@ class ModelRegistry:
             output_quality=cfg.get("output_quality", 85),
         ))
 
-    def _build_speech_pipeline(self) -> Any:
-        from yorishiro.audio.speech_pipeline import SpeechPipeline, SpeechPipelineConfig
+    def _build_vad_runner(self) -> Any:
+        from yorishiro.audio.vad import VadConfig, VadRunner
 
-        cfg = self._project.step_config("film.audio.stt")
+        cfg = self._project.step_config("film.audio.vad")
+        return VadRunner(VadConfig(
+            vad_backend=cfg.get("vad_backend", cfg.get("backend", "silero-vad")),
+        ))
+
+    def _build_diarizer(self) -> Any:
+        from yorishiro.audio.diarization import Diarizer, DiarizerConfig
+
         diar_step_cfg = self._project.steps.get("film.audio.diarize", {})
         diar_name = diar_step_cfg.get("diarization_model")
         diar_cfg = dict(self._project.models.get(diar_name, {})) if diar_name else {}
-        emotion_step_cfg = self._project.steps.get("film.audio.emotion", {})
-        return SpeechPipeline(SpeechPipelineConfig(
+        return Diarizer(DiarizerConfig(
+            diarization_backend=diar_cfg.get("backend", "pyannote"),
+            diarization_model=diar_cfg.get("model", "pyannote/speaker-diarization-3.1"),
+            diarization_batch_size=int(diar_cfg.get("batch_size", 32)),
+            hf_token_env=diar_cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
+        ))
+
+    def _build_transcriber(self) -> Any:
+        from yorishiro.audio.transcription import Transcriber, TranscriberConfig
+
+        cfg = self._project.step_config("film.audio.stt")
+        return Transcriber(TranscriberConfig(
             stt_backend=cfg.get("backend", "faster-whisper"),
             stt_model=cfg.get("model", "large-v3"),
             stt_cpu_threads=int(cfg.get("cpu_threads", 0)),
@@ -239,12 +266,19 @@ class ModelRegistry:
             stt_word_timestamps=bool(cfg.get("word_timestamps", False)),
             stt_vad_filter=bool(cfg.get("vad_filter", False)),
             stt_vad_min_silence_duration_ms=int(cfg.get("vad_min_silence_duration_ms", 500)),
-            diarization_backend=diar_cfg.get("backend", "pyannote"),
-            diarization_model=diar_cfg.get("model", "pyannote/speaker-diarization-3.1"),
-            diarization_batch_size=int(diar_cfg.get("batch_size", 32)),
-            hf_token_env=diar_cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
-            emotion_model=emotion_step_cfg.get("model", "emotion2vec/emotion2vec_plus_base"),
+            language=cfg.get("language"),
         ))
+
+    def _build_emotion_analyzer(self) -> Any:
+        from yorishiro.audio.emotion_analysis import EmotionAnalyzer, EmotionAnalyzerConfig
+
+        cfg = self._project.steps.get("film.audio.emotion", {})
+        return EmotionAnalyzer(
+            EmotionAnalyzerConfig(
+                emotion_backend=cfg.get("backend", "emotion2vec"),
+                emotion_model=cfg.get("model", "emotion2vec/emotion2vec_plus_base"),
+            )
+        )
 
     def _build_sound_event_detector(self) -> Any:
         from yorishiro.audio.sound_event_detector import SoundEventDetector, SoundEventDetectorConfig

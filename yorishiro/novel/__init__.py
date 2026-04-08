@@ -1,0 +1,1 @@
+"""Novel-specific domain logic."""

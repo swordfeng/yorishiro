@@ -13,7 +13,7 @@ Example:
         --characters 酒寄彩葉 かぐや --model anthropic/claude-opus-4-6
 
 Input:
-    <scenes_base_dir>/ -- scene text files and manifests (produced by yorishiro.scene)
+    <scenes_base_dir>/ -- scene text files and manifests (produced by the novel.scenes task)
     character_aliases.json -- canonical-name → alias occurrence mapping
     souls/*.md -- seed soul docs (produced by yorishiro.aliases)
 

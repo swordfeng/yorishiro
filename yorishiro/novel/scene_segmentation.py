@@ -1,24 +1,4 @@
-"""Automated LLM-based scene segmentation for novel chapters.
-
-Usage:
-    uv run python -m yorishiro.scene --project <project_dir> --source <source_id>
-        [--chapter <index>] [--model MODEL] [--force]
-
-Example:
-    uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --chapter 3
-
-Input:
-    YAML frontmatter chapter file produced by the novel.chapters task
-
-Output:
-    scenes_manifest.json  -- chapter metadata + scene list with offsets
-    scene_000.txt, scene_001.txt, ...  -- plain text, one scene per file
-
-Offset guarantee:
-    start_offset and end_offset are Python codepoints (len()).
-    Scenes are consecutive with no gaps: scene[i].end == scene[i+1].start.
-    Last scene ends at total_length == len(chapter_text).
-"""
+"""Scene segmentation engine for novel chapters."""
 
 from __future__ import annotations
 
@@ -29,20 +9,29 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import regex as _regex
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from yorishiro.agent_utils import add_model_args, build_agent_from_args
-from yorishiro.backup import ProjectBackup
-from yorishiro.project import ModelConfig, Project
+from yorishiro.agent_utils import build_agent_from_args
+from yorishiro.project import ModelConfig
 from yorishiro.utils import is_output_stale
 
 
-INITIAL_CHUNK_SIZE = 8000   # chars per LLM batch
-MAX_CHUNK_SIZE = 64000      # grows on stall; covers very long scenes
+INITIAL_CHUNK_SIZE = 8000
+MAX_CHUNK_SIZE = 64000
+MAX_RETRIES = 5
+BOUNDARY_TYPES = [
+    "chapter_start",
+    "location_change",
+    "time_jump",
+    "pov_change",
+    "narrative_break",
+    "non_narrative",
+]
 
 
 SYSTEM_PROMPT = """You are a professional narrative structure analyst. Your task is to segment a novel chapter into independent scenes.
@@ -130,19 +119,15 @@ For non-narrative sections (caution pages, TOC, colophon, etc.): one scene, boun
 
 
 class SceneSegment(BaseModel):
-    """One scene. Starts at cursor (or where the previous scene ended)."""
+    """One scene. Starts at cursor or where the previous scene ended."""
 
     location: str = Field(description="Scene location in source material language")
     time: str = Field(description="Time of day in source material language")
     characters: list[str] = Field(description="Character names exactly as they appear in this scene")
-    boundary_type: str = Field(description="Type of boundary that ends this scene", json_schema_extra={"enum": [
-        "chapter_start",
-        "location_change",
-        "time_jump",
-        "pov_change",
-        "narrative_break",
-        "non_narrative",
-    ]})
+    boundary_type: str = Field(
+        description="Type of boundary that ends this scene",
+        json_schema_extra={"enum": BOUNDARY_TYPES},
+    )
     end_text: str = Field(
         description=(
             "Last 40-60 characters of this scene, verbatim from source. "
@@ -182,6 +167,58 @@ class SceneData:
     boundary_type: str = "scene_break"
 
 
+@dataclass(frozen=True)
+class SceneSegmentationConfig:
+    initial_chunk_size: int = INITIAL_CHUNK_SIZE
+    max_chunk_size: int = MAX_CHUNK_SIZE
+
+    @classmethod
+    def from_step_config(cls, step_config: dict[str, Any] | None) -> SceneSegmentationConfig:
+        cfg = step_config or {}
+        initial_chunk_size = int(cfg.get("initial_chunk_size", INITIAL_CHUNK_SIZE))
+        max_chunk_size = int(cfg.get("max_chunk_size", MAX_CHUNK_SIZE))
+        if initial_chunk_size <= 0:
+            raise ValueError(f"initial_chunk_size must be > 0, got {initial_chunk_size}")
+        if max_chunk_size < initial_chunk_size:
+            raise ValueError(
+                f"max_chunk_size must be >= initial_chunk_size, got {max_chunk_size} < {initial_chunk_size}"
+            )
+        return cls(initial_chunk_size=initial_chunk_size, max_chunk_size=max_chunk_size)
+
+
+@dataclass
+class SegmentationState:
+    total_length: int
+    cursor: int = 0
+    chunk_size: int = INITIAL_CHUNK_SIZE
+    summary: str = ""
+    failed_end_text: str = ""
+    retry_count: int = 0
+    last_scenes: list[SceneData] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, total_length: int, config: SceneSegmentationConfig) -> SegmentationState:
+        return cls(total_length=total_length, chunk_size=config.initial_chunk_size)
+
+    def current_chunk(self, chapter_text: str) -> str:
+        return chapter_text[self.cursor:self.cursor + self.chunk_size]
+
+    def previous_chunk(self, chapter_text: str) -> str:
+        return "\n".join(chapter_text[scene.start_offset:scene.end_offset] for scene in self.last_scenes)
+
+    def reset_after_progress(self, next_cursor: int, config: SceneSegmentationConfig) -> None:
+        self.cursor = next_cursor
+        self.chunk_size = config.initial_chunk_size
+        self.failed_end_text = ""
+        self.retry_count = 0
+
+    def grow_chunk_or_raise(self, config: SceneSegmentationConfig, message: str) -> None:
+        self.retry_count += 1
+        if self.retry_count >= MAX_RETRIES:
+            raise RuntimeError(message)
+        self.chunk_size = min(self.chunk_size * 2, config.max_chunk_size)
+
+
 def parse_chapter_file(path: Path) -> tuple[dict, str]:
     """Parse YAML frontmatter chapter file. Returns (metadata, content)."""
     text = path.read_text(encoding="utf-8")
@@ -194,32 +231,19 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
     return {}, text
 
 
-
 def find_end_offset(
-    chapter_text: str, end_text: str, search_from: int,
+    chapter_text: str,
+    end_text: str,
+    search_from: int,
     search_limit: int | None = None,
 ) -> int:
-    """Find position right after end_text in chapter_text, searching from search_from.
-
-    Both end_text and the search region are whitespace-stripped for matching;
-    the returned offset is a codepoint position in the original chapter_text.
-    For end_text with >= 10 non-whitespace chars, falls back to fuzzy matching
-    allowing up to floor(len/10) insert/delete/replace edits; the last two chars
-    must always match exactly.
-    Returns the offset immediately after end_text (= start of next scene).
-    Raises ValueError if end_text is not found.
-
-    search_limit: if given, cap the search to this many original characters after
-    search_from.  Keeps fuzzy matching fast by avoiding scanning the whole chapter.
-    """
+    """Find position right after end_text in chapter_text, searching from search_from."""
     end_clean = "".join(end_text.split())
     end = (search_from + search_limit) if search_limit is not None else len(chapter_text)
     pairs = [(search_from + i, c) for i, c in enumerate(chapter_text[search_from:end]) if not c.isspace()]
     norm_str = "".join(c for _, c in pairs)
 
-    # Exact match on whitespace-stripped text
     pat = re.escape(end_clean)
-    # Special fix for Gemini models - it escapes newline in the string
     if "\\n" in end_clean:
         pat = pat + "|" + re.escape(end_clean.replace("\\n", ""))
     m = re.search(pat, norm_str)
@@ -233,7 +257,6 @@ def find_end_offset(
             f"  context  = {chapter_text[search_from:search_from + 200]!r}"
         )
 
-    # Fuzzy fallback: match body fuzzily, tail exactly
     max_errors = len(end_clean) // 10
     body, tail = end_clean[:-2], end_clean[-2:]
     pat = _regex.compile(rf"(?:{_regex.escape(body)}){{e<={max_errors}}}{_regex.escape(tail)}")
@@ -273,10 +296,11 @@ def build_user_prompt(
         f"[Text window — cursor at character offset {cursor}]\n"
         f"<novel_text>\n{chunk}\n</novel_text>"
     )
-    if is_final_chunk:
-        chapter_end_note = "This is the END of the chapter. The last scene must end here; set has_more=false."
-    else:
-        chapter_end_note = "This is NOT the end of the chapter. More text follows after this window."
+    chapter_end_note = (
+        "This is the END of the chapter. The last scene must end here; set has_more=false."
+        if is_final_chunk
+        else "This is NOT the end of the chapter. More text follows after this window."
+    )
     parts.append(
         f"[Task]\n"
         f"{chapter_end_note}\n"
@@ -287,13 +311,12 @@ def build_user_prompt(
     return "\n\n".join(parts)
 
 
-def _append_scene(
+def append_scene(
     scenes: list[SceneData],
     start_offset: int,
     end_offset: int,
-    seg: SceneSegment | None,
-) -> None:
-    """Append a scene with in-loop continuity validation. Raises ValueError on violation."""
+    seg: SceneSegment,
+) -> SceneData:
     if end_offset <= start_offset:
         raise ValueError(f"Empty/inverted scene: start={start_offset}, end={end_offset}")
     if scenes and scenes[-1].end_offset != start_offset:
@@ -301,121 +324,119 @@ def _append_scene(
             f"Continuity gap: previous scene ends at {scenes[-1].end_offset}, "
             f"new scene starts at {start_offset}"
         )
-    scenes.append(SceneData(
+    scene = SceneData(
         scene_index=len(scenes),
         start_offset=start_offset,
         end_offset=end_offset,
-        location=seg.location if seg else "N/A",
-        time=seg.time if seg else "N/A",
-        characters=seg.characters if seg else [],
-        boundary_type=seg.boundary_type if seg else "chapter_start",
-    ))
+        location=seg.location,
+        time=seg.time,
+        characters=seg.characters,
+        boundary_type=seg.boundary_type,
+    )
+    scenes.append(scene)
+    return scene
 
 
-async def segment_chapter(chapter_text: str, agent: Agent[None, SegmentationResult]) -> list[SceneData]:
-    """Progressive LLM segmentation. Returns SceneData list with exact codepoint offsets.
+def process_scene_batch(
+    chapter_text: str,
+    state: SegmentationState,
+    data: SegmentationResult,
+) -> tuple[int, bool]:
+    batch_cursor = state.cursor
+    reached_end = False
+    state.last_scenes = []
 
-    - cursor never advances unless a scene boundary is confirmed
-    - chunk_size grows when no progress is made, keeping the full current scene in context
-    - LLM/matching errors resume from the last confirmed scene cut
-    - continuity is validated after each scene is appended
-    """
-    MAX_RETRIES = 5
+    for i, seg in enumerate(data.scenes):
+        scene_start = batch_cursor
+        is_last = i == len(data.scenes) - 1
 
-    total_length = len(chapter_text)
+        if is_last and data.has_more:
+            break
+
+        if is_last and not data.has_more:
+            append_scene(state.last_scenes, scene_start, state.total_length, seg)
+            batch_cursor = state.total_length
+            reached_end = True
+            break
+
+        if not seg.end_text:
+            break
+
+        scene_end = find_end_offset(
+            chapter_text,
+            seg.end_text,
+            batch_cursor,
+            search_limit=state.chunk_size + len(seg.end_text) + 500,
+        )
+        append_scene(state.last_scenes, scene_start, scene_end, seg)
+        batch_cursor = scene_end
+
+    return batch_cursor, reached_end
+
+
+def grow_chunk_or_raise(
+    state: SegmentationState,
+    config: SceneSegmentationConfig,
+    reason: str,
+) -> None:
+    state.grow_chunk_or_raise(
+        config,
+        f"{reason} at offset {state.cursor} after {MAX_RETRIES} retries",
+    )
+
+
+async def segment_chapter(
+    chapter_text: str,
+    agent: Agent[None, SegmentationResult],
+    segmentation_config: SceneSegmentationConfig | None = None,
+) -> list[SceneData]:
+    """Progressive LLM segmentation. Returns SceneData list with exact codepoint offsets."""
+    config = segmentation_config or SceneSegmentationConfig()
     all_scenes: list[SceneData] = []
-    last_scenes: list[SceneData] = []
-    cursor = 0          # always = start of current unfinished scene
-    chunk_size = INITIAL_CHUNK_SIZE
-    summary = ""
-    failed_end_text = ""  # end_text that failed matching last attempt
-    retry_count = 0     # resets on any forward progress
+    state = SegmentationState.create(total_length=len(chapter_text), config=config)
 
-    while cursor < total_length:
-        chunk = chapter_text[cursor:cursor + chunk_size]
-        is_final_chunk = (cursor + len(chunk) >= total_length)
-        previous_chunk = "\n".join(chapter_text[scene.start_offset:scene.end_offset] for scene in last_scenes)
-        last_scenes = []
+    while state.cursor < state.total_length:
+        chunk = state.current_chunk(chapter_text)
+        is_final_chunk = state.cursor + len(chunk) >= state.total_length
 
-        # --- LLM call ---
         try:
             print(f"Calling model, current scene len = {len(all_scenes)}")
             result = await agent.run(
-                build_user_prompt(summary, previous_chunk, chunk, cursor, failed_end_text, is_final_chunk)
+                build_user_prompt(
+                    state.summary,
+                    state.previous_chunk(chapter_text),
+                    chunk,
+                    state.cursor,
+                    state.failed_end_text,
+                    is_final_chunk,
+                )
             )
             data = result.output
             print(f"  Result: scene len = {len(data.scenes)}, summary = {data.summary}")
         except Exception as e:
-            print(f"  Warning: LLM error at offset {cursor}: {e}", file=sys.stderr)
-            retry_count += 1
-            if retry_count >= MAX_RETRIES:
-                raise RuntimeError(f"LLM kept failing at offset {cursor} after {MAX_RETRIES} retries")
-            chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
+            print(f"  Warning: LLM error at offset {state.cursor}: {e}", file=sys.stderr)
+            grow_chunk_or_raise(state, config, "LLM kept failing")
             continue
 
-        summary = data.summary if data.summary != '""' else ""
+        state.summary = data.summary if data.summary != '""' else ""
 
-        # --- No scenes returned ---
         if not data.scenes:
-            retry_count += 1
-            if retry_count >= MAX_RETRIES:
-                raise RuntimeError(f"LLM returned no scenes at offset {cursor} after {MAX_RETRIES} retries")
-            chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
+            grow_chunk_or_raise(state, config, "LLM returned no scenes")
             continue
 
-        # --- Process scenes in batch ---
-        batch_cursor = cursor
-        reached_end = False
+        try:
+            batch_cursor, reached_end = process_scene_batch(chapter_text, state, data)
+        except ValueError as e:
+            print(f"  Warning: {e}. Continuing from last good cut.", file=sys.stderr)
+            state.failed_end_text = data.scenes[-1].end_text
+            grow_chunk_or_raise(state, config, "Stalled")
+            continue
 
-        for i, seg in enumerate(data.scenes):
-            scene_start = batch_cursor
-            is_last = (i == len(data.scenes) - 1)
-
-            if is_last and data.has_more:
-                # Scene continues beyond window — carry to next batch
-                break
-
-            if is_last and not data.has_more:
-                # Final scene of the chapter
-                try:
-                    _append_scene(all_scenes, scene_start, total_length, seg)
-                except ValueError as e:
-                    print(f"  Warning: {e}. Stopping at last confirmed cut.", file=sys.stderr)
-                    break
-                batch_cursor = total_length
-                reached_end = True
-                break
-
-            # Non-last scene: locate boundary via end_text
-            if not seg.end_text:
-                break
-
-            try:
-                scene_end = find_end_offset(
-                    chapter_text, seg.end_text, batch_cursor,
-                    search_limit=chunk_size + len(seg.end_text) + 500,
-                )
-                _append_scene(all_scenes, scene_start, scene_end, seg)
-                _append_scene(last_scenes, scene_start, scene_end, seg)
-            except ValueError as e:
-                print(f"  Warning: {e}. Continuing from last good cut.", file=sys.stderr)
-                failed_end_text = seg.end_text
-                break
-
-            batch_cursor = scene_end
-
-        # --- Advance cursor or grow chunk ---
-        if batch_cursor > cursor:
-            cursor = batch_cursor
-            chunk_size = INITIAL_CHUNK_SIZE  # reset after progress
-            failed_end_text = ""
-            retry_count = 0
+        if batch_cursor > state.cursor:
+            all_scenes.extend(state.last_scenes)
+            state.reset_after_progress(batch_cursor, config)
         else:
-            # No progress — keep cursor, grow chunk so full scene stays in context
-            retry_count += 1
-            if retry_count >= MAX_RETRIES:
-                raise RuntimeError(f"Stalled at offset {cursor} after {MAX_RETRIES} retries with no progress")
-            chunk_size = min(chunk_size * 2, MAX_CHUNK_SIZE)
+            grow_chunk_or_raise(state, config, "Stalled")
 
         if reached_end:
             break
@@ -436,9 +457,7 @@ def verify_coverage(scenes: list[SceneData], total_length: int) -> None:
                 f"and scene {i + 1} (start={scenes[i + 1].start_offset})"
             )
     if scenes[-1].end_offset != total_length:
-        raise ValueError(
-            f"Last scene ends at {scenes[-1].end_offset}, expected {total_length}"
-        )
+        raise ValueError(f"Last scene ends at {scenes[-1].end_offset}, expected {total_length}")
 
 
 def write_manifest(output_dir: Path, chapter_meta: dict, scenes: list[SceneData], chapter_stem: str = "") -> Path:
@@ -472,109 +491,16 @@ def write_scene_files(output_dir: Path, chapter_text: str, scenes: list[SceneDat
         (output_dir / f"scene_{s.scene_index:03d}.txt").write_text(content, encoding="utf-8")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Segment a novel chapter into scenes using LLM.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Examples:\n"
-            "  uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --chapter 3\n"
-            "  uv run python -m yorishiro.scene --project projects/CPK --source cpk-novel --all\n"
-            "  uv run python -m yorishiro.scene --source cpk-novel --chapter 3  # uses cwd as project\n"
-        ),
-    )
-    
-    parser.add_argument("--project", type=Path, default=None,
-                        help="Project directory (default: current directory)")
-    parser.add_argument("--source", type=str, required=True,
-                        help="Source ID within project")
-    parser.add_argument("--chapter", type=int, default=None,
-                        help="Chapter index to process (0-based)")
-    parser.add_argument("--all", action="store_true",
-                        help="Process all chapters")
-    parser.add_argument("--force", action="store_true",
-                        help="Overwrite existing output")
-    parser.add_argument("--no-backup", action="store_true",
-                        help="Skip backup snapshot after processing")
-    add_model_args(parser)
-    args = parser.parse_args()
-
-    project_path = args.project if args.project else Path.cwd()
-    project = Project.load(project_path)
-    
-    source_config = project.get_source(args.source)
-    if not source_config:
-        print(f"Error: Source '{args.source}' not found in project", file=sys.stderr)
-        sys.exit(1)
-    
-    config = project.resolved_model_config("scene")
-    chapters_dir = project.source_dir(args.source) / "chapters"
-    
-    if args.chapter is not None:
-        chapter_paths = [
-            p for p in project.list_chapters(args.source)
-            if (match := re.search(r"\d+", p.stem)) and int(match.group()) == args.chapter
-        ]
-        if not chapter_paths:
-            print(f"Error: chapter {args.chapter} not found", file=sys.stderr)
-            sys.exit(1)
-    else:
-        chapter_paths = project.list_chapters(args.source)
-        if not chapter_paths:
-            print(f"Error: No chapters found in {chapters_dir}", file=sys.stderr)
-            sys.exit(1)
-
-    backup = ProjectBackup(project.root)
-    scenes_dir = project.source_dir(args.source) / "scenes"
-    valid_stems = {p.stem for p in chapter_paths}
-    cleanup_stale_scene_dirs(scenes_dir, valid_stems, [project.root / "project.yaml"])
-
-    processed_any = False
-    for chapter_path in chapter_paths:
-        output_dir = project.source_dir(args.source) / "scenes" / chapter_path.stem
-        if process_chapter(chapter_path, output_dir, args.force, args, config,
-                           material_yaml=project.root / "project.yaml"):
-            processed_any = True
-
-    if processed_any and not args.no_backup:
-        backup.snapshot(f"scene-{args.source}")
-
-
-def cleanup_stale_scene_dirs(
-    scenes_dir: Path,
-    valid_stems: set[str],
-    source_files: list[Path],
-) -> None:
-    """Remove output directories whose chapter source no longer exists."""
-    import shutil
-    if not scenes_dir.exists():
-        return
-    for child in scenes_dir.iterdir():
-        if not child.is_dir():
-            continue
-        if child.name in valid_stems:
-            continue
-        manifest = child / "scenes_manifest.json"
-        if is_output_stale(manifest, source_files):
-            print(f"Cleaning up stale output: {child}")
-            shutil.rmtree(child, ignore_errors=True)
-        else:
-            print(f"Warning: {child} is not in current chapter set but appears fresh — skipping cleanup")
-
-
 def process_chapter(
     chapter_file: Path,
     output_dir: Path,
     force: bool,
     args: argparse.Namespace,
     config: ModelConfig,
+    segmentation_config: SceneSegmentationConfig | None = None,
     material_yaml: Path | None = None,
 ) -> bool:
     """Process a single chapter file."""
-    if not chapter_file.exists():
-        print(f"Error: {chapter_file} not found", file=sys.stderr)
-        sys.exit(1)
-
     chapter_meta, chapter_text = parse_chapter_file(chapter_file)
     total_length = len(chapter_text)
 
@@ -587,33 +513,21 @@ def process_chapter(
         return False
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    try:
-        agent = build_agent_from_args(
-            args,
-            output_type=SegmentationResult,
-            system_prompt=SYSTEM_PROMPT,
-            config=config,
-        )
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+
+    agent = build_agent_from_args(
+        args,
+        output_type=SegmentationResult,
+        system_prompt=SYSTEM_PROMPT,
+        config=config,
+    )
 
     model_display = args.model or config.name or "unknown"
     print(f"Segmenting {chapter_file.name} ({total_length} chars) with {model_display} ...")
-    
-    try:
-        scenes = asyncio.run(segment_chapter(chapter_text, agent))
-    except ValueError as e:
-        print(f"Error during segmentation: {e}", file=sys.stderr)
-        sys.exit(1)
+
+    scenes = asyncio.run(segment_chapter(chapter_text, agent, segmentation_config=segmentation_config))
 
     print("Verifying offsets ...")
-    try:
-        verify_coverage(scenes, total_length)
-    except ValueError as e:
-        print(f"Offset verification failed: {e}", file=sys.stderr)
-        sys.exit(1)
+    verify_coverage(scenes, total_length)
 
     print(f"Writing {len(scenes)} scenes to {output_dir} ...")
     write_scene_files(output_dir, chapter_text, scenes)
@@ -624,7 +538,3 @@ def process_chapter(
         chars_label = f"[{s.start_offset}:{s.end_offset}]"
         print(f"  scene_{s.scene_index:03d}.txt  {chars_label:20s}  {s.location} / {s.time}")
     return True
-
-
-if __name__ == "__main__":
-    main()

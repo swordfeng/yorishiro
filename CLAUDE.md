@@ -89,6 +89,12 @@ After making any code changes, always run checks before considering the task com
 
 Fix all errors before reporting completion.
 
+### Dependency Management
+
+Use `uv add ...` to add dependencies and `uv run ...` to execute tools/scripts.
+
+Avoid invoking `pip install ...` directly unless the user explicitly asks for it.
+
 ### Unit Tests
 
 When code changes affect behavior, parsing, heuristics, serialization, prompts, or pipeline wiring, add or update unit tests unless the user explicitly says not to.

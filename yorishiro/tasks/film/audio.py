@@ -124,7 +124,11 @@ class FilmAudioSpeakersTask(Task):
         ]
 
     def output_paths(self) -> list[Path]:
-        return [self._output_dir / "speaker_attribution.json"]
+        return [
+            self._output_dir / "speaker_attribution.json",
+            self._output_dir / "speaker_bank.json",
+            self._output_dir / "speaker_embeddings.pkl",
+        ]
 
     def _run(self) -> None:
         print("[film.audio.speakers] Running speaker attribution ...")

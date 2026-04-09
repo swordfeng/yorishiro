@@ -203,9 +203,19 @@ class ModelRegistry:
             "speaker-attributor",
             str(cfg.get("backend", "")),
             str(cfg.get("speaker_similarity_threshold", "")),
-            str(cfg.get("speaker_embedding_min_duration_seconds", "")),
-            str(cfg.get("speaker_bank_enroll_min_duration_seconds", "")),
-            str(cfg.get("speaker_bank_enroll_min_confidence", "")),
+            str(cfg.get("diagnostics_enabled", "")),
+            str(cfg.get("clustering_method", "")),
+            str(cfg.get("window_duration", "")),
+            str(cfg.get("window_hop", "")),
+            str(cfg.get("min_window_duration", "")),
+            str(cfg.get("energy_threshold_db", "")),
+            str(cfg.get("norm_filter_sigma", "")),
+            str(cfg.get("coherence_threshold", "")),
+            str(cfg.get("min_vote_similarity", "")),
+            str(cfg.get("hdbscan_min_cluster_size", "")),
+            str(cfg.get("umap_n_neighbors", "")),
+            str(cfg.get("umap_min_dist", "")),
+            str(cfg.get("umap_n_components", "")),
             str(cfg.get("hf_token_env", "")),
         ]
         return "film.audio.speakers::" + "|".join(parts)
@@ -270,12 +280,32 @@ class ModelRegistry:
         from yorishiro.audio.speaker_attribution import SpeakerAttributor, SpeakerAttributorConfig
 
         cfg = self._project.step_config("film.audio.speakers")
+
+        def _parse_bool(v: object) -> bool:
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str):
+                return v.strip().lower() in {"1", "true", "yes", "y", "on"}
+            if v is None:
+                return False
+            return bool(v)
+
         return SpeakerAttributor(SpeakerAttributorConfig(
-            embedding_backend=cfg.get("backend", "pyannote"),
+            embedding_backend=cfg.get("backend", "wespeaker"),
             similarity_threshold=float(cfg.get("speaker_similarity_threshold", 0.75)),
-            embedding_min_duration_seconds=float(cfg.get("speaker_embedding_min_duration_seconds", 0.5)),
-            bank_enroll_min_duration_seconds=float(cfg.get("speaker_bank_enroll_min_duration_seconds", 1.0)),
-            bank_enroll_min_confidence=float(cfg.get("speaker_bank_enroll_min_confidence", -0.3)),
+            diagnostics_enabled=_parse_bool(cfg.get("diagnostics_enabled", False)),
+            clustering_method=cfg.get("clustering_method", "umap_hdbscan_utterance"),
+            window_duration=float(cfg.get("window_duration", 1.5)),
+            window_hop=float(cfg.get("window_hop", 0.75)),
+            min_window_duration=float(cfg.get("min_window_duration", 0.8)),
+            energy_threshold_db=float(cfg.get("energy_threshold_db", -40.0)),
+            norm_filter_sigma=float(cfg.get("norm_filter_sigma", 5.0)),
+            coherence_threshold=float(cfg.get("coherence_threshold", 0.1)),
+            min_vote_similarity=float(cfg.get("min_vote_similarity", 0.2)),
+            hdbscan_min_cluster_size=int(cfg.get("hdbscan_min_cluster_size", 10)),
+            umap_n_neighbors=int(cfg.get("umap_n_neighbors", 5)),
+            umap_min_dist=float(cfg.get("umap_min_dist", 0.0)),
+            umap_n_components=int(cfg.get("umap_n_components", 5)),
             hf_token_env=cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
         ))
 

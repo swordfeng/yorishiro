@@ -80,14 +80,23 @@ class STTTranscript(BaseModel):
     entries: list[STTEntry] = Field(default_factory=list)
 
 
+class WindowVote(BaseModel):
+    speaker_id: str = Field(description="Cluster speaker ID for this window")
+    similarity: float = Field(description="Cosine similarity of window embedding to cluster centroid")
+    start: float = Field(description="Window start time in seconds")
+    end: float = Field(description="Window end time in seconds")
+
+
 class SpeakerAttributionEntry(BaseModel):
     entry_id: str = Field(description="Stable STT entry identifier")
     start: float = Field(description="Entry start time in seconds")
     end: float = Field(description="Entry end time in seconds")
     speaker_id: str = Field(description="Attributed global speaker ID or UNKNOWN")
+    text: str = Field(default="", description="STT transcribed text for this entry")
     similarity: float | None = Field(default=None, description="Best speaker similarity score if available")
     embedding_present: bool = Field(description="Whether an embedding was available for attribution")
     enrolled: bool = Field(description="Whether this entry was used to update the speaker bank")
+    window_votes: list[WindowVote] = Field(default_factory=list, description="Per-window cluster assignments and similarities")
 
 
 class SpeakerAttribution(BaseModel):

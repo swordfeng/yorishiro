@@ -20,8 +20,12 @@ from yorishiro.utils import get_device
 
 @dataclass
 class SpeakerBankManagerConfig:
-    embedding_backend: str = "pyannote"
-    similarity_threshold: float = 0.75
+    # Which speaker embedding model to use.
+    # Supported values:
+    # - "wespeaker" (default): pyannote/wespeaker-voxceleb-resnet34-LM
+    # - "pyannote": pyannote/embedding
+    # - any Hugging Face model id (e.g. "eek/wespeaker-voxceleb-resnet293-LM")
+    embedding_backend: str = "wespeaker"
     hf_token_env: str = "YORISHIRO_HF_TOKEN"
 
 
@@ -76,10 +80,18 @@ class SpeakerBankManager:
                 if not hf_token:
                     print(f"    [SpeakerEmbedding] {self.config.hf_token_env} not set, skipping embedding extraction")
                     return None
-                model = Model.from_pretrained(
-                    "pyannote/embedding",
-                    token=hf_token,
-                )
+
+                backend = (self.config.embedding_backend or "").strip()
+                if backend in {"wespeaker", "wespeaker_resnet34", "pyannote/wespeaker-voxceleb-resnet34-LM"}:
+                    model_id = "pyannote/wespeaker-voxceleb-resnet34-LM"
+                elif backend in {"pyannote", "pyannote/embedding"}:
+                    model_id = "pyannote/embedding"
+                elif "/" in backend:
+                    model_id = backend
+                else:
+                    model_id = "pyannote/wespeaker-voxceleb-resnet34-LM"
+
+                model = Model.from_pretrained(model_id, token=hf_token)
                 device = torch.device(get_device())
                 model = model.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                 self._embedding_model = Inference(model, window="whole")
@@ -102,31 +114,6 @@ class SpeakerBankManager:
         except Exception as e:
             print(f"    [SpeakerEmbedding] Error extracting embedding: {e}")
             return None
-
-    def assign_global_speaker_id(
-        self,
-        local_speaker: str,
-        embedding: np.ndarray | None,
-        timestamp: float,
-    ) -> str:
-        """Assign a global speaker ID for a local speaker.
-
-        Matches against existing speakers using embedding similarity.
-        If no match or no embedding, creates a new global ID.
-        """
-        if embedding is not None:
-            for spk_id, spk_emb in self._embeddings.items():
-                similarity = self._cosine_similarity(embedding, spk_emb)
-                if similarity >= self.config.similarity_threshold:
-                    return spk_id
-
-        global_id = f"SPKR_{len(self.speaker_bank.speakers) + 1:03d}"
-        self.speaker_bank.add_speaker(global_id, timestamp)
-
-        if embedding is not None:
-            self._embeddings[global_id] = embedding
-
-        return global_id
 
     def confirm_speaker(self, speaker_id: str, character_name: str, scene_id: str | None = None) -> None:
         """Confirm a speaker ID maps to a character name."""

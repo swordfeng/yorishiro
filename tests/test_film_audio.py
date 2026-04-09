@@ -14,7 +14,7 @@ import numpy as np
 
 from yorishiro.audio.diarization import Diarizer, DiarizerConfig
 from yorishiro.audio.emotion_analysis import EmotionAnalyzer
-from yorishiro.audio.speaker_attribution import SpeakerAttributor, SpeakerAttributorConfig
+from yorishiro.audio.speaker_attribution import EmbeddingWindow, SpeakerAttributor, SpeakerAttributorConfig
 from yorishiro.audio.transcription import SpeechGroup, Transcriber, TranscriberConfig
 from yorishiro.audio.vad import VadRunner
 from yorishiro.models.film_models import STTEntry, SpeakerAttribution, SpeakerAttributionEntry, STTTranscript, Transcript
@@ -319,7 +319,78 @@ class TranscriberTests(unittest.TestCase):
 
 
 class SpeakerAttributorTests(unittest.TestCase):
-    def test_run_writes_attribution_and_speaker_bank(self) -> None:
+    def test_default_config_uses_utterance_averaged_umap_hdbscan(self) -> None:
+        cfg = SpeakerAttributorConfig()
+        self.assertEqual(cfg.clustering_method, "umap_hdbscan_utterance")
+        self.assertEqual(cfg.umap_n_neighbors, 5)
+        self.assertEqual(cfg.umap_n_components, 5)
+        self.assertEqual(cfg.hdbscan_min_cluster_size, 10)
+        self.assertFalse(cfg.diagnostics_enabled)
+
+    def test_utterance_averaged_clustering_expands_labels_to_windows(self) -> None:
+        attributor = SpeakerAttributor(SpeakerAttributorConfig(clustering_method="umap_hdbscan_utterance"))
+
+        X = np.stack(
+            [
+                np.array([1.0, 0.0], dtype=np.float32),
+                np.array([1.0, 0.0], dtype=np.float32),
+                np.array([0.0, 1.0], dtype=np.float32),
+                np.array([0.0, 1.0], dtype=np.float32),
+            ]
+        )
+        windows = [
+            EmbeddingWindow(stt_idx=0, start=0.0, end=1.0),
+            EmbeddingWindow(stt_idx=0, start=1.0, end=2.0),
+            EmbeddingWindow(stt_idx=1, start=3.0, end=4.0),
+            EmbeddingWindow(stt_idx=1, start=4.0, end=5.0),
+        ]
+        valid_indices = [0, 1, 2, 3]
+
+        def fake_cluster(X_in: np.ndarray, method: str | None = None) -> np.ndarray:
+            del method
+            # Should be clustering 2 utterances (averaged embeddings), not 4 windows.
+            self.assertEqual(X_in.shape[0], 2)
+            norms = np.linalg.norm(X_in, axis=1)
+            self.assertTrue(np.allclose(norms, 1.0, atol=1e-6))
+            return np.array([0, 1], dtype=np.int64)
+
+        with patch.object(attributor, "_cluster", side_effect=fake_cluster):
+            labels = attributor._cluster_windows(X, windows, valid_indices)
+
+        self.assertEqual(labels.tolist(), [0, 0, 1, 1])
+
+    def test_utterance_averaged_clustering_uses_post_filter_set(self) -> None:
+        attributor = SpeakerAttributor(SpeakerAttributorConfig(clustering_method="umap_hdbscan_utterance"))
+
+        # Only these two windows are considered (post-filter set).
+        X = np.stack(
+            [
+                np.array([1.0, 0.0], dtype=np.float32),
+                np.array([0.0, 1.0], dtype=np.float32),
+            ]
+        )
+        windows = [
+            EmbeddingWindow(stt_idx=0, start=0.0, end=1.0),
+            EmbeddingWindow(stt_idx=0, start=1.0, end=2.0),
+            EmbeddingWindow(stt_idx=1, start=3.0, end=4.0),
+            EmbeddingWindow(stt_idx=1, start=4.0, end=5.0),
+        ]
+        valid_indices = [0, 2]
+
+        def fake_cluster(X_in: np.ndarray, method: str | None = None) -> np.ndarray:
+            del method
+            self.assertEqual(X_in.shape, (2, 2))
+            # With one window per utterance in the post-filter set, means equal those windows.
+            self.assertTrue(np.allclose(X_in[0], np.array([1.0, 0.0], dtype=np.float32)))
+            self.assertTrue(np.allclose(X_in[1], np.array([0.0, 1.0], dtype=np.float32)))
+            return np.array([0, 1], dtype=np.int64)
+
+        with patch.object(attributor, "_cluster", side_effect=fake_cluster):
+            labels = attributor._cluster_windows(X, windows, valid_indices)
+
+        self.assertEqual(labels.tolist(), [0, 1])
+
+    def test_windowed_clustering_merges_similar_speakers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = Path(tmp_dir) / "voice.flac"
             audio_path.write_bytes(b"stub")
@@ -328,25 +399,157 @@ class SpeakerAttributorTests(unittest.TestCase):
             stt = STTTranscript(
                 language="ja",
                 entries=[
-                    STTEntry(start=0.0, end=1.2, text="a", confidence=0.1),
-                    STTEntry(start=1.5, end=2.8, text="b", confidence=0.2),
+                    STTEntry(start=0.0, end=2.0, text="a", confidence=0.1),
+                    STTEntry(start=3.0, end=5.0, text="b", confidence=0.2),
+                ],
+            )
+            (output_dir / "stt.json").write_text(stt.model_dump_json(indent=2), encoding="utf-8")
+
+            emb_a1 = np.array([1.0, 0.0], dtype=np.float32)
+            emb_a2 = np.array([1.01, 0.01], dtype=np.float32)
+            emb_b1 = np.array([0.99, -0.01], dtype=np.float32)
+            emb_b2 = np.array([1.0, 0.02], dtype=np.float32)
+            attributor = SpeakerAttributor(SpeakerAttributorConfig(clustering_method="average"))
+            with (
+                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch(
+                    "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
+                    side_effect=[emb_a1, emb_a2, emb_b1, emb_b2],
+                ),
+            ):
+                result = attributor.run(audio_path, output_dir)
+
+            self.assertEqual(result.entries[0].speaker_id, result.entries[1].speaker_id)
+            self.assertTrue((output_dir / "speaker_bank.json").exists())
+
+    def test_windowed_clustering_separates_different_speakers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            stt = STTTranscript(
+                language="ja",
+                entries=[
+                    STTEntry(start=0.0, end=2.0, text="a", confidence=0.1),
+                    STTEntry(start=3.0, end=5.0, text="b", confidence=0.2),
                 ],
             )
             (output_dir / "stt.json").write_text(stt.model_dump_json(indent=2), encoding="utf-8")
 
             emb1 = np.array([1.0, 0.0], dtype=np.float32)
-            emb2 = np.array([0.99, 0.01], dtype=np.float32)
-            attributor = SpeakerAttributor(SpeakerAttributorConfig())
-            with patch(
-                "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
-                side_effect=[emb1, emb2],
+            emb2 = np.array([1.01, 0.01], dtype=np.float32)
+            emb3 = np.array([0.0, 1.0], dtype=np.float32)
+            emb4 = np.array([0.01, 0.99], dtype=np.float32)
+            attributor = SpeakerAttributor(SpeakerAttributorConfig(clustering_method="average"))
+            with (
+                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch(
+                    "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
+                    side_effect=[emb1, emb2, emb3, emb4],
+                ),
             ):
                 result = attributor.run(audio_path, output_dir)
 
-            self.assertEqual([entry.speaker_id for entry in result.entries], ["SPKR_001", "SPKR_001"])
-            saved = SpeakerAttribution(**json.loads((output_dir / "speaker_attribution.json").read_text(encoding="utf-8")))
-            self.assertEqual(saved.entries[0].speaker_id, "SPKR_001")
-            self.assertTrue((output_dir / "speaker_bank.json").exists())
+            self.assertNotEqual(result.entries[0].speaker_id, result.entries[1].speaker_id)
+            self.assertEqual(len({e.speaker_id for e in result.entries}), 2)
+
+    def test_single_window_low_similarity_falls_back_to_time(self) -> None:
+        attributor = SpeakerAttributor(SpeakerAttributorConfig(min_vote_similarity=0.2))
+        stt = STTTranscript(
+            language="ja",
+            entries=[
+                STTEntry(start=0.0, end=0.3, text="!", confidence=0.0),
+                STTEntry(start=0.5, end=1.5, text="a", confidence=0.1),
+            ],
+        )
+        windows = [
+            EmbeddingWindow(stt_idx=0, start=0.0, end=0.3),
+            EmbeddingWindow(stt_idx=1, start=0.5, end=1.5),
+        ]
+        valid_indices_all = [0, 1]
+        embeddings_all = [
+            np.array([0.0, 1.0], dtype=np.float32),
+            np.array([1.0, 0.0], dtype=np.float32),
+        ]
+        speaker_centroids = {"SPKR_001": np.array([1.0, 0.0], dtype=np.float32)}
+
+        result_entries = attributor._vote_speakers(
+            stt=stt,
+            windows=windows,
+            valid_indices_all=valid_indices_all,
+            embeddings_all=embeddings_all,
+            speaker_centroids=speaker_centroids,
+        )
+
+        self.assertEqual(result_entries[1].speaker_id, "SPKR_001")
+        self.assertEqual(result_entries[0].speaker_id, "SPKR_001")
+        self.assertTrue(result_entries[0].embedding_present)
+        self.assertAlmostEqual(float(result_entries[0].similarity or 0.0), 0.0)
+
+    def test_extract_windows_produces_correct_windows(self) -> None:
+        attributor = SpeakerAttributor(SpeakerAttributorConfig(
+            window_duration=1.5, window_hop=0.75, min_window_duration=0.8,
+        ))
+        stt = STTTranscript(
+            language="ja",
+            entries=[
+                STTEntry(start=0.0, end=0.5, text="short", confidence=0.1),
+                STTEntry(start=1.0, end=2.0, text="medium", confidence=0.2),
+                STTEntry(start=3.0, end=6.0, text="long", confidence=0.3),
+            ],
+        )
+        windows = attributor._extract_windows(stt)
+        stt_indices = [w.stt_idx for w in windows]
+        self.assertIn(0, stt_indices)
+        self.assertIn(1, stt_indices)
+        self.assertIn(2, stt_indices)
+
+        very_short_wins = [w for w in windows if w.stt_idx == 0]
+        self.assertEqual(len(very_short_wins), 1)
+        self.assertAlmostEqual(very_short_wins[0].start, 0.0)
+        self.assertAlmostEqual(very_short_wins[0].end, 0.5)
+
+        short_wins = [w for w in windows if w.stt_idx == 1]
+        self.assertEqual(len(short_wins), 1)
+        self.assertAlmostEqual(short_wins[0].start, 1.0)
+        self.assertAlmostEqual(short_wins[0].end, 2.0)
+        long_wins = [w for w in windows if w.stt_idx == 2]
+        self.assertGreaterEqual(len(long_wins), 3)
+
+    def test_energy_gating_skips_silent_windows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            stt = STTTranscript(
+                language="ja",
+                entries=[
+                    STTEntry(start=0.0, end=2.0, text="a", confidence=0.1),
+                ],
+            )
+            (output_dir / "stt.json").write_text(stt.model_dump_json(indent=2), encoding="utf-8")
+
+            call_count = 0
+
+            def fake_extract(_path: Path, _start: float, _end: float) -> np.ndarray:
+                nonlocal call_count
+                call_count += 1
+                return np.array([1.0, 0.0], dtype=np.float32)
+
+            attributor = SpeakerAttributor(SpeakerAttributorConfig(clustering_method="average"))
+            with (
+                patch.object(attributor, "_window_has_energy", return_value=False),
+                patch(
+                    "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
+                    side_effect=fake_extract,
+                ),
+            ):
+                result = attributor.run(audio_path, output_dir)
+
+            self.assertEqual(call_count, 0)
+            self.assertEqual(result.entries[0].speaker_id, "UNKNOWN")
 
 
 class EmotionAnalyzerTests(unittest.TestCase):
@@ -443,7 +646,14 @@ steps:
             assert isinstance(stt_task, FilmAudioSTTTask)
             self.assertEqual(stt_task._language, "ja")
             self.assertEqual(vad_task.output_paths(), [project.step_dir("film-src", "audio") / "vad.json"])
-            self.assertEqual(speakers_task.output_paths(), [project.step_dir("film-src", "audio") / "speaker_attribution.json"])
+            self.assertEqual(
+                speakers_task.output_paths(),
+                [
+                    project.step_dir("film-src", "audio") / "speaker_attribution.json",
+                    project.step_dir("film-src", "audio") / "speaker_bank.json",
+                    project.step_dir("film-src", "audio") / "speaker_embeddings.pkl",
+                ],
+            )
             self.assertEqual(
                 emotion_task.output_paths(),
                 [project.step_dir("film-src", "audio") / "transcript.json"],

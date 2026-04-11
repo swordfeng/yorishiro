@@ -25,7 +25,7 @@ from yorishiro.audio.speaker_attribution import (
     SweepCandidateRow,
 )
 from yorishiro.audio.transcription import SpeechGroup, Transcriber, TranscriberConfig
-from yorishiro.audio.vad import VadRunner
+from yorishiro.audio.vad import VadConfig, VadRunner
 from yorishiro.models.film_models import (
     STTEntry,
     SpeakerAttribution,
@@ -48,25 +48,75 @@ from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class VadRunnerTests(unittest.TestCase):
-    def test_run_writes_fallback_segment_when_vad_finds_no_speech(self) -> None:
-        fake_module = types.SimpleNamespace(
-            load_silero_vad=lambda: object(),
-            read_audio=lambda _path: [0.0],
-            get_speech_timestamps=lambda *_args, **_kwargs: [],
-        )
-        with (
-            tempfile.TemporaryDirectory() as tmp_dir,
-            patch.dict(sys.modules, {"silero_vad": fake_module}),
-        ):
+    def test_run_writes_vad_and_debug_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = Path(tmp_dir) / "voice.flac"
             audio_path.write_bytes(b"stub")
             output_dir = Path(tmp_dir) / "audio"
+            expected_segments = [{"start": 0.123, "end": 0.789, "quality": 0.91}]
+            expected_debug = {
+                "audio_duration": 1.23,
+                "profile": "balanced",
+                "primary_segments": [],
+                "rescue_segments_added": [],
+                "dropped_segments": [],
+                "adjustments": [],
+                "stats": {
+                    "primary_count": 0,
+                    "rescue_added_count": 0,
+                    "dropped_count": 0,
+                    "final_count": 1,
+                    "total_speech_seconds": 0.666,
+                    "mean_quality": 0.91,
+                    "low_quality_count": 0,
+                    "largest_boundary_shift_ms": 0.0,
+                },
+            }
+            runner = VadRunner()
+            with patch.object(
+                runner, "_run_vad", return_value=(expected_segments, expected_debug)
+            ):
+                segments = runner.run(audio_path, output_dir)
 
-            segments = VadRunner().run(audio_path, output_dir)
+            self.assertEqual(segments, expected_segments)
+            saved_vad = json.loads(
+                (output_dir / "vad.json").read_text(encoding="utf-8")
+            )
+            saved_debug = json.loads(
+                (output_dir / "vad.debug.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(saved_vad, expected_segments)
+            self.assertEqual(saved_debug, expected_debug)
 
-            self.assertEqual(segments, [{"start": 0.0, "end": float("inf")}])
-            saved = json.loads((output_dir / "vad.json").read_text(encoding="utf-8"))
-            self.assertEqual(saved[0]["start"], 0.0)
+    def test_post_process_repairs_overlap_without_merging(self) -> None:
+        runner = VadRunner()
+        segments, dropped = runner._post_process_segments(
+            [
+                {"start": 1.0, "end": 1.5, "quality": 0.8},
+                {"start": 1.4, "end": 1.9, "quality": 0.7},
+            ],
+            audio_duration=3.0,
+        )
+
+        self.assertEqual(len(dropped), 0)
+        self.assertEqual(len(segments), 2)
+        self.assertLessEqual(segments[0]["end"], segments[1]["start"])
+
+    def test_add_rescue_segments_only_keeps_isolated_candidates(self) -> None:
+        runner = VadRunner(VadConfig(vad_profile="balanced"))
+        merged, added = runner._add_rescue_segments(
+            base_segments=[{"start": 1.0, "end": 1.5, "quality": 0.8}],
+            rescue_segments=[
+                {"start": 1.55, "end": 1.8, "quality": 0.6, "source": "mixed-rescue"},
+                {"start": 3.0, "end": 3.3, "quality": 0.5, "source": "mixed-rescue"},
+            ],
+            guard_gap_seconds=0.2,
+            audio_duration=5.0,
+        )
+
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(len(added), 1)
+        self.assertAlmostEqual(float(added[0]["start"]), 3.0)
 
 
 class DiarizerTests(unittest.TestCase):
@@ -143,18 +193,8 @@ class DiarizerTests(unittest.TestCase):
 
 
 class TranscriberTests(unittest.TestCase):
-    def test_run_uses_checkpointed_chunk_entries(self) -> None:
-        with (
-            tempfile.TemporaryDirectory() as tmp_dir,
-            patch.dict(
-                sys.modules,
-                {
-                    "librosa": types.SimpleNamespace(
-                        resample=lambda audio, **_kwargs: audio
-                    )
-                },
-            ),
-        ):
+    def test_run_resumes_matching_checkpoints_and_cleans_them_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = Path(tmp_dir) / "voice.flac"
             audio_path.write_bytes(b"stub")
             output_dir = Path(tmp_dir) / "audio"
@@ -164,7 +204,16 @@ class TranscriberTests(unittest.TestCase):
             )
             ckpt_dir = output_dir / ".stt_checkpoints"
             ckpt_dir.mkdir()
-            source_mtime = audio_path.stat().st_mtime
+            transcriber = Transcriber(TranscriberConfig())
+            input_signature = transcriber._input_signature(
+                audio_path,
+                output_dir / "vad.json",
+                None,
+            )
+            (ckpt_dir / "meta.json").write_text(
+                json.dumps({"input_signature": input_signature}),
+                encoding="utf-8",
+            )
             checkpoint = {
                 "groups": [
                     {
@@ -173,7 +222,7 @@ class TranscriberTests(unittest.TestCase):
                         "span_end_idx": 0,
                         "start": 0.0,
                         "end": 1.0,
-                        "source_mtime": source_mtime,
+                        "source_mtime": audio_path.stat().st_mtime,
                         "entries": [
                             {
                                 "start": 0.0,
@@ -203,9 +252,12 @@ class TranscriberTests(unittest.TestCase):
                 def __exit__(self, *_args: object) -> None:
                     return None
 
-            transcriber = Transcriber(TranscriberConfig())
             with (
                 patch("yorishiro.audio.transcription.sf.SoundFile", FakeSoundFile),
+                patch(
+                    "yorishiro.audio.transcription.get_whisper_model",
+                    side_effect=AssertionError("checkpoint should be used"),
+                ),
                 patch(
                     "yorishiro.audio.transcription.torch.cuda.is_available",
                     return_value=False,
@@ -217,6 +269,109 @@ class TranscriberTests(unittest.TestCase):
             self.assertEqual(transcript.entries[0].text, "hello")
             saved = json.loads((output_dir / "stt.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["entries"][0]["text"], "hello")
+            self.assertFalse(ckpt_dir.exists())
+
+    def test_run_discards_stale_checkpoints_and_reruns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            vad_path = output_dir / "vad.json"
+            vad_path.write_text(
+                json.dumps([{"start": 0.0, "end": 1.0}]), encoding="utf-8"
+            )
+            ckpt_dir = output_dir / ".stt_checkpoints"
+            ckpt_dir.mkdir()
+            (ckpt_dir / "meta.json").write_text(
+                json.dumps({"input_signature": "stale-signature"}),
+                encoding="utf-8",
+            )
+            (ckpt_dir / "groups_0000.json").write_text(
+                json.dumps({"groups": []}),
+                encoding="utf-8",
+            )
+
+            class FakeSoundFile:
+                samplerate = 16000
+                frames = 16000
+
+                def __init__(self, *_args, **_kwargs) -> None:
+                    pass
+
+                def __enter__(self) -> FakeSoundFile:
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    return None
+
+            class FakeSegment:
+                def __init__(self) -> None:
+                    self.start = 0.0
+                    self.end = 1.0
+                    self.text = "fresh"
+                    self.avg_logprob = -0.1
+                    self.words = []
+
+            class FakeWhisper:
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def transcribe(self, audio, **kwargs):  # type: ignore[no-untyped-def]
+                    del audio, kwargs
+                    self.calls += 1
+                    return iter([FakeSegment()]), SimpleNamespace(language="en")
+
+            transcriber = Transcriber(TranscriberConfig())
+            fake_whisper = FakeWhisper()
+            with (
+                patch("yorishiro.audio.transcription.sf.SoundFile", FakeSoundFile),
+                patch(
+                    "yorishiro.audio.transcription.sf.read",
+                    return_value=(np.zeros(16000, dtype=np.float32), 16000),
+                ),
+                patch(
+                    "yorishiro.audio.transcription.get_whisper_model",
+                    return_value=fake_whisper,
+                ),
+                patch(
+                    "yorishiro.audio.transcription.torch.cuda.is_available",
+                    return_value=False,
+                ),
+            ):
+                transcript = transcriber.run(audio_path, output_dir)
+
+            self.assertEqual(transcript.entries[0].text, "fresh")
+            self.assertEqual(fake_whisper.calls, 1)
+            self.assertFalse(ckpt_dir.exists())
+
+    def test_run_refuses_to_publish_stale_output_when_inputs_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            (output_dir / "vad.json").write_text(
+                json.dumps([{"start": 0.0, "end": 1.0}]), encoding="utf-8"
+            )
+
+            transcriber = Transcriber(TranscriberConfig())
+            with (
+                patch.object(
+                    transcriber,
+                    "_run_transcription",
+                    return_value=STTTranscript(language="en", entries=[]),
+                ),
+                patch.object(
+                    transcriber,
+                    "_input_signature",
+                    side_effect=["sig-a", "sig-b"],
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "inputs changed"):
+                    transcriber.run(audio_path, output_dir)
+
+            self.assertFalse((output_dir / "stt.json").exists())
 
     def test_run_uses_vad_segment_offsets_for_transcript_timestamps(self) -> None:
         with (
@@ -481,7 +636,11 @@ class SpeakerAttributorTests(unittest.TestCase):
         valid_indices = [0, 1, 2, 3]
 
         def fake_run(
-            X_in: np.ndarray, *, n_neighbors: int, min_cluster_size: int, n_components: int
+            X_in: np.ndarray,
+            *,
+            n_neighbors: int,
+            min_cluster_size: int,
+            n_components: int,
         ) -> tuple[np.ndarray, float]:
             del n_neighbors, min_cluster_size, n_components
             # Should be clustering 2 utterances (averaged embeddings), not 4 windows.
@@ -516,7 +675,11 @@ class SpeakerAttributorTests(unittest.TestCase):
         valid_indices = [0, 2]
 
         def fake_run(
-            X_in: np.ndarray, *, n_neighbors: int, min_cluster_size: int, n_components: int
+            X_in: np.ndarray,
+            *,
+            n_neighbors: int,
+            min_cluster_size: int,
+            n_components: int,
         ) -> tuple[np.ndarray, float]:
             del n_neighbors, min_cluster_size, n_components
             self.assertEqual(X_in.shape, (2, 2))
@@ -533,7 +696,6 @@ class SpeakerAttributorTests(unittest.TestCase):
             labels = attributor._cluster_windows(X, windows, valid_indices)
 
         self.assertEqual(labels.tolist(), [0, 1])
-
 
     def test_build_utterance_embeddings_uses_medoid_not_mean(self) -> None:
         attributor = SpeakerAttributor(
@@ -815,7 +977,9 @@ class SpeakerAttributorTests(unittest.TestCase):
                     return_value=emb,
                 ) as extract,
             ):
-                attributor._embed_windows(windows, audio_path, bank, output_dir, stt=stt)
+                attributor._embed_windows(
+                    windows, audio_path, bank, output_dir, stt=stt
+                )
                 attributor._embed_windows(
                     windows,
                     audio_path,
@@ -1214,6 +1378,13 @@ steps:
             self.assertEqual(
                 vad_task.output_paths(),
                 [project.step_dir("film-src", "audio") / "vad.json"],
+            )
+            self.assertEqual(
+                vad_task.input_paths(),
+                [
+                    project.step_dir("film-src", "audio") / "voice.flac",
+                    project.step_dir("film-src", "audio") / "nonvoice.flac",
+                ],
             )
             self.assertEqual(
                 speakers_task.output_paths(),

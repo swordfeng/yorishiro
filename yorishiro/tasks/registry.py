@@ -97,7 +97,12 @@ class ModelRegistry:
             kind="instance",
             instance_builder=lambda registry: registry._build_vad_runner(),
             cache_key_builder=lambda registry: registry._cache_key_for_step(
-                "film.audio.vad", "vad_backend", "backend", fallback="vad-runner"
+                "film.audio.vad",
+                "vad_backend",
+                "backend",
+                "vad_profile",
+                "profile",
+                fallback="vad-runner",
             ),
         ),
         "film.audio.stt": _RuntimeSpec(
@@ -289,6 +294,10 @@ class ModelRegistry:
             kwargs["vad_backend"] = cfg["vad_backend"]
         elif cfg.get("backend") is not None:
             kwargs["vad_backend"] = cfg["backend"]
+        if cfg.get("vad_profile") is not None:
+            kwargs["vad_profile"] = cfg["vad_profile"]
+        elif cfg.get("profile") is not None:
+            kwargs["vad_profile"] = cfg["profile"]
         return VadRunner(VadConfig(**kwargs))
 
     def _build_transcriber(self) -> Any:

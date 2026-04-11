@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -85,8 +88,17 @@ class Transcriber:
     ) -> STTTranscript:
         output_dir.mkdir(parents=True, exist_ok=True)
         vad_path = output_dir / "vad.json"
-        speech_segments = cast(list[dict[str, Any]], json.loads(vad_path.read_text(encoding="utf-8")))
         detected_language = language or self.config.language
+        input_signature = self._input_signature(
+            audio_path,
+            vad_path,
+            detected_language,
+        )
+        checkpoint_dir = output_dir / ".stt_checkpoints"
+        speech_segments = cast(
+            list[dict[str, Any]],
+            json.loads(vad_path.read_text(encoding="utf-8")),
+        )
         print(f"  [STT] Transcribing {audio_path.name} ...")
         transcript = self._run_transcription(
             audio_path,
@@ -94,10 +106,24 @@ class Transcriber:
             detected_language,
             output_dir=output_dir,
             force=force,
+            input_signature=input_signature,
         )
+        try:
+            self._assert_inputs_unchanged(
+                audio_path,
+                vad_path,
+                detected_language,
+                input_signature,
+            )
+        except RuntimeError:
+            self._cleanup_checkpoint_dir(checkpoint_dir)
+            raise
         out = output_dir / "stt.json"
-        out.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
-        print(f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}")
+        self._atomic_write_text(out, transcript.model_dump_json(indent=2))
+        self._cleanup_checkpoint_dir(checkpoint_dir)
+        print(
+            f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}"
+        )
         return transcript
 
     def _run_transcription(
@@ -107,6 +133,7 @@ class Transcriber:
         language: str | None,
         output_dir: Path | None = None,
         force: bool = False,
+        input_signature: str | None = None,
     ) -> STTTranscript:
         from tqdm import tqdm
 
@@ -119,27 +146,26 @@ class Transcriber:
         if not groups:
             return STTTranscript(language=language or "unknown", entries=[])
         num_spans = len(spans)
+        checkpoint_dir = (
+            self._prepare_checkpoint_dir(output_dir, input_signature, force=force)
+            if output_dir is not None and input_signature is not None
+            else None
+        )
         source_mtime = audio_path.stat().st_mtime
-        checkpoint_dir = output_dir / ".stt_checkpoints" if output_dir else None
-
-        if force and checkpoint_dir and checkpoint_dir.exists():
-            import shutil
-
-            shutil.rmtree(checkpoint_dir)
-            print("    [STT] Cleared checkpoints (force)")
-        if checkpoint_dir:
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
         completed = self._load_group_results(checkpoint_dir, source_mtime)
         pending_groups = [group for group in groups if group.group_id not in completed]
+
+        progress_lock = threading.Lock()
+        checkpoint_lock = threading.Lock()
+        completed_spans = sum(
+            group.span_end_idx - group.span_start_idx + 1
+            for group in groups
+            if group.group_id in completed
+        )
 
         if not pending_groups:
             print(f"    [STT] Resuming from checkpoints for {len(groups)} group(s)")
             return self._assemble_transcript(groups, completed, language)
-
-        progress_lock = threading.Lock()
-        checkpoint_lock = threading.Lock()
-        completed_spans = sum(group.span_end_idx - group.span_start_idx + 1 for group in groups if group.group_id in completed)
 
         with tqdm(
             total=num_spans,
@@ -364,6 +390,105 @@ class Transcriber:
             end=last.end,
         )
 
+    def _prepare_checkpoint_dir(
+        self,
+        output_dir: Path,
+        input_signature: str,
+        *,
+        force: bool = False,
+    ) -> Path:
+        checkpoint_dir = output_dir / ".stt_checkpoints"
+        if force:
+            had_checkpoints = checkpoint_dir.exists()
+            self._cleanup_checkpoint_dir(checkpoint_dir)
+            if had_checkpoints:
+                print("    [STT] Cleared checkpoints (force)")
+        elif checkpoint_dir.exists() and not self._checkpoint_matches(
+            checkpoint_dir, input_signature
+        ):
+            self._cleanup_checkpoint_dir(checkpoint_dir)
+
+        if not checkpoint_dir.exists():
+            checkpoint_dir.mkdir(parents=True, exist_ok=False)
+            self._write_checkpoint_metadata(checkpoint_dir, input_signature)
+        return checkpoint_dir
+
+    @staticmethod
+    def _checkpoint_meta_path(checkpoint_dir: Path) -> Path:
+        return checkpoint_dir / "meta.json"
+
+    def _write_checkpoint_metadata(
+        self,
+        checkpoint_dir: Path,
+        input_signature: str,
+    ) -> None:
+        payload = {"input_signature": input_signature}
+        self._atomic_write_text(
+            self._checkpoint_meta_path(checkpoint_dir),
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        )
+
+    def _checkpoint_matches(self, checkpoint_dir: Path, input_signature: str) -> bool:
+        meta_path = self._checkpoint_meta_path(checkpoint_dir)
+        if not checkpoint_dir.exists() or not meta_path.exists():
+            return False
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return payload.get("input_signature") == input_signature
+
+    @staticmethod
+    def _cleanup_checkpoint_dir(checkpoint_dir: Path) -> None:
+        shutil.rmtree(checkpoint_dir, ignore_errors=True)
+
+    def _input_signature(
+        self,
+        audio_path: Path,
+        vad_path: Path,
+        language: str | None,
+    ) -> str:
+        audio_stat = audio_path.stat()
+        vad_payload = vad_path.read_text(encoding="utf-8")
+        payload = {
+            "audio_path": str(audio_path.resolve()),
+            "audio_mtime_ns": audio_stat.st_mtime_ns,
+            "audio_size": audio_stat.st_size,
+            "vad_sha256": hashlib.sha256(vad_payload.encode("utf-8")).hexdigest(),
+            "language": language,
+            "config": asdict(self.config),
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _assert_inputs_unchanged(
+        self,
+        audio_path: Path,
+        vad_path: Path,
+        language: str | None,
+        expected_signature: str,
+    ) -> None:
+        current_signature = self._input_signature(audio_path, vad_path, language)
+        if current_signature != expected_signature:
+            raise RuntimeError(
+                "STT inputs changed during transcription; refusing to publish stale stt.json"
+            )
+
+    def _atomic_write_text(self, path: Path, content: str) -> None:
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(path.parent),
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            text=True,
+        )
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            temp_path.replace(path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     def _load_group_results(
         self,
         checkpoint_dir: Path | None,
@@ -394,9 +519,17 @@ class Transcriber:
 
         existing[result.group_id] = result
         shard_payload = {
-            "groups": [asdict(item) for item in sorted(existing.values(), key=lambda item: item.span_start_idx)]
+            "groups": [
+                asdict(item)
+                for item in sorted(
+                    existing.values(), key=lambda item: item.span_start_idx
+                )
+            ]
         }
-        shard_path.write_text(json.dumps(shard_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._atomic_write_text(
+            shard_path,
+            json.dumps(shard_payload, ensure_ascii=False, indent=2),
+        )
 
     def _assemble_transcript(
         self,

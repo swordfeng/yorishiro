@@ -35,7 +35,9 @@ models:
         )
         registry = ModelRegistry(project)
 
-        with patch("yorishiro.tasks.registry.build_agent_from_config", return_value="agent") as build_agent:
+        with patch(
+            "yorishiro.tasks.registry.build_agent_from_config", return_value="agent"
+        ) as build_agent:
             agent = registry.for_step("novel.aliases").agent(
                 output_type=dict,
                 system_prompt="prompt",
@@ -84,7 +86,9 @@ steps:
         registry = ModelRegistry(project)
 
         sentinel = object()
-        with patch.object(registry, "_build_shot_detector", return_value=sentinel) as build_detector:
+        with patch.object(
+            registry, "_build_shot_detector", return_value=sentinel
+        ) as build_detector:
             runtime = registry.for_step("film.shots")
             first = runtime.instance()
             second = runtime.instance()
@@ -118,15 +122,27 @@ steps:
         speaker_attributor = object()
         emotion_analyzer = object()
         with (
-            patch.object(registry, "_build_vad_runner", return_value=vad_runner) as build_vad,
-            patch.object(registry, "_build_transcriber", return_value=transcriber) as build_transcriber,
-            patch.object(registry, "_build_speaker_attributor", return_value=speaker_attributor) as build_speakers,
-            patch.object(registry, "_build_emotion_analyzer", return_value=emotion_analyzer) as build_emotion,
+            patch.object(
+                registry, "_build_vad_runner", return_value=vad_runner
+            ) as build_vad,
+            patch.object(
+                registry, "_build_transcriber", return_value=transcriber
+            ) as build_transcriber,
+            patch.object(
+                registry, "_build_speaker_attributor", return_value=speaker_attributor
+            ) as build_speakers,
+            patch.object(
+                registry, "_build_emotion_analyzer", return_value=emotion_analyzer
+            ) as build_emotion,
         ):
             self.assertIs(registry.for_step("film.audio.vad").instance(), vad_runner)
             self.assertIs(registry.for_step("film.audio.stt").instance(), transcriber)
-            self.assertIs(registry.for_step("film.audio.speakers").instance(), speaker_attributor)
-            self.assertIs(registry.for_step("film.audio.emotion").instance(), emotion_analyzer)
+            self.assertIs(
+                registry.for_step("film.audio.speakers").instance(), speaker_attributor
+            )
+            self.assertIs(
+                registry.for_step("film.audio.emotion").instance(), emotion_analyzer
+            )
 
         self.assertEqual(build_vad.call_count, 1)
         self.assertEqual(build_transcriber.call_count, 1)
@@ -163,6 +179,24 @@ steps:
         self.assertEqual(transcriber.config.stt_min_confidence, -0.7)
         self.assertEqual(transcriber.config.stt_max_chars_per_second, 19.0)
 
+    def test_vad_step_reads_profile_config(self) -> None:
+        project = load_project(
+            """project:
+  name: Demo
+  code: demo
+sources: []
+steps:
+  film.audio.vad:
+    backend: silero-vad
+    profile: precise
+"""
+        )
+        registry = ModelRegistry(project)
+
+        vad_runner = registry.for_step("film.audio.vad").instance()
+
+        self.assertEqual(vad_runner.config.vad_profile, "precise")
+
     def test_instance_runtime_rejects_agent_access(self) -> None:
         project = load_project(
             """project:
@@ -177,4 +211,6 @@ steps:
         registry = ModelRegistry(project)
 
         with self.assertRaisesRegex(TypeError, "film.shots"):
-            registry.for_step("film.shots").agent(output_type=dict, system_prompt="prompt")
+            registry.for_step("film.shots").agent(
+                output_type=dict, system_prompt="prompt"
+            )

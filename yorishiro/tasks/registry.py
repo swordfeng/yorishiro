@@ -25,7 +25,9 @@ class _RuntimeSpec:
 class StepRuntime:
     """Runtime facade for a single step's model dependency."""
 
-    def __init__(self, registry: ModelRegistry, step_id: str, spec: _RuntimeSpec) -> None:
+    def __init__(
+        self, registry: ModelRegistry, step_id: str, spec: _RuntimeSpec
+    ) -> None:
         self._registry = registry
         self._step_id = step_id
         self._spec = spec
@@ -79,7 +81,11 @@ class ModelRegistry:
             kind="instance",
             instance_builder=lambda registry: registry._build_keyframe_extractor(),
             cache_key_builder=lambda registry: registry._cache_key_for_step(
-                "film.frames", "model", "backend", "clip_model", fallback="keyframe-extractor"
+                "film.frames",
+                "model",
+                "backend",
+                "clip_model",
+                fallback="keyframe-extractor",
             ),
         ),
         "film.audio.separate": _RuntimeSpec(
@@ -154,7 +160,9 @@ class ModelRegistry:
 
     def _build_instance_for_step(self, step_id: str, spec: _RuntimeSpec) -> Any:
         if spec.instance_builder is None or spec.cache_key_builder is None:
-            raise TypeError(f"Step '{step_id}' is missing instance runtime builder configuration")
+            raise TypeError(
+                f"Step '{step_id}' is missing instance runtime builder configuration"
+            )
         cache_key = spec.cache_key_builder(self)
         if cache_key not in self._cache:
             self._cache[cache_key] = spec.instance_builder(self)
@@ -162,7 +170,11 @@ class ModelRegistry:
 
     def _cache_key_for_step(self, step_id: str, *fields: str, fallback: str) -> str:
         cfg = self._project.step_config(step_id)
-        values = [str(cfg[field]) for field in fields if field in cfg and cfg[field] is not None]
+        values = [
+            str(cfg[field])
+            for field in fields
+            if field in cfg and cfg[field] is not None
+        ]
         identity = "|".join(values) if values else fallback
         return f"{step_id}::{identity}"
 
@@ -176,7 +188,9 @@ class ModelRegistry:
                 for field in ("backend", "model", "device")
             )
             return f"film.audio.separate::{sep_name}::{identity}"
-        return self._cache_key_for_step("film.audio.separate", fallback="audio-separator")
+        return self._cache_key_for_step(
+            "film.audio.separate", fallback="audio-separator"
+        )
 
     def _transcriber_cache_key(self) -> str:
         cfg = self._project.step_config("film.audio.stt")
@@ -216,6 +230,7 @@ class ModelRegistry:
             str(cfg.get("umap_n_neighbors", "")),
             str(cfg.get("umap_min_dist", "")),
             str(cfg.get("umap_n_components", "")),
+            str(cfg.get("utterance_aggregation", "")),
             str(cfg.get("hf_token_env", "")),
         ]
         return "film.audio.speakers::" + "|".join(parts)
@@ -228,56 +243,74 @@ class ModelRegistry:
         from yorishiro.video.shot_detector import ShotDetector, ShotDetectorConfig
 
         cfg = self._project.step_config("film.shots")
-        return ShotDetector(ShotDetectorConfig(
-            detector=cfg.get("backend", "adaptive"),
-            threshold=cfg.get("threshold", 4.0),
-            min_content_val=cfg.get("min_content_val", 15.0),
-        ))
+        return ShotDetector(
+            ShotDetectorConfig(
+                detector=cfg.get("backend", "adaptive"),
+                threshold=cfg.get("threshold", 4.0),
+                min_content_val=cfg.get("min_content_val", 15.0),
+            )
+        )
 
     def _build_keyframe_extractor(self) -> Any:
-        from yorishiro.video.keyframe_extractor import KeyFrameExtractor, KeyFrameExtractorConfig
+        from yorishiro.video.keyframe_extractor import (
+            KeyFrameExtractor,
+            KeyFrameExtractorConfig,
+        )
 
         cfg = self._project.step_config("film.frames")
-        return KeyFrameExtractor(KeyFrameExtractorConfig(
-            backend=cfg.get("backend", "clip"),
-            model=cfg.get("clip_model", "ViT-B/32"),
-            min_frames_per_shot=cfg.get("min_frames_per_shot", 2),
-            max_frames_per_shot=cfg.get("max_frames_per_shot", 8),
-            max_frames_per_scene=cfg.get("max_frames_per_scene", 8),
-            output_format=cfg.get("output_format", "avif"),
-            output_quality=cfg.get("output_quality", 85),
-        ))
+        return KeyFrameExtractor(
+            KeyFrameExtractorConfig(
+                backend=cfg.get("backend", "clip"),
+                model=cfg.get("clip_model", "ViT-B/32"),
+                min_frames_per_shot=cfg.get("min_frames_per_shot", 2),
+                max_frames_per_shot=cfg.get("max_frames_per_shot", 8),
+                max_frames_per_scene=cfg.get("max_frames_per_scene", 8),
+                output_format=cfg.get("output_format", "avif"),
+                output_quality=cfg.get("output_quality", 85),
+            )
+        )
 
     def _build_vad_runner(self) -> Any:
         from yorishiro.audio.vad import VadConfig, VadRunner
 
         cfg = self._project.step_config("film.audio.vad")
-        return VadRunner(VadConfig(
-            vad_backend=cfg.get("vad_backend", cfg.get("backend", "silero-vad")),
-        ))
+        return VadRunner(
+            VadConfig(
+                vad_backend=cfg.get("vad_backend", cfg.get("backend", "silero-vad")),
+            )
+        )
 
     def _build_transcriber(self) -> Any:
         from yorishiro.audio.transcription import Transcriber, TranscriberConfig
 
         cfg = self._project.step_config("film.audio.stt")
-        return Transcriber(TranscriberConfig(
-            stt_backend=cfg.get("backend", "faster-whisper"),
-            stt_model=cfg.get("model", "large-v3"),
-            stt_cpu_threads=int(cfg.get("cpu_threads", 0)),
-            stt_num_workers=int(cfg.get("num_workers", 1)),
-            stt_word_timestamps=bool(cfg.get("word_timestamps", False)),
-            stt_vad_filter=bool(cfg.get("vad_filter", False)),
-            stt_vad_min_silence_duration_ms=int(cfg.get("vad_min_silence_duration_ms", 500)),
-            stt_checkpoint_shard_size=int(cfg.get("checkpoint_shard_size", 500)),
-            stt_group_max_duration_seconds=float(cfg.get("group_max_duration_seconds", 30.0)),
-            stt_group_max_gap_seconds=float(cfg.get("group_max_gap_seconds", 0.6)),
-            stt_min_confidence=float(cfg.get("min_confidence", -0.5)),
-            stt_max_chars_per_second=float(cfg.get("max_chars_per_second", 28.0)),
-            language=cfg.get("language"),
-        ))
+        return Transcriber(
+            TranscriberConfig(
+                stt_backend=cfg.get("backend", "faster-whisper"),
+                stt_model=cfg.get("model", "large-v3"),
+                stt_cpu_threads=int(cfg.get("cpu_threads", 0)),
+                stt_num_workers=int(cfg.get("num_workers", 1)),
+                stt_word_timestamps=bool(cfg.get("word_timestamps", False)),
+                stt_vad_filter=bool(cfg.get("vad_filter", False)),
+                stt_vad_min_silence_duration_ms=int(
+                    cfg.get("vad_min_silence_duration_ms", 500)
+                ),
+                stt_checkpoint_shard_size=int(cfg.get("checkpoint_shard_size", 500)),
+                stt_group_max_duration_seconds=float(
+                    cfg.get("group_max_duration_seconds", 30.0)
+                ),
+                stt_group_max_gap_seconds=float(cfg.get("group_max_gap_seconds", 0.6)),
+                stt_min_confidence=float(cfg.get("min_confidence", -0.5)),
+                stt_max_chars_per_second=float(cfg.get("max_chars_per_second", 28.0)),
+                language=cfg.get("language"),
+            )
+        )
 
     def _build_speaker_attributor(self) -> Any:
-        from yorishiro.audio.speaker_attribution import SpeakerAttributor, SpeakerAttributorConfig
+        from yorishiro.audio.speaker_attribution import (
+            SpeakerAttributor,
+            SpeakerAttributorConfig,
+        )
 
         cfg = self._project.step_config("film.audio.speakers")
 
@@ -290,27 +323,43 @@ class ModelRegistry:
                 return False
             return bool(v)
 
-        return SpeakerAttributor(SpeakerAttributorConfig(
-            embedding_backend=cfg.get("backend", "wespeaker"),
-            similarity_threshold=float(cfg.get("speaker_similarity_threshold", 0.75)),
-            diagnostics_enabled=_parse_bool(cfg.get("diagnostics_enabled", False)),
-            clustering_method=cfg.get("clustering_method", "umap_hdbscan_utterance"),
-            window_duration=float(cfg.get("window_duration", 1.5)),
-            window_hop=float(cfg.get("window_hop", 0.75)),
-            min_window_duration=float(cfg.get("min_window_duration", 0.8)),
-            energy_threshold_db=float(cfg.get("energy_threshold_db", -40.0)),
-            norm_filter_sigma=float(cfg.get("norm_filter_sigma", 5.0)),
-            coherence_threshold=float(cfg.get("coherence_threshold", 0.1)),
-            min_vote_similarity=float(cfg.get("min_vote_similarity", 0.2)),
-            hdbscan_min_cluster_size=int(cfg.get("hdbscan_min_cluster_size", 10)),
-            umap_n_neighbors=int(cfg.get("umap_n_neighbors", 5)),
-            umap_min_dist=float(cfg.get("umap_min_dist", 0.0)),
-            umap_n_components=int(cfg.get("umap_n_components", 5)),
-            hf_token_env=cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
-        ))
+        return SpeakerAttributor(
+            SpeakerAttributorConfig(
+                embedding_backend=cfg.get("backend", "wespeaker"),
+                similarity_threshold=float(
+                    cfg.get("speaker_similarity_threshold", 0.75)
+                ),
+                diagnostics_enabled=_parse_bool(cfg.get("diagnostics_enabled", False)),
+                clustering_method=cfg.get(
+                    "clustering_method", "umap_hdbscan_auto"
+                ),
+                window_duration=float(cfg.get("window_duration", 1.5)),
+                window_hop=float(cfg.get("window_hop", 0.75)),
+                min_window_duration=float(cfg.get("min_window_duration", 0.8)),
+                energy_threshold_db=float(cfg.get("energy_threshold_db", -40.0)),
+                norm_filter_sigma=float(cfg.get("norm_filter_sigma", 5.0)),
+                coherence_threshold=float(cfg.get("coherence_threshold", 0.3)),
+                min_vote_similarity=float(cfg.get("min_vote_similarity", 0.2)),
+                min_utterance_duration_cluster=float(
+                    cfg.get("min_utterance_duration_cluster", 1.5)
+                ),
+                min_utterance_coherence_cluster=float(
+                    cfg.get("min_utterance_coherence_cluster", 0.4)
+                ),
+                hdbscan_min_cluster_size=int(cfg.get("hdbscan_min_cluster_size", 10)),
+                umap_n_neighbors=int(cfg.get("umap_n_neighbors", 5)),
+                umap_min_dist=float(cfg.get("umap_min_dist", 0.0)),
+                umap_n_components=int(cfg.get("umap_n_components", 5)),
+                utterance_aggregation=str(cfg.get("utterance_aggregation", "medoid")),
+                hf_token_env=cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
+            )
+        )
 
     def _build_emotion_analyzer(self) -> Any:
-        from yorishiro.audio.emotion_analysis import EmotionAnalyzer, EmotionAnalyzerConfig
+        from yorishiro.audio.emotion_analysis import (
+            EmotionAnalyzer,
+            EmotionAnalyzerConfig,
+        )
 
         cfg = self._project.steps.get("film.audio.emotion", {})
         return EmotionAnalyzer(
@@ -321,7 +370,10 @@ class ModelRegistry:
         )
 
     def _build_sound_event_detector(self) -> Any:
-        from yorishiro.audio.sound_event_detector import SoundEventDetector, SoundEventDetectorConfig
+        from yorishiro.audio.sound_event_detector import (
+            SoundEventDetector,
+            SoundEventDetectorConfig,
+        )
 
         return SoundEventDetector(SoundEventDetectorConfig())
 
@@ -336,8 +388,10 @@ class ModelRegistry:
         cfg = self._project.steps.get("film.audio.separate", {})
         sep_name = cfg.get("separator_model")
         sep_cfg = dict(self._project.models.get(sep_name, {})) if sep_name else {}
-        return AudioSeparator(AudioSeparatorConfig(
-            backend=sep_cfg.get("backend", "demucs"),
-            model=sep_cfg.get("model", "htdemucs"),
-            device=sep_cfg.get("device", "auto"),
-        ))
+        return AudioSeparator(
+            AudioSeparatorConfig(
+                backend=sep_cfg.get("backend", "demucs"),
+                model=sep_cfg.get("model", "htdemucs"),
+                device=sep_cfg.get("device", "auto"),
+            )
+        )

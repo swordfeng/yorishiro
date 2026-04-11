@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import sys
@@ -87,7 +88,22 @@ class ProjectBackup:
             return True   # already the same inode
         if sa.st_size != sb.st_size:
             return False
-        return sa.st_mtime == sb.st_mtime  # same size + same mtime → likely unchanged
+        # Fast path: same size + same mtime_ns is treated as unchanged.
+        if sa.st_mtime_ns == sb.st_mtime_ns:
+            return True
+        # Fallback: when mtime differs but size matches, compare a fast content hash.
+        return self._fast_hash(a) == self._fast_hash(b)
+
+    @staticmethod
+    def _fast_hash(path: Path) -> str:
+        h = hashlib.blake2b(digest_size=16)
+        with path.open("rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
 
     def _last_snapshot(self) -> Path | None:
         """Return most recent snapshot dir, or None if none exist."""

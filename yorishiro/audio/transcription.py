@@ -15,6 +15,7 @@ from typing import Any, cast
 import soundfile as sf
 import torch
 
+from yorishiro.audio import resample as audio_resample
 from yorishiro.audio._speech_support import (
     TranscribeKwargs,
     get_whisper_model,
@@ -37,6 +38,7 @@ class TranscriberConfig:
     stt_group_max_gap_seconds: float = 0.6
     stt_min_confidence: float = -0.5
     stt_max_chars_per_second: float = 28.0
+    stt_min_segment_seconds: float = 0.3
     language: str | None = None
 
 
@@ -106,7 +108,6 @@ class Transcriber:
         output_dir: Path | None = None,
         force: bool = False,
     ) -> STTTranscript:
-        import librosa
         from tqdm import tqdm
 
         with sf.SoundFile(str(audio_path)) as audio_file:
@@ -115,6 +116,8 @@ class Transcriber:
 
         spans = self._speech_spans(cast(list[dict[str, float]], speech_segments), total_duration)
         groups = self._build_speech_groups(spans)
+        if not groups:
+            return STTTranscript(language=language or "unknown", entries=[])
         num_spans = len(spans)
         source_mtime = audio_path.stat().st_mtime
         checkpoint_dir = output_dir / ".stt_checkpoints" if output_dir else None
@@ -160,7 +163,7 @@ class Transcriber:
                 audio_path=audio_path,
                 file_sample_rate=file_sample_rate,
                 language=language,
-                librosa_module=librosa,
+                resample_module=audio_resample,
                 update_progress=update_progress,
                 save_result=save_result,
             )
@@ -175,7 +178,7 @@ class Transcriber:
         audio_path: Path,
         file_sample_rate: int,
         language: str | None,
-        librosa_module: Any,
+        resample_module: Any,
         update_progress: Any,
         save_result: Any,
     ) -> list[GroupResult]:
@@ -199,7 +202,7 @@ class Transcriber:
                 audio_path=audio_path,
                 file_sample_rate=file_sample_rate,
                 language=language,
-                librosa_module=librosa_module,
+                resample_module=resample_module,
                 update_progress=update_progress,
                 save_result=save_result,
             )
@@ -215,7 +218,7 @@ class Transcriber:
                     audio_path=audio_path,
                     file_sample_rate=file_sample_rate,
                     language=language,
-                    librosa_module=librosa_module,
+                    resample_module=resample_module,
                     update_progress=update_progress,
                     save_result=save_result,
                 )
@@ -235,7 +238,7 @@ class Transcriber:
         audio_path: Path,
         file_sample_rate: int,
         language: str | None,
-        librosa_module: Any,
+        resample_module: Any,
         update_progress: Any,
         save_result: Any,
     ) -> list[GroupResult]:
@@ -264,7 +267,9 @@ class Transcriber:
             if getattr(chunk_audio, "ndim", 1) > 1:
                 chunk_audio = chunk_audio.mean(axis=1)
             if file_sample_rate != 16000:
-                chunk_audio = librosa_module.resample(chunk_audio, orig_sr=file_sample_rate, target_sr=16000)
+                chunk_audio = resample_module.resample(
+                    chunk_audio, orig_sr=file_sample_rate, target_sr=16000
+                )
 
             segments, info = whisper_model.transcribe(chunk_audio, **transcribe_kwargs)
 
@@ -272,7 +277,9 @@ class Transcriber:
             chunk_language = language or detected
             entries: list[dict[str, Any]] = []
             for segment in segments:
-                for entry in self._segment_to_entries(segment, group.start, chunk_language):
+                for entry in self._segment_to_entries(
+                    segment, group.start, group.end, chunk_language
+                ):
                     entries.append(entry.model_dump())
             results.append(
                 GroupResult(
@@ -307,14 +314,23 @@ class Transcriber:
         total_duration: float,
     ) -> list[SpeechSpan]:
         spans: list[SpeechSpan] = []
+        min_dur = float(max(self.config.stt_min_segment_seconds, 0.0))
         for index, segment in enumerate(speech_segments):
             start = max(0.0, float(segment["start"]))
             raw_end = segment["end"]
             end = total_duration if raw_end == float("inf") else min(total_duration, float(raw_end))
             if end <= start:
                 continue
+            if (end - start) < min_dur:
+                continue
             spans.append(SpeechSpan(index=len(spans), start=start, end=end))
-        return spans or [SpeechSpan(index=0, start=0.0, end=total_duration)]
+        if spans:
+            return spans
+        # If VAD emitted nothing, fall back to whole file for compatibility.
+        if not speech_segments:
+            return [SpeechSpan(index=0, start=0.0, end=total_duration)]
+        # VAD existed but all spans were filtered/invalid.
+        return []
 
     def _build_speech_groups(self, spans: list[SpeechSpan]) -> list[SpeechGroup]:
         if not spans:
@@ -404,6 +420,7 @@ class Transcriber:
         self,
         segment: Any,
         chunk_start: float,
+        chunk_end: float,
         language: str | None,
     ) -> list[STTEntry]:
         text = segment.text.strip()
@@ -411,18 +428,22 @@ class Transcriber:
             return []
 
         confidence = segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9
-        duration = max(float(segment.end) - float(segment.start), 0.0)
+        abs_start = chunk_start + float(segment.start)
+        abs_end = chunk_start + float(segment.end)
+        clamped_start = max(abs_start, chunk_start)
+        clamped_end = min(abs_end, chunk_end)
+        duration = max(clamped_end - clamped_start, 0.0)
         chars_per_second = (len(text) / duration) if duration > 0 else float("inf")
         if confidence < self.config.stt_min_confidence:
             return []
+        if duration < float(max(self.config.stt_min_segment_seconds, 0.0)):
+            return []
         if chars_per_second > self.config.stt_max_chars_per_second:
             return []
-        abs_start = chunk_start + segment.start
-        abs_end = chunk_start + segment.end
         return [
             STTEntry(
-                start=abs_start,
-                end=abs_end,
+                start=clamped_start,
+                end=clamped_end,
                 text=text,
                 confidence=confidence,
             )

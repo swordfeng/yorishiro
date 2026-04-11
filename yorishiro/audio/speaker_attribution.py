@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -103,12 +103,14 @@ class SpeakerAttributor:
     def __init__(self, config: SpeakerAttributorConfig | None = None) -> None:
         self.config = config or SpeakerAttributorConfig()
 
-    def run(self, audio_path: Path, output_dir: Path) -> SpeakerAttribution:
+    def run(
+        self, audio_path: Path, output_dir: Path, force: bool = False
+    ) -> SpeakerAttribution:
         output_dir.mkdir(parents=True, exist_ok=True)
         stt = STTTranscript(
             **json.loads((output_dir / "stt.json").read_text(encoding="utf-8"))
         )
-        attribution = self._attribute(audio_path, stt, output_dir)
+        attribution = self._attribute(audio_path, stt, output_dir, force=force)
         out = output_dir / "speaker_attribution.json"
         out.write_text(attribution.model_dump_json(indent=2), encoding="utf-8")
         num_speakers = len(
@@ -120,7 +122,11 @@ class SpeakerAttributor:
         return attribution
 
     def _attribute(
-        self, audio_path: Path, stt: STTTranscript, output_dir: Path
+        self,
+        audio_path: Path,
+        stt: STTTranscript,
+        output_dir: Path,
+        force: bool = False,
     ) -> SpeakerAttribution:
         bank = SpeakerBankManager(
             SpeakerBankManagerConfig(
@@ -141,7 +147,7 @@ class SpeakerAttributor:
 
         # ── Phase 2: Embed windows ───────────────────────────────────
         valid_indices_all, embeddings_all_raw = self._embed_windows(
-            windows, audio_path, bank, output_dir
+            windows, audio_path, bank, output_dir, stt=stt, force=force
         )
 
         print(
@@ -377,10 +383,14 @@ class SpeakerAttributor:
         audio_path: Path,
         bank: SpeakerBankManager,
         output_dir: Path,
+        stt: STTTranscript | None = None,
+        force: bool = False,
     ) -> tuple[list[int], list[np.ndarray]]:
         valid_indices: list[int] = []
         embeddings: list[np.ndarray] = []
-        cache = self._load_embedding_cache(audio_path, output_dir)
+        cache = self._load_embedding_cache(
+            audio_path, output_dir, stt=stt, force=force
+        )
 
         print(f"  [Speakers] Extracting embeddings for {len(windows)} window(s) ...")
         with tqdm(
@@ -405,14 +415,11 @@ class SpeakerAttributor:
                     embeddings.append(emb)
                 progress.update(1)
 
-        self._save_embedding_cache(audio_path, output_dir, cache)
+        self._save_embedding_cache(audio_path, output_dir, cache, stt=stt)
         return valid_indices, embeddings
 
     @staticmethod
     def _embedding_cache_path(output_dir: Path) -> Path:
-        # TEMP EXPERIMENTAL CACHE: remove this file path + helper methods once
-        # speaker clustering experiments are done and we no longer need cached
-        # per-window embeddings for repeated reruns.
         return output_dir / "speaker_embedding_cache.npz"
 
     def _embedding_cache_key(self, win: EmbeddingWindow) -> str:
@@ -423,21 +430,53 @@ class SpeakerAttributor:
         raw = f"{audio_path.resolve()}|{stat.st_mtime_ns}|{stat.st_size}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _embedding_cache_stt_sig(stt: STTTranscript | None) -> str:
+        if stt is None:
+            return "none"
+        stt_payload = stt.model_dump(mode="python")
+        raw = json.dumps(stt_payload, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _embedding_cache_context_sig(
+        self, audio_path: Path, stt: STTTranscript | None
+    ) -> str:
+        cfg = asdict(self.config)
+        extraction_cfg = {
+            "embedding_backend": cfg["embedding_backend"],
+            "window_duration": cfg["window_duration"],
+            "window_hop": cfg["window_hop"],
+            "min_window_duration": cfg["min_window_duration"],
+            "energy_threshold_db": cfg["energy_threshold_db"],
+        }
+        payload = {
+            "schema_version": 2,
+            "audio_sig": self._embedding_cache_source_sig(audio_path),
+            "stt_sig": self._embedding_cache_stt_sig(stt),
+            "extraction_cfg": extraction_cfg,
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
     def _load_embedding_cache(
-        self, audio_path: Path, output_dir: Path
+        self,
+        audio_path: Path,
+        output_dir: Path,
+        stt: STTTranscript | None = None,
+        force: bool = False,
     ) -> dict[str, np.ndarray]:
-        # TEMP EXPERIMENTAL CACHE: remove this whole cache subsystem once the
-        # clustering comparison work is complete.
+        if force:
+            return {}
         cache_path = self._embedding_cache_path(output_dir)
         if not cache_path.exists():
             return {}
         try:
             data = np.load(cache_path, allow_pickle=True)
-            source_sig = str(data["source_sig"].item())
-            backend = str(data["embedding_backend"].item())
-            if source_sig != self._embedding_cache_source_sig(audio_path):
+            schema_version = int(data["schema_version"].item())
+            context_sig = str(data["context_sig"].item())
+            if schema_version != 2:
                 return {}
-            if backend != self.config.embedding_backend:
+            if context_sig != self._embedding_cache_context_sig(audio_path, stt):
                 return {}
             keys = data["keys"].tolist()
             values = data["values"]
@@ -446,7 +485,11 @@ class SpeakerAttributor:
             return {}
 
     def _save_embedding_cache(
-        self, audio_path: Path, output_dir: Path, cache: dict[str, np.ndarray]
+        self,
+        audio_path: Path,
+        output_dir: Path,
+        cache: dict[str, np.ndarray],
+        stt: STTTranscript | None = None,
     ) -> None:
         if not cache:
             return
@@ -455,10 +498,10 @@ class SpeakerAttributor:
         values = np.stack([np.asarray(cache[k], dtype=np.float32) for k in keys])
         np.savez(
             cache_path,
-            source_sig=np.array(
-                self._embedding_cache_source_sig(audio_path), dtype=object
+            schema_version=np.array(2, dtype=np.int64),
+            context_sig=np.array(
+                self._embedding_cache_context_sig(audio_path, stt), dtype=object
             ),
-            embedding_backend=np.array(self.config.embedding_backend, dtype=object),
             keys=np.array(keys, dtype=object),
             values=values,
         )

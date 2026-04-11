@@ -208,6 +208,7 @@ class ModelRegistry:
             str(cfg.get("group_max_gap_seconds", "")),
             str(cfg.get("min_confidence", "")),
             str(cfg.get("max_chars_per_second", "")),
+            str(cfg.get("min_segment_seconds", "")),
         ]
         return "film.audio.stt::" + "|".join(parts)
 
@@ -243,13 +244,17 @@ class ModelRegistry:
         from yorishiro.video.shot_detector import ShotDetector, ShotDetectorConfig
 
         cfg = self._project.step_config("film.shots")
-        return ShotDetector(
-            ShotDetectorConfig(
-                detector=cfg.get("backend", "adaptive"),
-                threshold=cfg.get("threshold", 4.0),
-                min_content_val=cfg.get("min_content_val", 15.0),
-            )
-        )
+        kwargs: dict[str, Any] = {}
+        # Historical: some configs use "backend" to mean detector choice.
+        if cfg.get("detector") is not None:
+            kwargs["detector"] = cfg["detector"]
+        elif cfg.get("backend") is not None:
+            kwargs["detector"] = cfg["backend"]
+        if cfg.get("threshold") is not None:
+            kwargs["threshold"] = float(cfg["threshold"])
+        if cfg.get("min_content_val") is not None:
+            kwargs["min_content_val"] = float(cfg["min_content_val"])
+        return ShotDetector(ShotDetectorConfig(**kwargs))
 
     def _build_keyframe_extractor(self) -> Any:
         from yorishiro.video.keyframe_extractor import (
@@ -258,53 +263,83 @@ class ModelRegistry:
         )
 
         cfg = self._project.step_config("film.frames")
-        return KeyFrameExtractor(
-            KeyFrameExtractorConfig(
-                backend=cfg.get("backend", "clip"),
-                model=cfg.get("clip_model", "ViT-B/32"),
-                min_frames_per_shot=cfg.get("min_frames_per_shot", 2),
-                max_frames_per_shot=cfg.get("max_frames_per_shot", 8),
-                max_frames_per_scene=cfg.get("max_frames_per_scene", 8),
-                output_format=cfg.get("output_format", "avif"),
-                output_quality=cfg.get("output_quality", 85),
-            )
-        )
+        kwargs: dict[str, Any] = {}
+        if cfg.get("backend") is not None:
+            kwargs["backend"] = cfg["backend"]
+        if cfg.get("clip_model") is not None:
+            kwargs["model"] = cfg["clip_model"]
+        if cfg.get("min_frames_per_shot") is not None:
+            kwargs["min_frames_per_shot"] = int(cfg["min_frames_per_shot"])
+        if cfg.get("max_frames_per_shot") is not None:
+            kwargs["max_frames_per_shot"] = int(cfg["max_frames_per_shot"])
+        if cfg.get("max_frames_per_scene") is not None:
+            kwargs["max_frames_per_scene"] = int(cfg["max_frames_per_scene"])
+        if cfg.get("output_format") is not None:
+            kwargs["output_format"] = cfg["output_format"]
+        if cfg.get("output_quality") is not None:
+            kwargs["output_quality"] = int(cfg["output_quality"])
+        return KeyFrameExtractor(KeyFrameExtractorConfig(**kwargs))
 
     def _build_vad_runner(self) -> Any:
         from yorishiro.audio.vad import VadConfig, VadRunner
 
         cfg = self._project.step_config("film.audio.vad")
-        return VadRunner(
-            VadConfig(
-                vad_backend=cfg.get("vad_backend", cfg.get("backend", "silero-vad")),
-            )
-        )
+        kwargs: dict[str, Any] = {}
+        if cfg.get("vad_backend") is not None:
+            kwargs["vad_backend"] = cfg["vad_backend"]
+        elif cfg.get("backend") is not None:
+            kwargs["vad_backend"] = cfg["backend"]
+        return VadRunner(VadConfig(**kwargs))
 
     def _build_transcriber(self) -> Any:
         from yorishiro.audio.transcription import Transcriber, TranscriberConfig
 
         cfg = self._project.step_config("film.audio.stt")
-        return Transcriber(
-            TranscriberConfig(
-                stt_backend=cfg.get("backend", "faster-whisper"),
-                stt_model=cfg.get("model", "large-v3"),
-                stt_cpu_threads=int(cfg.get("cpu_threads", 0)),
-                stt_num_workers=int(cfg.get("num_workers", 1)),
-                stt_word_timestamps=bool(cfg.get("word_timestamps", False)),
-                stt_vad_filter=bool(cfg.get("vad_filter", False)),
-                stt_vad_min_silence_duration_ms=int(
-                    cfg.get("vad_min_silence_duration_ms", 500)
-                ),
-                stt_checkpoint_shard_size=int(cfg.get("checkpoint_shard_size", 500)),
-                stt_group_max_duration_seconds=float(
-                    cfg.get("group_max_duration_seconds", 30.0)
-                ),
-                stt_group_max_gap_seconds=float(cfg.get("group_max_gap_seconds", 0.6)),
-                stt_min_confidence=float(cfg.get("min_confidence", -0.5)),
-                stt_max_chars_per_second=float(cfg.get("max_chars_per_second", 28.0)),
-                language=cfg.get("language"),
+        kwargs: dict[str, Any] = {}
+
+        def _parse_bool(v: object) -> bool:
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str):
+                return v.strip().lower() in {"1", "true", "yes", "y", "on"}
+            if v is None:
+                return False
+            return bool(v)
+
+        if cfg.get("backend") is not None:
+            kwargs["stt_backend"] = cfg["backend"]
+        if cfg.get("model") is not None:
+            kwargs["stt_model"] = cfg["model"]
+        if cfg.get("cpu_threads") is not None:
+            kwargs["stt_cpu_threads"] = int(cfg["cpu_threads"])
+        if cfg.get("num_workers") is not None:
+            kwargs["stt_num_workers"] = int(cfg["num_workers"])
+        if cfg.get("word_timestamps") is not None:
+            kwargs["stt_word_timestamps"] = _parse_bool(cfg["word_timestamps"])
+        if cfg.get("vad_filter") is not None:
+            kwargs["stt_vad_filter"] = _parse_bool(cfg["vad_filter"])
+        if cfg.get("vad_min_silence_duration_ms") is not None:
+            kwargs["stt_vad_min_silence_duration_ms"] = int(
+                cfg["vad_min_silence_duration_ms"]
             )
-        )
+        if cfg.get("checkpoint_shard_size") is not None:
+            kwargs["stt_checkpoint_shard_size"] = int(cfg["checkpoint_shard_size"])
+        if cfg.get("group_max_duration_seconds") is not None:
+            kwargs["stt_group_max_duration_seconds"] = float(
+                cfg["group_max_duration_seconds"]
+            )
+        if cfg.get("group_max_gap_seconds") is not None:
+            kwargs["stt_group_max_gap_seconds"] = float(cfg["group_max_gap_seconds"])
+        if cfg.get("min_confidence") is not None:
+            kwargs["stt_min_confidence"] = float(cfg["min_confidence"])
+        if cfg.get("max_chars_per_second") is not None:
+            kwargs["stt_max_chars_per_second"] = float(cfg["max_chars_per_second"])
+        if cfg.get("min_segment_seconds") is not None:
+            kwargs["stt_min_segment_seconds"] = float(cfg["min_segment_seconds"])
+        if cfg.get("language") is not None:
+            kwargs["language"] = cfg["language"]
+
+        return Transcriber(TranscriberConfig(**kwargs))
 
     def _build_speaker_attributor(self) -> Any:
         from yorishiro.audio.speaker_attribution import (
@@ -323,37 +358,51 @@ class ModelRegistry:
                 return False
             return bool(v)
 
-        return SpeakerAttributor(
-            SpeakerAttributorConfig(
-                embedding_backend=cfg.get("backend", "wespeaker"),
-                similarity_threshold=float(
-                    cfg.get("speaker_similarity_threshold", 0.75)
-                ),
-                diagnostics_enabled=_parse_bool(cfg.get("diagnostics_enabled", False)),
-                clustering_method=cfg.get(
-                    "clustering_method", "umap_hdbscan_auto"
-                ),
-                window_duration=float(cfg.get("window_duration", 1.5)),
-                window_hop=float(cfg.get("window_hop", 0.75)),
-                min_window_duration=float(cfg.get("min_window_duration", 0.8)),
-                energy_threshold_db=float(cfg.get("energy_threshold_db", -40.0)),
-                norm_filter_sigma=float(cfg.get("norm_filter_sigma", 5.0)),
-                coherence_threshold=float(cfg.get("coherence_threshold", 0.3)),
-                min_vote_similarity=float(cfg.get("min_vote_similarity", 0.2)),
-                min_utterance_duration_cluster=float(
-                    cfg.get("min_utterance_duration_cluster", 1.5)
-                ),
-                min_utterance_coherence_cluster=float(
-                    cfg.get("min_utterance_coherence_cluster", 0.4)
-                ),
-                hdbscan_min_cluster_size=int(cfg.get("hdbscan_min_cluster_size", 10)),
-                umap_n_neighbors=int(cfg.get("umap_n_neighbors", 5)),
-                umap_min_dist=float(cfg.get("umap_min_dist", 0.0)),
-                umap_n_components=int(cfg.get("umap_n_components", 5)),
-                utterance_aggregation=str(cfg.get("utterance_aggregation", "medoid")),
-                hf_token_env=cfg.get("hf_token_env", "YORISHIRO_HF_TOKEN"),
+        kwargs: dict[str, Any] = {}
+        if cfg.get("backend") is not None:
+            kwargs["embedding_backend"] = cfg["backend"]
+        if cfg.get("speaker_similarity_threshold") is not None:
+            kwargs["similarity_threshold"] = float(cfg["speaker_similarity_threshold"])
+        if cfg.get("diagnostics_enabled") is not None:
+            kwargs["diagnostics_enabled"] = _parse_bool(cfg["diagnostics_enabled"])
+        if cfg.get("clustering_method") is not None:
+            kwargs["clustering_method"] = cfg["clustering_method"]
+        if cfg.get("window_duration") is not None:
+            kwargs["window_duration"] = float(cfg["window_duration"])
+        if cfg.get("window_hop") is not None:
+            kwargs["window_hop"] = float(cfg["window_hop"])
+        if cfg.get("min_window_duration") is not None:
+            kwargs["min_window_duration"] = float(cfg["min_window_duration"])
+        if cfg.get("energy_threshold_db") is not None:
+            kwargs["energy_threshold_db"] = float(cfg["energy_threshold_db"])
+        if cfg.get("norm_filter_sigma") is not None:
+            kwargs["norm_filter_sigma"] = float(cfg["norm_filter_sigma"])
+        if cfg.get("coherence_threshold") is not None:
+            kwargs["coherence_threshold"] = float(cfg["coherence_threshold"])
+        if cfg.get("min_vote_similarity") is not None:
+            kwargs["min_vote_similarity"] = float(cfg["min_vote_similarity"])
+        if cfg.get("min_utterance_duration_cluster") is not None:
+            kwargs["min_utterance_duration_cluster"] = float(
+                cfg["min_utterance_duration_cluster"]
             )
-        )
+        if cfg.get("min_utterance_coherence_cluster") is not None:
+            kwargs["min_utterance_coherence_cluster"] = float(
+                cfg["min_utterance_coherence_cluster"]
+            )
+        if cfg.get("hdbscan_min_cluster_size") is not None:
+            kwargs["hdbscan_min_cluster_size"] = int(cfg["hdbscan_min_cluster_size"])
+        if cfg.get("umap_n_neighbors") is not None:
+            kwargs["umap_n_neighbors"] = int(cfg["umap_n_neighbors"])
+        if cfg.get("umap_min_dist") is not None:
+            kwargs["umap_min_dist"] = float(cfg["umap_min_dist"])
+        if cfg.get("umap_n_components") is not None:
+            kwargs["umap_n_components"] = int(cfg["umap_n_components"])
+        if cfg.get("utterance_aggregation") is not None:
+            kwargs["utterance_aggregation"] = str(cfg["utterance_aggregation"])
+        if cfg.get("hf_token_env") is not None:
+            kwargs["hf_token_env"] = cfg["hf_token_env"]
+
+        return SpeakerAttributor(SpeakerAttributorConfig(**kwargs))
 
     def _build_emotion_analyzer(self) -> Any:
         from yorishiro.audio.emotion_analysis import (
@@ -362,12 +411,12 @@ class ModelRegistry:
         )
 
         cfg = self._project.steps.get("film.audio.emotion", {})
-        return EmotionAnalyzer(
-            EmotionAnalyzerConfig(
-                emotion_backend=cfg.get("backend", "emotion2vec"),
-                emotion_model=cfg.get("model", "emotion2vec/emotion2vec_plus_base"),
-            )
-        )
+        kwargs: dict[str, Any] = {}
+        if cfg.get("backend") is not None:
+            kwargs["emotion_backend"] = cfg["backend"]
+        if cfg.get("model") is not None:
+            kwargs["emotion_model"] = cfg["model"]
+        return EmotionAnalyzer(EmotionAnalyzerConfig(**kwargs))
 
     def _build_sound_event_detector(self) -> Any:
         from yorishiro.audio.sound_event_detector import (
@@ -388,10 +437,15 @@ class ModelRegistry:
         cfg = self._project.steps.get("film.audio.separate", {})
         sep_name = cfg.get("separator_model")
         sep_cfg = dict(self._project.models.get(sep_name, {})) if sep_name else {}
-        return AudioSeparator(
-            AudioSeparatorConfig(
-                backend=sep_cfg.get("backend", "demucs"),
-                model=sep_cfg.get("model", "htdemucs"),
-                device=sep_cfg.get("device", "auto"),
-            )
-        )
+        kwargs: dict[str, Any] = {}
+        for key, dest, conv in [
+            ("backend", "backend", str),
+            ("model", "model", str),
+            ("device", "device", str),
+            ("sample_rate", "sample_rate", int),
+            ("processing_chunk_seconds", "processing_chunk_seconds", float),
+            ("processing_overlap_seconds", "processing_overlap_seconds", float),
+        ]:
+            if sep_cfg.get(key) is not None:
+                kwargs[dest] = conv(sep_cfg[key])
+        return AudioSeparator(AudioSeparatorConfig(**kwargs))

@@ -15,6 +15,7 @@ import soundfile as sf
 import torch
 from tqdm import tqdm
 
+from yorishiro.audio import resample as audio_resample
 from yorishiro.audio._speech_support import get_emotion_model, prosody_segment_worker
 from yorishiro.models.film_models import SpeakerAttribution, STTTranscript, Transcript, TranscriptEntry
 
@@ -78,8 +79,6 @@ class EmotionAnalyzer:
         model = get_emotion_model(self.config)
 
         need_resample = file_sr != target_sr
-        if need_resample:
-            import librosa
 
         print(f"    [Emotion] Analyzing {total} segment(s) (file_sr={file_sr}) ...")
         with tqdm(
@@ -110,7 +109,9 @@ class EmotionAnalyzer:
                     if chunk.ndim > 1:
                         chunk = chunk.mean(axis=1)
                     if need_resample:
-                        chunk = librosa.resample(chunk, orig_sr=file_sr, target_sr=target_sr)
+                        chunk = audio_resample.resample(
+                            chunk, orig_sr=file_sr, target_sr=target_sr
+                        )
 
                     infer_start = time.perf_counter()
                     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):

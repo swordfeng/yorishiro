@@ -116,6 +116,7 @@ class FilmAudioSpeakersTask(Task):
     def __init__(self, output_dir: Path, runtime: StepRuntime) -> None:
         self._output_dir = output_dir
         self._runtime = runtime
+        self._force = False
 
     def input_paths(self) -> list[Path]:
         return [
@@ -128,12 +129,19 @@ class FilmAudioSpeakersTask(Task):
             self._output_dir / "speaker_attribution.json",
             self._output_dir / "speaker_bank.json",
             self._output_dir / "speaker_embeddings.pkl",
+            self._output_dir / "speaker_embedding_cache.npz",
         ]
+
+    def run(self, force: bool = False) -> None:
+        self._force = force
+        super().run(force=force)
 
     def _run(self) -> None:
         print("[film.audio.speakers] Running speaker attribution ...")
         attributor = self._runtime.instance()
-        attributor.run(self._output_dir / "voice.flac", self._output_dir)
+        attributor.run(
+            self._output_dir / "voice.flac", self._output_dir, force=self._force
+        )
 
 
 class FilmAudioEmotionTask(Task):

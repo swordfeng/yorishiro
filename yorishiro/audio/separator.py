@@ -8,9 +8,14 @@ maximum quality.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import deque
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
+from tqdm import tqdm
+
+from yorishiro.audio import resample as audio_resample
 
 
 @dataclass
@@ -19,6 +24,8 @@ class AudioSeparatorConfig:
     model: str = "htdemucs"
     device: str = "auto"
     sample_rate: int = 44100
+    processing_chunk_seconds: float = 120.0
+    processing_overlap_seconds: float = 1.0
 
 
 class AudioSeparator:
@@ -42,23 +49,113 @@ class AudioSeparator:
         output_dir.mkdir(parents=True, exist_ok=True)
         voice_path = output_dir / "voice.flac"
         nonvoice_path = output_dir / "nonvoice.flac"
+        voice_tmp_path = output_dir / "voice.flac.tmp"
+        nonvoice_tmp_path = output_dir / "nonvoice.flac.tmp"
 
         if not force and voice_path.exists() and nonvoice_path.exists():
             return voice_path, nonvoice_path
 
-        audio = self._extract_audio(video_path)
-        voice, nonvoice = self._run_demucs(audio)
+        chunk_samples = max(
+            int(self.config.processing_chunk_seconds * self.config.sample_rate),
+            self.config.sample_rate,
+        )
+        overlap_samples = max(
+            int(self.config.processing_overlap_seconds * self.config.sample_rate), 0
+        )
 
-        sf.write(str(voice_path), voice.T, self.config.sample_rate)
-        sf.write(str(nonvoice_path), nonvoice.T, self.config.sample_rate)
+        pending_voice = np.zeros((2, 0), dtype=np.float32)
+        pending_nonvoice = np.zeros((2, 0), dtype=np.float32)
+        processed_samples = 0
+        total_seconds = self._audio_duration_seconds(video_path)
+        total_minutes = (
+            float(total_seconds / 60.0) if total_seconds is not None and total_seconds > 0 else None
+        )
+
+        voice_tmp_path.unlink(missing_ok=True)
+        nonvoice_tmp_path.unlink(missing_ok=True)
+        try:
+            with (
+                sf.SoundFile(
+                    str(voice_tmp_path),
+                    mode="w",
+                    samplerate=self.config.sample_rate,
+                    channels=2,
+                    subtype="PCM_16",
+                    format="FLAC",
+                ) as voice_file,
+                sf.SoundFile(
+                    str(nonvoice_tmp_path),
+                    mode="w",
+                    samplerate=self.config.sample_rate,
+                    channels=2,
+                    subtype="PCM_16",
+                    format="FLAC",
+                ) as nonvoice_file,
+                tqdm(
+                    total=total_minutes,
+                    desc="  [AudioSeparator] Demucs",
+                    unit="min",
+                    bar_format="{l_bar}{bar}| {n:.1f}/{total_fmt} [{elapsed}<{remaining}]",
+                ) as progress,
+            ):
+                print("  [AudioSeparator] Streaming separation in chunks ...")
+                for audio_chunk in self._iter_audio_chunks(video_path, chunk_samples):
+                    voice_chunk, nonvoice_chunk = self._run_demucs(audio_chunk)
+
+                    write_voice, pending_voice = self._stitch_chunk(
+                        pending_voice, voice_chunk, overlap_samples
+                    )
+                    write_nonvoice, pending_nonvoice = self._stitch_chunk(
+                        pending_nonvoice, nonvoice_chunk, overlap_samples
+                    )
+
+                    if write_voice.shape[1] > 0:
+                        voice_file.write(write_voice.T)
+                    if write_nonvoice.shape[1] > 0:
+                        nonvoice_file.write(write_nonvoice.T)
+
+                    processed_samples += int(audio_chunk.shape[1])
+                    chunk_minutes = (
+                        audio_chunk.shape[1] / self.config.sample_rate / 60.0
+                    )
+                    progress.update(float(chunk_minutes))
+                    progress.set_postfix_str(
+                        f"processed={processed_samples / self.config.sample_rate / 60.0:.1f}m"
+                    )
+
+                if pending_voice.shape[1] > 0:
+                    voice_file.write(pending_voice.T)
+                if pending_nonvoice.shape[1] > 0:
+                    nonvoice_file.write(pending_nonvoice.T)
+        except Exception:
+            voice_tmp_path.unlink(missing_ok=True)
+            nonvoice_tmp_path.unlink(missing_ok=True)
+            raise
+
+        voice_tmp_path.replace(voice_path)
+        nonvoice_tmp_path.replace(nonvoice_path)
 
         print(f"  [AudioSeparator] Wrote {voice_path.name} and {nonvoice_path.name}")
         return voice_path, nonvoice_path
 
-    def _extract_audio(self, video_path: Path):  # type: ignore[return]
-        """Extract 44kHz stereo audio from video as a numpy array."""
+    @staticmethod
+    def _audio_duration_seconds(video_path: Path) -> float | None:
         import av
-        import numpy as np
+
+        container = av.open(str(video_path))
+        try:
+            audio_stream = next((s for s in container.streams if s.type == "audio"), None)
+            if audio_stream is not None and audio_stream.duration is not None and audio_stream.time_base is not None:
+                return float(audio_stream.duration * audio_stream.time_base)
+            if container.duration is not None:
+                return float(container.duration) / 1_000_000.0
+            return None
+        finally:
+            container.close()
+
+    def _iter_audio_chunks(self, video_path: Path, chunk_samples: int):
+        """Yield resampled stereo chunks as float32 arrays shaped (2, N)."""
+        import av
         from av.audio.frame import AudioFrame
 
         input_container = av.open(str(video_path))
@@ -68,21 +165,114 @@ class AudioSeparator:
         if audio_stream is None:
             raise ValueError(f"No audio stream found in {video_path}")
 
-        resampler = av.AudioResampler(format="fltp", layout="stereo", rate=self.config.sample_rate)
-        chunks = []
-        for frame in input_container.decode(audio_stream):
-            assert isinstance(frame, AudioFrame)
-            for resampled in resampler.resample(frame):
-                arr = resampled.to_ndarray()  # (channels, samples)
-                chunks.append(arr)
+        # Keep channel/layout normalization in PyAV; do sample-rate conversion via
+        # shared soxr resampler for consistent high-quality behavior project-wide.
+        resampler = av.AudioResampler(format="fltp", layout="stereo")
+        buffered: deque[np.ndarray] = deque()
+        buffered_samples = 0
+        emitted_any = False
 
-        input_container.close()
+        try:
+            for frame in input_container.decode(audio_stream):
+                assert isinstance(frame, AudioFrame)
+                for resampled in resampler.resample(frame):
+                    arr = resampled.to_ndarray().astype("float32", copy=False)
+                    frame_sr = int(
+                        getattr(resampled, "sample_rate", None)
+                        or getattr(frame, "sample_rate", None)
+                        or 0
+                    )
+                    if frame_sr > 0 and frame_sr != self.config.sample_rate:
+                        # soxr expects shape (samples, channels) for multi-channel input.
+                        arr = (
+                            audio_resample.resample(
+                                arr.T,
+                                orig_sr=frame_sr,
+                                target_sr=self.config.sample_rate,
+                            )
+                            .T
+                            .astype("float32", copy=False)
+                        )
+                    buffered.append(arr)
+                    buffered_samples += int(arr.shape[1])
 
-        if not chunks:
+                    while buffered_samples >= chunk_samples:
+                        out_parts: list[np.ndarray] = []
+                        remaining = chunk_samples
+                        while remaining > 0:
+                            part = buffered[0]
+                            part_samples = int(part.shape[1])
+                            if part_samples <= remaining:
+                                out_parts.append(part)
+                                buffered.popleft()
+                                remaining -= part_samples
+                            else:
+                                out_parts.append(part[:, :remaining])
+                                buffered[0] = part[:, remaining:]
+                                remaining = 0
+                        buffered_samples -= chunk_samples
+                        emitted_any = True
+                        yield np.concatenate(out_parts, axis=1)
+        finally:
+            input_container.close()
+
+        if buffered_samples <= 0 and not emitted_any:
             raise ValueError(f"No audio frames decoded from {video_path}")
 
-        audio = np.concatenate(chunks, axis=1).astype("float32")  # (2, N)
-        return audio
+        if buffered_samples > 0:
+            yield np.concatenate(list(buffered), axis=1)
+
+    @staticmethod
+    def _stitch_chunk(
+        pending_tail: np.ndarray, current: np.ndarray, overlap_samples: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Stitch one chunk with overlap crossfade.
+
+        Returns (write_block, next_pending_tail), both shaped (2, N).
+        """
+        if current.shape[1] == 0:
+            return np.zeros((2, 0), dtype=np.float32), pending_tail
+
+        if overlap_samples <= 0:
+            if pending_tail.shape[1] == 0:
+                return current, np.zeros((2, 0), dtype=np.float32)
+            return (
+                np.concatenate([pending_tail, current], axis=1),
+                np.zeros((2, 0), dtype=np.float32),
+            )
+
+        if pending_tail.shape[1] == 0:
+            if current.shape[1] <= overlap_samples:
+                return np.zeros((2, 0), dtype=np.float32), current
+            return (
+                current[:, :-overlap_samples],
+                current[:, -overlap_samples:],
+            )
+
+        overlap = min(pending_tail.shape[1], current.shape[1], overlap_samples)
+        fade = np.linspace(0.0, 1.0, overlap, dtype=np.float32)[None, :]
+        blended = pending_tail[:, -overlap:] * (1.0 - fade) + current[:, :overlap] * fade
+
+        prefix = (
+            pending_tail[:, : pending_tail.shape[1] - overlap]
+            if pending_tail.shape[1] > overlap
+            else np.zeros((2, 0), dtype=np.float32)
+        )
+
+        current_rest = current[:, overlap:]
+        if current_rest.shape[1] > overlap_samples:
+            body = current_rest[:, :-overlap_samples]
+            next_tail = current_rest[:, -overlap_samples:]
+        else:
+            body = np.zeros((2, 0), dtype=np.float32)
+            next_tail = current_rest
+
+        write_parts = [arr for arr in (prefix, blended, body) if arr.shape[1] > 0]
+        if write_parts:
+            write_block = np.concatenate(write_parts, axis=1)
+        else:
+            write_block = np.zeros((2, 0), dtype=np.float32)
+        return write_block, next_tail
 
     def _run_demucs(self, audio):  # type: ignore[return]
         """Run Demucs on a (2, N) float32 array. Returns (voice, nonvoice) as (2, N) arrays."""
@@ -101,14 +291,18 @@ class AudioSeparator:
                 self._model.to(device)
                 self._model.eval()
 
-            # Create tensor on CPU, let apply_model handle GPU transfer with chunking
+            # Create tensor on CPU and process per chunk to bound memory usage.
             tensor = torch.from_numpy(audio).unsqueeze(0)  # (1, 2, N) on CPU
 
-            print(f"  [AudioSeparator] Processing {(audio.shape[1] / self.config.sample_rate / 60):.1f} min of audio...")
             with torch.no_grad():
                 sources = apply_model(
                     self._model, tensor, device=device,
-                    split=True, progress=True,
+                    # Keep Demucs internal splitting enabled so each streamed
+                    # chunk can still exceed training window length safely.
+                    split=True,
+                    overlap=0.25,
+                    progress=False,
+                    num_workers=0,
                 )  # type: ignore[call-arg]
                 sources = sources[0].cpu().numpy()  # (stems, 2, N)
 

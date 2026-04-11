@@ -8,12 +8,14 @@ import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from typing import cast
+from unittest.mock import Mock, patch
 
 import numpy as np
 
 from yorishiro.audio.diarization import Diarizer, DiarizerConfig
 from yorishiro.audio.emotion_analysis import EmotionAnalyzer
+from yorishiro.audio.separator import AudioSeparator
 from yorishiro.audio.speaker_bank import SpeakerBankManager
 from yorishiro.audio.speaker_attribution import (
     ClusteringScoreBreakdown,
@@ -42,7 +44,7 @@ from yorishiro.tasks.film.audio import (
     FilmAudioSTTTask,
     FilmAudioVADTask,
 )
-from yorishiro.tasks.registry import ModelRegistry
+from yorishiro.tasks.registry import ModelRegistry, StepRuntime
 
 
 class VadRunnerTests(unittest.TestCase):
@@ -352,7 +354,7 @@ class TranscriberTests(unittest.TestCase):
                     audio_path=audio_path,
                     file_sample_rate=16000,
                     language="en",
-                    librosa_module=types.SimpleNamespace(
+                    resample_module=types.SimpleNamespace(
                         resample=lambda audio, **_kwargs: audio
                     ),
                     update_progress=lambda _delta: None,
@@ -392,6 +394,7 @@ class TranscriberTests(unittest.TestCase):
         entries = transcriber._segment_to_entries(
             segment,
             0.0,
+            1.0,
             "en",
         )
 
@@ -409,9 +412,40 @@ class TranscriberTests(unittest.TestCase):
         entries = transcriber._segment_to_entries(
             segment,
             0.0,
+            0.1,
             "ja",
         )
 
+        self.assertEqual(entries, [])
+
+    def test_speech_spans_filter_too_short(self) -> None:
+        transcriber = Transcriber(TranscriberConfig(stt_min_segment_seconds=0.2))
+        spans = transcriber._speech_spans(
+            [
+                {"start": 1.0, "end": 1.1},
+                {"start": 2.0, "end": 2.3},
+            ],
+            total_duration=10.0,
+        )
+        self.assertEqual(len(spans), 1)
+        self.assertAlmostEqual(spans[0].start, 2.0)
+        self.assertAlmostEqual(spans[0].end, 2.3)
+
+    def test_segment_to_entries_clamps_to_chunk_and_filters_too_short(self) -> None:
+        transcriber = Transcriber(TranscriberConfig(stt_min_segment_seconds=0.2))
+        segment = SimpleNamespace(
+            text="ごめん",
+            start=0.0,
+            end=2.0,
+            avg_logprob=-0.1,
+        )
+        # chunk is only 0.15s wide after clamping -> dropped by min_segment_seconds
+        entries = transcriber._segment_to_entries(
+            segment,
+            41.9,
+            42.05,
+            "ja",
+        )
         self.assertEqual(entries, [])
 
 
@@ -711,7 +745,7 @@ class SpeakerAttributorTests(unittest.TestCase):
             1,
         )
 
-    def test_embed_windows_uses_temporary_cache(self) -> None:
+    def test_embed_windows_uses_embedding_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             audio_path = tmp_path / "voice.flac"
@@ -727,6 +761,10 @@ class SpeakerAttributorTests(unittest.TestCase):
             windows = [EmbeddingWindow(stt_idx=0, start=0.0, end=1.0)]
             bank = SpeakerBankManager()
             emb = np.array([1.0, 0.0], dtype=np.float32)
+            stt = STTTranscript(
+                language="ja",
+                entries=[STTEntry(start=0.0, end=1.2, text="a", confidence=0.9)],
+            )
 
             with (
                 patch.object(attributor, "_window_has_energy", return_value=True),
@@ -736,10 +774,10 @@ class SpeakerAttributorTests(unittest.TestCase):
                 ) as extract,
             ):
                 valid_1, embs_1 = attributor._embed_windows(
-                    windows, audio_path, bank, output_dir
+                    windows, audio_path, bank, output_dir, stt=stt
                 )
                 valid_2, embs_2 = attributor._embed_windows(
-                    windows, audio_path, bank, output_dir
+                    windows, audio_path, bank, output_dir, stt=stt
                 )
 
             self.assertEqual(extract.call_count, 1)
@@ -748,6 +786,87 @@ class SpeakerAttributorTests(unittest.TestCase):
             self.assertTrue(np.array_equal(embs_1[0], emb))
             self.assertTrue(np.array_equal(embs_2[0], emb))
             self.assertTrue((output_dir / "speaker_embedding_cache.npz").exists())
+
+    def test_embed_windows_force_regenerates_embedding_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            audio_path = tmp_path / "voice.flac"
+            output_dir = tmp_path / "audio"
+            output_dir.mkdir()
+
+            samples = np.linspace(-0.25, 0.25, 32000, dtype=np.float32)
+            import soundfile as sf
+
+            sf.write(audio_path, samples, 16000)
+
+            attributor = SpeakerAttributor(SpeakerAttributorConfig())
+            windows = [EmbeddingWindow(stt_idx=0, start=0.0, end=1.0)]
+            bank = SpeakerBankManager()
+            emb = np.array([1.0, 0.0], dtype=np.float32)
+            stt = STTTranscript(
+                language="ja",
+                entries=[STTEntry(start=0.0, end=1.2, text="a", confidence=0.9)],
+            )
+
+            with (
+                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch(
+                    "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
+                    return_value=emb,
+                ) as extract,
+            ):
+                attributor._embed_windows(windows, audio_path, bank, output_dir, stt=stt)
+                attributor._embed_windows(
+                    windows,
+                    audio_path,
+                    bank,
+                    output_dir,
+                    stt=stt,
+                    force=True,
+                )
+
+            self.assertEqual(extract.call_count, 2)
+
+    def test_embed_windows_cache_invalidates_when_stt_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            audio_path = tmp_path / "voice.flac"
+            output_dir = tmp_path / "audio"
+            output_dir.mkdir()
+
+            samples = np.linspace(-0.25, 0.25, 32000, dtype=np.float32)
+            import soundfile as sf
+
+            sf.write(audio_path, samples, 16000)
+
+            attributor = SpeakerAttributor(SpeakerAttributorConfig())
+            windows = [EmbeddingWindow(stt_idx=0, start=0.0, end=1.0)]
+            bank = SpeakerBankManager()
+            emb = np.array([1.0, 0.0], dtype=np.float32)
+            stt_a = STTTranscript(
+                language="ja",
+                entries=[STTEntry(start=0.0, end=1.2, text="a", confidence=0.9)],
+            )
+            stt_b = STTTranscript(
+                language="ja",
+                entries=[STTEntry(start=0.0, end=1.3, text="a", confidence=0.9)],
+            )
+
+            with (
+                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch(
+                    "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
+                    return_value=emb,
+                ) as extract,
+            ):
+                attributor._embed_windows(
+                    windows, audio_path, bank, output_dir, stt=stt_a
+                )
+                attributor._embed_windows(
+                    windows, audio_path, bank, output_dir, stt=stt_b
+                )
+
+            self.assertEqual(extract.call_count, 2)
 
     def test_windowed_clustering_merges_similar_speakers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -939,6 +1058,48 @@ class SpeakerAttributorTests(unittest.TestCase):
             self.assertEqual(result.entries[0].speaker_id, "UNKNOWN")
 
 
+class AudioSeparatorTests(unittest.TestCase):
+    def test_stitch_chunk_first_chunk_splits_body_and_tail(self) -> None:
+        current = np.vstack(
+            [
+                np.arange(10, dtype=np.float32),
+                np.arange(10, dtype=np.float32),
+            ]
+        )
+        write_block, next_tail = AudioSeparator._stitch_chunk(
+            np.zeros((2, 0), dtype=np.float32),
+            current,
+            overlap_samples=3,
+        )
+        self.assertEqual(write_block.shape, (2, 7))
+        self.assertEqual(next_tail.shape, (2, 3))
+        self.assertTrue(np.allclose(write_block, current[:, :7]))
+        self.assertTrue(np.allclose(next_tail, current[:, 7:]))
+
+    def test_stitch_chunk_crossfades_pending_and_current(self) -> None:
+        pending = np.full((2, 3), 1.0, dtype=np.float32)
+        current = np.full((2, 6), 3.0, dtype=np.float32)
+        write_block, next_tail = AudioSeparator._stitch_chunk(
+            pending, current, overlap_samples=3
+        )
+        # For full overlap, blended center should be [1,2,3] per channel.
+        expected = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
+        self.assertTrue(np.allclose(write_block[0:1, :3], expected, atol=1e-6))
+        self.assertEqual(next_tail.shape, (2, 3))
+        self.assertTrue(np.allclose(next_tail, np.full((2, 3), 3.0, dtype=np.float32)))
+
+    def test_stitch_chunk_without_overlap_concatenates(self) -> None:
+        pending = np.ones((2, 2), dtype=np.float32)
+        current = np.full((2, 4), 2.0, dtype=np.float32)
+        write_block, next_tail = AudioSeparator._stitch_chunk(
+            pending, current, overlap_samples=0
+        )
+        self.assertEqual(write_block.shape, (2, 6))
+        self.assertEqual(next_tail.shape, (2, 0))
+        self.assertTrue(np.allclose(write_block[:, :2], 1.0))
+        self.assertTrue(np.allclose(write_block[:, 2:], 2.0))
+
+
 class EmotionAnalyzerTests(unittest.TestCase):
     def test_run_writes_transcript_json_after_enrichment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1060,9 +1221,27 @@ steps:
                     project.step_dir("film-src", "audio") / "speaker_attribution.json",
                     project.step_dir("film-src", "audio") / "speaker_bank.json",
                     project.step_dir("film-src", "audio") / "speaker_embeddings.pkl",
+                    project.step_dir("film-src", "audio")
+                    / "speaker_embedding_cache.npz",
                 ],
             )
             self.assertEqual(
                 emotion_task.output_paths(),
                 [project.step_dir("film-src", "audio") / "transcript.json"],
+            )
+
+    def test_speakers_task_forwards_force_to_attributor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            attributor = Mock()
+            runtime = cast(StepRuntime, SimpleNamespace(instance=lambda: attributor))
+            task = FilmAudioSpeakersTask(output_dir, runtime)
+
+            task.run(force=True)
+
+            attributor.run.assert_called_once_with(
+                output_dir / "voice.flac",
+                output_dir,
+                force=True,
             )

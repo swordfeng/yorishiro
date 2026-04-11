@@ -547,6 +547,8 @@ class Transcriber:
             if detected_language is None and result.detected_language:
                 detected_language = result.detected_language
         entries.sort(key=lambda entry: (entry.start, entry.end))
+        for idx, entry in enumerate(entries):
+            entry.entry_id = f"utt_{idx:06d}"
         return STTTranscript(language=detected_language or "unknown", entries=entries)
 
     def _segment_to_entries(
@@ -575,6 +577,7 @@ class Transcriber:
             return []
         return [
             STTEntry(
+                entry_id="",
                 start=clamped_start,
                 end=clamped_end,
                 text=text,
@@ -648,6 +651,7 @@ class Transcriber:
         if len(pieces) <= 1:
             return [
                 STTEntry(
+                    entry_id="",
                     start=start,
                     end=end,
                     text=text,
@@ -664,6 +668,7 @@ class Transcriber:
             piece_end = end if idx == len(pieces) - 1 else min(end, cursor + piece_duration)
             entries.append(
                 STTEntry(
+                    entry_id="",
                     start=cursor,
                     end=piece_end,
                     text=piece,

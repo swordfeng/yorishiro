@@ -24,7 +24,12 @@ from yorishiro.audio.speaker_attribution import (
     SpeakerAttributorConfig,
     SweepCandidateRow,
 )
-from yorishiro.audio.transcription import SpeechGroup, Transcriber, TranscriberConfig
+from yorishiro.audio.transcription import (
+    GroupResult,
+    SpeechGroup,
+    Transcriber,
+    TranscriberConfig,
+)
 from yorishiro.audio.vad import VadConfig, VadRunner
 from yorishiro.models.film_models import (
     STTEntry,
@@ -193,6 +198,43 @@ class DiarizerTests(unittest.TestCase):
 
 
 class TranscriberTests(unittest.TestCase):
+    def test_assemble_transcript_assigns_entry_ids(self) -> None:
+        transcriber = Transcriber()
+        groups = [
+            SpeechGroup(
+                group_id="g_000000_000000",
+                span_start_idx=0,
+                span_end_idx=0,
+                start=0.0,
+                end=1.0,
+            )
+        ]
+        result = transcriber._assemble_transcript(
+            groups,
+            {
+                "g_000000_000000": GroupResult(
+                    group_id="g_000000_000000",
+                    span_start_idx=0,
+                    span_end_idx=0,
+                    start=0.0,
+                    end=1.0,
+                    entries=[
+                        {
+                            "entry_id": "",
+                            "start": 0.0,
+                            "end": 1.0,
+                            "text": "a",
+                            "confidence": 0.9,
+                        }
+                    ],
+                    detected_language="ja",
+                    source_mtime=0.0,
+                )
+            },
+            language=None,
+        )
+        self.assertEqual(result.entries[0].entry_id, "utt_000000")
+
     def test_run_resumes_matching_checkpoints_and_cleans_them_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = Path(tmp_dir) / "voice.flac"
@@ -605,6 +647,33 @@ class TranscriberTests(unittest.TestCase):
 
 
 class SpeakerAttributorTests(unittest.TestCase):
+    def test_unknown_attribution_preserves_stt_entry_ids(self) -> None:
+        attributor = SpeakerAttributor()
+        stt = STTTranscript(
+            language="ja",
+            entries=[
+                STTEntry(
+                    entry_id="utt_custom_001",
+                    start=0.0,
+                    end=1.0,
+                    text="a",
+                    confidence=0.9,
+                ),
+                STTEntry(
+                    entry_id="utt_custom_002",
+                    start=1.0,
+                    end=2.0,
+                    text="b",
+                    confidence=0.8,
+                ),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            bank = SpeakerBankManager()
+            result = attributor._unknown_attribution(stt, Path(tmp_dir), bank)
+        self.assertEqual(result.entries[0].entry_id, "utt_custom_001")
+        self.assertEqual(result.entries[1].entry_id, "utt_custom_002")
+
     def test_default_config_uses_utterance_averaged_umap_hdbscan(self) -> None:
         cfg = SpeakerAttributorConfig()
         self.assertEqual(cfg.clustering_method, "umap_hdbscan_auto")

@@ -73,6 +73,10 @@ class SpeakerSegment(BaseModel):
 
 
 class STTEntry(BaseModel):
+    entry_id: str = Field(
+        default="",
+        description="Stable STT entry identifier",
+    )
     start: float = Field(description="Start time in seconds")
     end: float = Field(description="End time in seconds")
     text: str = Field(description="Transcribed text")

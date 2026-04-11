@@ -1408,7 +1408,7 @@ class SpeakerAttributor:
         entries: list[SpeakerAttributionEntry] = []
         for idx in range(len(stt.entries)):
             entry = stt.entries[idx]
-            entry_id = f"utt_{idx:06d}"
+            entry_id = self._stt_entry_id(entry, idx)
             embedded_count = int(embedded_windows_by_seg.get(idx, 0))
             best_sim = best_sim_by_seg.get(idx)
 
@@ -1452,6 +1452,15 @@ class SpeakerAttributor:
             )
 
         return entries
+
+    @staticmethod
+    def _stt_entry_id(entry: Any, idx: int) -> str:
+        raw = getattr(entry, "entry_id", "") or ""
+        value = str(raw).strip()
+        if value:
+            return value
+        # Backward compatibility for legacy stt.json files without entry_id.
+        return f"utt_{idx:06d}"
 
     def _compute_cluster_quality(
         self,
@@ -1679,7 +1688,7 @@ class SpeakerAttributor:
     ) -> SpeakerAttribution:
         attribution_entries = [
             SpeakerAttributionEntry(
-                entry_id=f"utt_{idx:06d}",
+                entry_id=self._stt_entry_id(entry, idx),
                 start=entry.start,
                 end=entry.end,
                 speaker_id="UNKNOWN",

@@ -143,7 +143,7 @@ yorishiro/
 
 ```
 projects/{CODE}/
-├── project.yaml             # Config: sources, models, steps, step_groups
+├── project.yaml             # Local config: sources, providers, steps, step_groups
 ├── raw/                     # Read-only source inputs (epub, mkv, …)
 ├── processed/
 │   └── {source-id}/
@@ -205,36 +205,41 @@ python -m yorishiro status --project projects/CPK
 
 ## Model Configuration | 模型配置
 
-Yorishiro supports swappable model providers via `project.yaml`. Models are defined once by name and referenced from step configs:
+Yorishiro uses provider profiles plus step-local runtimes in `project.yaml`:
 
 ```yaml
-models:
-  sonnet:                          # cloud model
-    provider: openrouter
-    name: anthropic/claude-sonnet-4-6
-    thinking: medium
-    output_mode: tool
+providers:
+  openrouter_main:
+    type: openrouter
+    base_url: https://openrouter.ai/api/v1
     api_key_env: YORISHIRO_API_KEY_OPENROUTER
-
-  whisper:                         # local model
-    backend: faster-whisper
-    model: large-v3
-    device: auto
 
 steps:
   novel.scenes:
-    model: sonnet
-    batch_tokens: 32000
-  film.audio:
-    model: whisper
-    diarization_model: diarization
+    backend: pydantic-ai
+    provider: openrouter_main
+    model: anthropic/claude-sonnet-4-6
+    thinking: medium
+    output_mode: tool
+  film.audio.stt:
+    backend: faster-whisper
+    model: large-v3
+    cpu_threads: 4
+  film.audio.music:
+    separation:
+      backend: demucs
+      model: htdemucs
+    analysis:
+      backend: essentia
   cross.synthesize:
-    model: sonnet
-    thinking: high                 # step-level override
+    backend: pydantic-ai
+    provider: openrouter_main
+    model: anthropic/claude-sonnet-4-6
+    thinking: high
 ```
 
 Supported cloud providers: OpenRouter (Claude, GPT, Gemini, …), OpenAI.  
-Supported local backends: faster-whisper, pyannote, CLIP, adaptive shot detector, Demucs.
+Supported local backends include faster-whisper, pyannote, CLIP, adaptive shot detector, Demucs, and Essentia.
 
 ---
 

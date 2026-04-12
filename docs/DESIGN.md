@@ -12,7 +12,7 @@
 
 ```
 projects/{CODE}/
-├── project.yaml                    # 项目配置 (sources, models, steps, step_groups)
+├── project.yaml                    # 本地项目配置 (sources, providers, steps, step_groups)
 ├── raw/                            # 只读原始素材 (epub, mkv, pdf, …)
 │
 ├── processed/                      # 各 source 的中间产出
@@ -60,33 +60,39 @@ sources:
         text:
           matcher: "^第.+[章話]$"  # 可选: 纯文本 chapter 标题正则
 
-# 命名模型定义 — 本地模型 (backend 字段) 或云端模型 (provider 字段), 定义一次, steps 中引用
-models:
-  whisper:
+# 命名 provider profile — 共享云端连接/auth 信息
+providers:
+  openrouter_main:
+    type: openrouter
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: YORISHIRO_API_KEY_OPENROUTER
+  # … 其他 provider profile
+
+# 每个 step 直接声明 runtime
+steps:
+  film.audio.stt:
     backend: faster-whisper
     model: large-v3
-    device: auto
-  sonnet:
-    provider: openrouter
-    name: anthropic/claude-sonnet-4-6
-    thinking: medium
-    output_mode: tool
-    api_key_env: YORISHIRO_API_KEY_OPENROUTER
-  # … 其他模型
-
-# 每个 step 的配置: 引用模型 + step 级参数 (覆盖模型定义中的同名字段)
-steps:
-  film.audio:
-    model: whisper
-    diarization_model: diarization
   film.shot_groups:
-    model: sonnet
+    backend: pydantic-ai
+    provider: openrouter_main
+    model: anthropic/claude-sonnet-4-6
     batch_size: 15
   novel.scenes:
-    model: sonnet
+    backend: pydantic-ai
+    provider: openrouter_main
+    model: anthropic/claude-sonnet-4-6
     batch_tokens: 32000
+  film.audio.music:
+    separation:
+      backend: demucs
+      model: htdemucs
+    analysis:
+      backend: essentia
   cross.synthesize:
-    model: sonnet
+    backend: pydantic-ai
+    provider: openrouter_main
+    model: anthropic/claude-sonnet-4-6
     thinking: high
   # …
 
@@ -156,8 +162,8 @@ Step (ABC)                       — 命名步骤, 拥有一组 Task
 └── run(force, task_key)         — 运行全部 task, 或指定 key 的单个 task
 
 ModelRegistry                    — 懒加载本地模型 + 解析云端配置
-├── step_config(step_id) → dict  — 合并: step 级字段 → 引用模型定义
-├── cloud_config(step_id) → ModelConfig
+├── step_config(step_id) → dict  — 原始 step 配置
+├── resolved_model_config(step_id) → ModelConfig
 └── get_*(step_id) → 本地模型实例 (懒加载, 按模型名缓存)
 
 Orchestrator                     — 依赖解析 + 运行 + 备份

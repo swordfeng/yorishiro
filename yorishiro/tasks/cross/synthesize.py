@@ -16,10 +16,12 @@ class CrossSynthesizeTask(Task):
     def __init__(
         self,
         characters_dirs: list[Path],
+        aliases_dirs: list[Path],
         souls_dir: Path,
         runtime: StepRuntime,
     ) -> None:
         self._characters_dirs = characters_dirs
+        self._aliases_dirs = aliases_dirs
         self._souls_dir = souls_dir
         self._runtime = runtime
 
@@ -27,7 +29,9 @@ class CrossSynthesizeTask(Task):
         paths: list[Path] = []
         for chars_dir in self._characters_dirs:
             paths.extend(chars_dir.glob("*/insights.md"))
-            paths.extend(chars_dir.glob("*/ch*.json"))
+            paths.extend(chars_dir.glob("*/*.json"))
+        for aliases_dir in self._aliases_dirs:
+            paths.extend(aliases_dir.glob("*/insights.md"))
         return paths
 
     def output_paths(self) -> list[Path]:
@@ -39,17 +43,20 @@ class CrossSynthesizeTask(Task):
         return existing[-1] if existing else self._souls_dir / "__placeholder__"
 
     def _run(self) -> None:
-        from yorishiro.synthesize import FINALIZATION_SYSTEM_PROMPT, SoulDocOutput, synthesize_character
+        from yorishiro.synthesize import (
+            FINALIZATION_SYSTEM_PROMPT,
+            SoulDocOutput,
+            discover_target_characters,
+            synthesize_character,
+        )
 
-        # Collect all characters across all source character dirs
-        target_characters: set[str] = set()
-        for chars_dir in self._characters_dirs:
-            for char_dir in chars_dir.iterdir():
-                if char_dir.is_dir() and (char_dir / "insights.md").exists():
-                    target_characters.add(char_dir.name)
+        target_characters = discover_target_characters(
+            self._characters_dirs,
+            self._aliases_dirs,
+        )
 
         if not target_characters:
-            print("[cross.synthesize] No characters with insights found.")
+            print("[cross.synthesize] No character synthesis inputs found.")
             return
 
         print(f"[cross.synthesize] Synthesizing {len(target_characters)} characters ...")
@@ -62,14 +69,15 @@ class CrossSynthesizeTask(Task):
         self._souls_dir.mkdir(parents=True, exist_ok=True)
 
         async def run() -> None:
-            for name in sorted(target_characters):
+            for name in target_characters:
                 print(f"  Synthesizing 「{name}」 ...")
-                # Use the first characters_dir that has this character
-                chars_dir = next(
-                    (d for d in self._characters_dirs if (d / name / "insights.md").exists()),
-                    self._characters_dirs[0],
+                await synthesize_character(
+                    name,
+                    character_dirs=self._characters_dirs,
+                    alias_dirs=self._aliases_dirs,
+                    souls_dir=self._souls_dir,
+                    agent=agent,
                 )
-                await synthesize_character(name, chars_dir, self._souls_dir, agent)
 
         asyncio.run(run())
         print("[cross.synthesize] Done.")
@@ -89,15 +97,24 @@ class CrossSynthesizeStep(Step):
             for source in self._project.sources
             if source.type == "novel"
         ]
+        aliases_dirs = [
+            self._project.step_dir(source.id, "aliases")
+            for source in self._project.sources
+            if source.type == "novel"
+        ]
         # Also check old-style paths for compatibility
         for source in self._project.sources:
             legacy = self._project.source_dir(source.id) / "characters"
             if legacy.exists() and legacy not in characters_dirs:
                 characters_dirs.append(legacy)
+            legacy_aliases = self._project.source_dir(source.id) / "aliases"
+            if legacy_aliases.exists() and legacy_aliases not in aliases_dirs:
+                aliases_dirs.append(legacy_aliases)
 
         return [
             CrossSynthesizeTask(
                 characters_dirs=characters_dirs,
+                aliases_dirs=aliases_dirs,
                 souls_dir=self._project.souls_dir(),
                 runtime=self._registry.for_step(self.step_id),
             )

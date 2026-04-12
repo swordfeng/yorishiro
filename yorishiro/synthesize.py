@@ -20,6 +20,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Iterable
 
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -287,15 +288,127 @@ def load_insights(characters_dir: Path, character_name: str) -> str:
     return "(no insights accumulated yet)"
 
 
+def _iter_character_note_files(character_dir: Path) -> list[Path]:
+    """Return known per-character note file paths."""
+    if not character_dir.exists():
+        return []
+    return sorted(character_dir.glob("*.json"))
+
+
+def load_all_notes_from_dirs(character_dirs: Iterable[Path], character_name: str) -> list[dict]:
+    """Load and merge all scene notes for a character from multiple character dirs."""
+    all_notes: list[dict] = []
+    seen: set[str] = set()
+    for characters_dir in character_dirs:
+        char_dir = characters_dir / character_name
+        for notes_file in _iter_character_note_files(char_dir):
+            try:
+                raw = json.loads(notes_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(raw, list):
+                continue
+            for note in raw:
+                if not isinstance(note, dict):
+                    continue
+                key = json.dumps(note, ensure_ascii=False, sort_keys=True)
+                if key in seen:
+                    continue
+                seen.add(key)
+                all_notes.append(note)
+    all_notes.sort(key=lambda n: (n.get("chapter_index", 0), n.get("scene_index", 0)))
+    return all_notes
+
+
+def load_combined_insights(
+    character_name: str,
+    character_dirs: Iterable[Path],
+    alias_dirs: Iterable[Path],
+) -> str:
+    """Load and merge insights for a character from both characters and aliases steps."""
+    sections: list[str] = []
+
+    for characters_dir in character_dirs:
+        insights_path = characters_dir / character_name / "insights.md"
+        if insights_path.exists():
+            sections.append(
+                "## Character Insights\n\n"
+                f"<!-- source: {insights_path} -->\n"
+                f"{insights_path.read_text(encoding='utf-8')}"
+            )
+
+    for aliases_dir in alias_dirs:
+        insights_path = aliases_dir / character_name / "insights.md"
+        if insights_path.exists():
+            sections.append(
+                "## Alias Insights\n\n"
+                f"<!-- source: {insights_path} -->\n"
+                f"{insights_path.read_text(encoding='utf-8')}"
+            )
+
+    if not sections:
+        return "(no insights accumulated yet)"
+    return "\n\n".join(sections)
+
+
+def discover_target_characters(
+    character_dirs: Iterable[Path],
+    alias_dirs: Iterable[Path],
+) -> list[str]:
+    """Discover character names with any available synthesis inputs."""
+    names: set[str] = set()
+
+    for characters_dir in character_dirs:
+        if not characters_dir.exists():
+            continue
+        for char_dir in characters_dir.iterdir():
+            if not char_dir.is_dir():
+                continue
+            has_insights = (char_dir / "insights.md").exists()
+            has_notes = bool(_iter_character_note_files(char_dir))
+            if has_insights or has_notes:
+                names.add(char_dir.name)
+
+    for aliases_dir in alias_dirs:
+        if not aliases_dir.exists():
+            continue
+        for char_dir in aliases_dir.iterdir():
+            if char_dir.is_dir() and (char_dir / "insights.md").exists():
+                names.add(char_dir.name)
+
+    return sorted(names)
+
+
+def collect_character_source_paths(
+    character_name: str,
+    character_dirs: Iterable[Path],
+    alias_dirs: Iterable[Path],
+) -> list[Path]:
+    """Collect all source files that affect one character synthesis output."""
+    paths: list[Path] = []
+    for characters_dir in character_dirs:
+        char_dir = characters_dir / character_name
+        insights = char_dir / "insights.md"
+        if insights.exists():
+            paths.append(insights)
+        paths.extend(_iter_character_note_files(char_dir))
+    for aliases_dir in alias_dirs:
+        insights = aliases_dir / character_name / "insights.md"
+        if insights.exists():
+            paths.append(insights)
+    return paths
+
+
 async def synthesize_character(
     character_name: str,
-    characters_dir: Path,
+    character_dirs: list[Path],
+    alias_dirs: list[Path],
     souls_dir: Path,
     agent,
 ) -> None:
     """Generate final SOUL.md for one character."""
-    insights = load_insights(characters_dir, character_name)
-    all_notes = load_all_notes(characters_dir, character_name)
+    insights = load_combined_insights(character_name, character_dirs, alias_dirs)
+    all_notes = load_all_notes_from_dirs(character_dirs, character_name)
     
     notes_json = json.dumps(all_notes, ensure_ascii=False, indent=2)
     prompt = (
@@ -360,11 +473,21 @@ def main() -> None:
     project = Project.load(project_path)
     
     # Resolve paths
-    characters_dir = project.source_dir(args.source) / "characters"
+    characters_dirs = [project.step_dir(args.source, "characters")]
+    aliases_dirs = [project.step_dir(args.source, "aliases")]
+    legacy_characters_dir = project.source_dir(args.source) / "characters"
+    if legacy_characters_dir.exists() and legacy_characters_dir not in characters_dirs:
+        characters_dirs.append(legacy_characters_dir)
+    legacy_aliases_dir = project.source_dir(args.source) / "aliases"
+    if legacy_aliases_dir.exists() and legacy_aliases_dir not in aliases_dirs:
+        aliases_dirs.append(legacy_aliases_dir)
     souls_dir = project.souls_dir()
-    
-    if not characters_dir.exists():
-        print(f"Error: Characters directory not found: {characters_dir}", file=sys.stderr)
+
+    if not any(path.exists() for path in characters_dirs):
+        print(
+            f"Error: Characters directory not found: {characters_dirs[0]}",
+            file=sys.stderr,
+        )
         sys.exit(1)
     
     # Get model config
@@ -374,14 +497,12 @@ def main() -> None:
     if args.character:
         target_characters = args.character
     else:
-        # Find all characters with notes
-        target_characters = []
-        for char_dir in characters_dir.iterdir():
-            if char_dir.is_dir() and (char_dir / "insights.md").exists():
-                target_characters.append(char_dir.name)
-        
+        target_characters = discover_target_characters(characters_dirs, aliases_dirs)
         if not target_characters:
-            print(f"Error: No character data found in {characters_dir}", file=sys.stderr)
+            print(
+                f"Error: No character data found in {characters_dirs[0]}",
+                file=sys.stderr,
+            )
             sys.exit(1)
     
     # Filter out characters with up-to-date SOUL.md unless --force
@@ -390,9 +511,11 @@ def main() -> None:
         for name in target_characters:
             safe_name = name.replace("/", "_").replace("\\", "_").replace("\0", "")
             soul_path = souls_dir / f"{safe_name}.md"
-            char_dir = characters_dir / name
-            source_paths = [char_dir / "insights.md"]
-            source_paths.extend(char_dir.glob("ch*.json"))
+            source_paths = collect_character_source_paths(
+                name,
+                characters_dirs,
+                aliases_dirs,
+            )
             if not is_output_stale(soul_path, source_paths):
                 print(f"Skipping: {soul_path} is up-to-date (use --force to overwrite)")
             else:
@@ -416,7 +539,13 @@ def main() -> None:
     async def run() -> None:
         for name in target_characters:
             print(f"\nSynthesizing 「{name}」 ...", file=sys.stderr)
-            await synthesize_character(name, characters_dir, souls_dir, agent)
+            await synthesize_character(
+                name,
+                character_dirs=characters_dirs,
+                alias_dirs=aliases_dirs,
+                souls_dir=souls_dir,
+                agent=agent,
+            )
 
     asyncio.run(run())
 

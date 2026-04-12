@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -26,8 +27,10 @@ from yorishiro.audio._speech_support import (
     TranscribeKwargs,
     funasr_language,
     get_funasr_model,
+    get_qwen3_forced_aligner,
     get_transformers_pipeline,
     get_whisper_model,
+    qwen3_language,
     split_text_heuristically,
 )
 from yorishiro.models.film_models import STTEntry, STTTranscript
@@ -52,6 +55,169 @@ class TranscriberConfig:
     stt_min_segment_seconds: float = 0.3
     stt_extra_args: dict[str, Any] = field(default_factory=dict)
     language: str | None = None
+    forced_aligner_enabled: bool = False
+    forced_aligner_backend: str = "qwen3"
+    forced_aligner_model: str = "Qwen/Qwen3-ForcedAligner-0.6B"
+    forced_aligner_device: str | None = None
+    forced_aligner_min_confidence: float = 0.0
+    forced_aligner_merge_gap_seconds: float = 0.12
+
+
+@dataclass(frozen=True)
+class _AlignedToken:
+    text: str
+    start: float
+    end: float
+    confidence: float
+
+
+_PUNCTUATION_RE = re.compile(
+    r"[。！？!?、，,.；;：:…—–\-「」『』（）()【】\[\]《》〈〉\"\']"
+)
+
+
+def strip_punctuation_for_alignment(text: str) -> str:
+    return _PUNCTUATION_RE.sub("", text).strip()
+
+
+def compact_alignment_text(text: str) -> str:
+    return strip_punctuation_for_alignment(text).replace(" ", "")
+
+
+def build_display_to_align_map(display_text: str, align_text: str) -> list[int | None]:
+    pos_map: list[int | None] = [None] * len(display_text)
+    compact_align = compact_alignment_text(align_text)
+    ai = 0
+    for di in range(len(display_text)):
+        dc = display_text[di]
+        if _PUNCTUATION_RE.match(dc) or dc.isspace():
+            continue
+        if ai < len(compact_align) and compact_align[ai] == dc:
+            pos_map[di] = ai
+            ai += 1
+        elif ai < len(compact_align):
+            pos_map[di] = ai
+            ai += 1
+    return pos_map
+
+
+def _find_punctuation_breaks(text: str) -> list[int]:
+    breaks: list[int] = []
+    min_piece = 4
+    for i in range(len(text)):
+        if i < min_piece:
+            continue
+        if _PUNCTUATION_RE.match(text[i]):
+            breaks.append(i + 1)
+    return breaks
+
+
+def _token_display_ranges(
+    aligned_tokens: list[_AlignedToken],
+    align_text: str,
+    pos_map: list[int | None],
+) -> list[tuple[int, int, _AlignedToken]]:
+    reverse_map: dict[int, int] = {}
+    for di, ai in enumerate(pos_map):
+        if ai is not None:
+            reverse_map[ai] = di
+
+    compact_align = compact_alignment_text(align_text)
+    ranges: list[tuple[int, int, _AlignedToken]] = []
+    cursor = 0
+    for tok in aligned_tokens:
+        token_text = compact_alignment_text(tok.text)
+        if not token_text:
+            continue
+        start_ai = cursor
+        end_ai = start_ai + len(token_text) - 1
+        if start_ai >= len(compact_align):
+            break
+        if end_ai >= len(compact_align):
+            end_ai = len(compact_align) - 1
+        start_di = reverse_map.get(start_ai)
+        end_di = reverse_map.get(end_ai, start_di)
+        if start_di is None:
+            start_di = reverse_map.get(start_ai)
+        if start_di is not None:
+            if end_di is None or end_di < start_di:
+                end_di = start_di
+            ranges.append((start_di, end_di, tok))
+        cursor = end_ai + 1
+    return ranges
+
+
+def split_at_punctuation_aligned(
+    display_text: str,
+    aligned_tokens: list[_AlignedToken],
+    align_text: str,
+    pos_map: list[int | None],
+    group_start: float,
+    group_end: float,
+    min_segment_seconds: float,
+    merge_gap_seconds: float,
+) -> list[tuple[str, float, float]]:
+    if not display_text:
+        return []
+    if not aligned_tokens:
+        return [(display_text, group_start, group_end)]
+
+    token_ranges = _token_display_ranges(aligned_tokens, align_text, pos_map)
+
+    breaks = _find_punctuation_breaks(display_text)
+    boundaries = [0]
+    boundaries.extend(b for b in breaks if b < len(display_text))
+    if boundaries[-1] < len(display_text):
+        boundaries.append(len(display_text))
+
+    segments: list[tuple[str, float, float]] = []
+    for si in range(len(boundaries) - 1):
+        seg_start_di = boundaries[si]
+        seg_end_di = boundaries[si + 1]
+        seg_text = display_text[seg_start_di:seg_end_di].strip()
+        if not seg_text:
+            continue
+
+        seg_start_time: float | None = None
+        seg_end_time: float | None = None
+        for tok_start_di, tok_end_di, tok in token_ranges:
+            if tok_end_di < seg_start_di or tok_start_di >= seg_end_di:
+                continue
+            if seg_start_time is None or tok.start < seg_start_time:
+                seg_start_time = tok.start
+            if seg_end_time is None or tok.end > seg_end_time:
+                seg_end_time = tok.end
+
+        if seg_start_time is None:
+            if segments:
+                seg_start_time = segments[-1][2]
+            else:
+                seg_start_time = group_start
+        if seg_end_time is None:
+            seg_end_time = group_end
+
+        seg_start_time = max(seg_start_time, group_start)
+        seg_end_time = min(seg_end_time, group_end)
+
+        duration = seg_end_time - seg_start_time
+        if duration < min_segment_seconds and segments:
+            prev_text, prev_start, prev_end = segments.pop()
+            segments.append((prev_text + seg_text, prev_start, seg_end_time))
+            continue
+
+        segments.append((seg_text, seg_start_time, seg_end_time))
+
+    if not segments:
+        return [(display_text, group_start, group_end)]
+
+    merged_segments: list[tuple[str, float, float]] = [segments[0]]
+    for seg_text, seg_start, seg_end in segments[1:]:
+        prev_text, prev_start, prev_end = merged_segments[-1]
+        if seg_start - prev_end <= merge_gap_seconds:
+            merged_segments[-1] = (prev_text + seg_text, prev_start, seg_end)
+            continue
+        merged_segments.append((seg_text, seg_start, seg_end))
+    return merged_segments
 
 
 @dataclass(frozen=True)
@@ -80,6 +246,9 @@ class GroupResult:
     entries: list[dict[str, Any]]
     detected_language: str | None
     source_mtime: float
+    raw_text: str = ""
+    raw_alignment_text: str = ""
+    alignment_applied: bool = False
 
 
 class Transcriber:
@@ -178,6 +347,15 @@ class Transcriber:
 
         if not pending_groups:
             print(f"    [STT] Resuming from checkpoints for {len(groups)} group(s)")
+            completed = self._maybe_align_results(
+                groups,
+                completed,
+                audio_path=audio_path,
+                file_sample_rate=file_sample_rate,
+                language=language,
+                resample_module=audio_resample,
+                checkpoint_dir=checkpoint_dir,
+            )
             return self._assemble_transcript(groups, completed, language)
 
         with tqdm(
@@ -221,6 +399,15 @@ class Transcriber:
                         )
 
         completed.update({result.group_id: result for result in new_results})
+        completed = self._maybe_align_results(
+            groups,
+            completed,
+            audio_path=audio_path,
+            file_sample_rate=file_sample_rate,
+            language=language,
+            resample_module=audio_resample,
+            checkpoint_dir=checkpoint_dir,
+        )
         return self._assemble_transcript(groups, completed, language)
 
     def _transcribe_groups(
@@ -350,11 +537,14 @@ class Transcriber:
                 )
 
             segments, info = whisper_model.transcribe(chunk_audio, **transcribe_kwargs)
+            segment_list = list(segments)
 
             detected = getattr(info, "language", None)
             chunk_language = language or detected
             entries: list[dict[str, Any]] = []
-            for segment in segments:
+            raw_text_parts: list[str] = []
+            for segment in segment_list:
+                raw_text_parts.append(getattr(segment, "text", ""))
                 for entry in self._segment_to_entries(
                     segment, group.start, group.end, chunk_language
                 ):
@@ -369,6 +559,7 @@ class Transcriber:
                     entries=entries,
                     detected_language=detected,
                     source_mtime=source_mtime,
+                    raw_text="".join(raw_text_parts).strip(),
                 )
             )
             save_result(results[-1])
@@ -452,6 +643,7 @@ class Transcriber:
             detected = output.get("language", language)
             chunk_language = language or detected
             entries: list[dict[str, Any]] = []
+            raw_text = output.get("text", "").strip()
             for segment in self._transformers_chunks_to_segments(
                 output.get("chunks", []),
                 group.start,
@@ -473,6 +665,7 @@ class Transcriber:
                     entries=entries,
                     detected_language=detected,
                     source_mtime=source_mtime,
+                    raw_text=raw_text,
                 )
             )
             save_result(results[-1])
@@ -517,9 +710,11 @@ class Transcriber:
             )
 
             text = ""
+            text_tn = ""
             confidence = 0.0
             if res and len(res) > 0:
                 text = res[0].get("text", "").strip()
+                text_tn = res[0].get("text_tn", "").strip()
                 timestamps = res[0].get("timestamps")
                 if timestamps and isinstance(timestamps, list) and len(timestamps) > 0:
                     scores = [
@@ -546,6 +741,8 @@ class Transcriber:
                     entries=entries,
                     detected_language=language,
                     source_mtime=source_mtime,
+                    raw_text=text,
+                    raw_alignment_text=text_tn,
                 )
             )
             save_result(results[-1])
@@ -973,6 +1170,189 @@ class Transcriber:
             return
         self._save_group_results_batch(checkpoint_dir, pending_results)
         pending_results.clear()
+
+    def _maybe_align_results(
+        self,
+        groups: list[SpeechGroup],
+        completed: dict[str, GroupResult],
+        *,
+        audio_path: Path,
+        file_sample_rate: int,
+        language: str | None,
+        resample_module: Any,
+        checkpoint_dir: Path | None,
+    ) -> dict[str, GroupResult]:
+        if not self.config.forced_aligner_enabled:
+            return completed
+        if self.config.forced_aligner_backend != "qwen3":
+            raise ValueError(
+                f"Unsupported forced aligner backend: {self.config.forced_aligner_backend}"
+            )
+
+        print("    [STT] Running forced alignment pass ...")
+        aligned_results: dict[str, GroupResult] = {}
+        changed_results: list[GroupResult] = []
+        for group in groups:
+            result = completed.get(group.group_id)
+            if result is None:
+                continue
+            if result.alignment_applied:
+                aligned_results[group.group_id] = result
+                continue
+            try:
+                aligned = self._align_group_result(
+                    result,
+                    audio_path=audio_path,
+                    file_sample_rate=file_sample_rate,
+                    language=language,
+                    resample_module=resample_module,
+                )
+            except Exception:
+                print(
+                    f"    [STT] Alignment failed for group {group.group_id}, keeping STT results"
+                )
+                aligned = result
+            aligned_results[group.group_id] = aligned
+            if aligned is not result:
+                changed_results.append(aligned)
+
+        completed.update(aligned_results)
+        if checkpoint_dir is not None and changed_results:
+            self._save_group_results_batch(checkpoint_dir, changed_results)
+        return completed
+
+    def _align_group_result(
+        self,
+        result: GroupResult,
+        audio_path: Path,
+        file_sample_rate: int,
+        language: str | None,
+        resample_module: Any,
+    ) -> GroupResult:
+        if not self.config.forced_aligner_enabled:
+            return result
+        if result.alignment_applied:
+            return result
+        if not result.entries:
+            return result
+
+        stt_text_parts: list[str] = []
+        stt_confidences: list[float] = []
+        for entry_dict in result.entries:
+            text = entry_dict.get("text", "")
+            conf = entry_dict.get("confidence", 0.0)
+            if text:
+                stt_text_parts.append(text)
+                stt_confidences.append(conf)
+
+        display_text = result.raw_text.strip() or "".join(stt_text_parts).strip()
+        align_text = result.raw_alignment_text.strip() or strip_punctuation_for_alignment(
+            display_text
+        )
+        if not align_text.strip():
+            return result
+
+        stt_confidence = sum(stt_confidences) / len(stt_confidences) if stt_confidences else 0.0
+
+        aligner = get_qwen3_forced_aligner(
+            self.config.forced_aligner_model,
+            device=self.config.forced_aligner_device or None,
+        )
+        align_lang = qwen3_language(language or result.detected_language)
+
+        start_frame = int(result.start * file_sample_rate)
+        end_frame = int(result.end * file_sample_rate)
+        chunk_audio, _ = sf.read(str(audio_path), start=start_frame, stop=end_frame, dtype="float32")
+        if getattr(chunk_audio, "ndim", 1) > 1:
+            chunk_audio = chunk_audio.mean(axis=1)
+        if file_sample_rate != 16000:
+            chunk_audio = resample_module.resample(
+                chunk_audio, orig_sr=file_sample_rate, target_sr=16000
+            )
+
+        try:
+            align_results = aligner.align(
+                audio=(chunk_audio, 16000),
+                text=align_text,
+                language=align_lang,
+            )
+        except Exception:
+            print(f"    [STT] Forced alignment failed for group {result.group_id}, using STT-only entries")
+            return result
+
+        if not align_results or not align_results[0]:
+            return result
+
+        aligned_tokens: list[_AlignedToken] = []
+        for item in align_results[0]:
+            token_text = strip_punctuation_for_alignment(getattr(item, "text", ""))
+            if not token_text:
+                continue
+            aligned_tokens.append(
+                _AlignedToken(
+                    text=token_text,
+                    start=result.start + float(getattr(item, "start_time", 0.0)),
+                    end=result.start + float(getattr(item, "end_time", result.end - result.start)),
+                    confidence=getattr(item, "confidence", 0.0),
+                )
+            )
+
+        if not aligned_tokens:
+            return result
+
+        compact_align_text = compact_alignment_text(align_text)
+        coverage = sum(len(compact_alignment_text(token.text)) for token in aligned_tokens) / max(
+            len(compact_align_text), 1
+        )
+        coverage = min(max(coverage, 0.0), 1.0)
+        if coverage < self.config.forced_aligner_min_confidence:
+            return result
+
+        pos_map = build_display_to_align_map(display_text, align_text)
+        segments = split_at_punctuation_aligned(
+            display_text,
+            aligned_tokens,
+            align_text,
+            pos_map,
+            result.start,
+            result.end,
+            self.config.stt_min_segment_seconds,
+            self.config.forced_aligner_merge_gap_seconds,
+        )
+
+        scored_tokens = [t.confidence for t in aligned_tokens if t.confidence > 0]
+        align_confidence = coverage
+        if scored_tokens:
+            align_confidence = min(
+                1.0,
+                max(0.0, sum(scored_tokens) / len(scored_tokens)) * coverage,
+            )
+
+        new_entries: list[dict[str, Any]] = []
+        for seg_text, seg_start, seg_end in segments:
+            entry_dict: dict[str, Any] = {
+                "text": seg_text,
+                "start": seg_start,
+                "end": seg_end,
+                "confidence": stt_confidence,
+                "stt_confidence": stt_confidence,
+                "alignment_confidence": align_confidence,
+            }
+            new_entries.append(entry_dict)
+
+        return GroupResult(
+            group_id=result.group_id,
+            span_start_idx=result.span_start_idx,
+            span_end_idx=result.span_end_idx,
+            start=result.start,
+            end=result.end,
+            entries=new_entries if new_entries else result.entries,
+            detected_language=result.detected_language,
+            source_mtime=result.source_mtime,
+            raw_text=display_text,
+            raw_alignment_text=align_text,
+            alignment_applied=bool(new_entries),
+        )
 
     def _assemble_transcript(
         self,

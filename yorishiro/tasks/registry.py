@@ -208,6 +208,12 @@ class ModelRegistry:
             str(cfg.get("max_chars_per_second", "")),
             str(cfg.get("min_segment_seconds", "")),
             str(cfg.get("language", "")),
+            str(cfg.get("forced_aligner_enabled", "")),
+            str(cfg.get("forced_aligner_backend", "")),
+            str(cfg.get("forced_aligner_model", "")),
+            str(cfg.get("forced_aligner_device", "")),
+            str(cfg.get("forced_aligner_min_confidence", "")),
+            str(cfg.get("forced_aligner_merge_gap_seconds", "")),
         ]
         return "film.audio.stt::" + "|".join(parts)
 
@@ -362,6 +368,18 @@ class ModelRegistry:
             kwargs["language"] = cfg["language"]
         if cfg.get("extra_args") is not None:
             kwargs["stt_extra_args"] = dict(cfg["extra_args"])
+        if cfg.get("forced_aligner_enabled") is not None:
+            kwargs["forced_aligner_enabled"] = _parse_bool(cfg["forced_aligner_enabled"])
+        if cfg.get("forced_aligner_backend") is not None:
+            kwargs["forced_aligner_backend"] = cfg["forced_aligner_backend"]
+        if cfg.get("forced_aligner_model") is not None:
+            kwargs["forced_aligner_model"] = cfg["forced_aligner_model"]
+        if cfg.get("forced_aligner_device") is not None:
+            kwargs["forced_aligner_device"] = cfg["forced_aligner_device"]
+        if cfg.get("forced_aligner_min_confidence") is not None:
+            kwargs["forced_aligner_min_confidence"] = float(cfg["forced_aligner_min_confidence"])
+        if cfg.get("forced_aligner_merge_gap_seconds") is not None:
+            kwargs["forced_aligner_merge_gap_seconds"] = float(cfg["forced_aligner_merge_gap_seconds"])
 
         return Transcriber(TranscriberConfig(**kwargs))
 

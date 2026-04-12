@@ -91,6 +91,34 @@ class FunASRModelLike(Protocol):
     def generate(self, input: Any, **kwargs: Any) -> Any: ...
 
 
+class ForcedAlignerLike(Protocol):
+    def align(self, audio: Any, text: str | list[str], language: str | list[str], **kwargs: Any) -> Any: ...
+
+
+_QWEN3_LANGUAGE_MAP: dict[str, str] = {
+    "zh": "Chinese",
+    "yue": "Cantonese",
+    "en": "English",
+    "de": "German",
+    "es": "Spanish",
+    "fr": "French",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "ko": "Korean",
+    "ja": "Japanese",
+}
+
+
+def qwen3_language(language: str | None) -> str:
+    if not language:
+        return "English"
+    normalized = normalize_language(language)
+    if normalized is None:
+        return "English"
+    return _QWEN3_LANGUAGE_MAP.get(normalized, "English")
+
+
 _FUNASR_LANGUAGE_MAP: dict[str, str] = {
     "ja": "日文",
     "en": "英文",
@@ -140,6 +168,7 @@ _WHISPER_MODELS: dict[tuple[str, int, int], WhisperModelLike] = {}
 _TRANSFORMERS_PIPELINES: dict[tuple[str, str, str], TransformersPipelineLike] = {}
 _EMOTION_MODELS: dict[tuple[str, str], EmotionModelLike] = {}
 _FUNASR_MODELS: dict[tuple[str, str], FunASRModelLike] = {}
+_FORCED_ALIGNERS: dict[tuple[str, str], ForcedAlignerLike] = {}
 
 
 def get_diarization_pipeline(config: DiarizerConfigLike) -> DiarizationPipelineLike:
@@ -244,6 +273,33 @@ def get_funasr_model(config: TranscriberConfigLike, *, instance_key: str = "defa
     print(f"    [STT] Loaded FunASR model {model_name} on {device}")
     _FUNASR_MODELS[key] = cast(FunASRModelLike, model)
     return cast(FunASRModelLike, model)
+
+
+def get_qwen3_forced_aligner(
+    model_name: str,
+    *,
+    device: str | None = None,
+    dtype: Any = None,
+    instance_key: str = "default",
+) -> ForcedAlignerLike:
+    from qwen_asr import Qwen3ForcedAligner
+
+    if device is None:
+        device = get_device()
+    key = (f"{model_name}:{instance_key}", device)
+    cached = _FORCED_ALIGNERS.get(key)
+    if cached is not None:
+        return cast(ForcedAlignerLike, cached)
+
+    kwargs: dict[str, Any] = {
+        "device_map": device,
+    }
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    aligner = Qwen3ForcedAligner.from_pretrained(model_name, **kwargs)
+    print(f"    [STT] Loaded forced aligner {model_name} on {device}")
+    _FORCED_ALIGNERS[key] = cast(ForcedAlignerLike, aligner)
+    return cast(ForcedAlignerLike, aligner)
 
 
 def get_emotion_model(config: EmotionAnalyzerConfigLike) -> EmotionModelLike:

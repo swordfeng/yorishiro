@@ -81,6 +81,14 @@ class STTEntry(BaseModel):
     end: float = Field(description="End time in seconds")
     text: str = Field(description="Transcribed text")
     confidence: float = Field(description="Transcription confidence")
+    stt_confidence: float | None = Field(
+        default=None,
+        description="Raw STT backend confidence score",
+    )
+    alignment_confidence: float | None = Field(
+        default=None,
+        description="Forced aligner token-level confidence",
+    )
 
 
 class STTTranscript(BaseModel):

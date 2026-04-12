@@ -50,6 +50,7 @@ film = [
     "nemo-toolkit>=2.7.2",
     "fiddle>=0.3.0",
     "soxr>=1.0.0",
+    "qwen-asr>=0.0.4",
 ]
 
 [build-system]

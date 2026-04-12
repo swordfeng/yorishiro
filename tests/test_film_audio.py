@@ -27,6 +27,7 @@ from yorishiro.audio.speaker_attribution import (
 )
 from yorishiro.audio.transcription import (
     GroupResult,
+    SpeechSpan,
     SpeechGroup,
     Transcriber,
     TranscriberConfig,
@@ -941,6 +942,7 @@ class FunASRBackendTests(unittest.TestCase):
 
         with (
             patch("yorishiro.audio.transcription.sf.read") as mock_read,
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
             patch(
                 "yorishiro.audio.transcription.get_funasr_model",
                 return_value=fake_model,
@@ -967,6 +969,8 @@ class FunASRBackendTests(unittest.TestCase):
         self.assertEqual(results[0].entries[0]["text"], "これはテストです。")
         self.assertAlmostEqual(results[0].entries[0]["confidence"], (0.95 + 0.90 + 0.88) / 3, places=4)
         self.assertEqual(results[0].detected_language, "ja")
+        self.assertEqual(results[0].raw_text, "これはテストです。")
+        self.assertEqual(results[0].raw_alignment_text, "これはテストです")
         self.assertEqual(fake_model.calls, 1)
 
     def test_funasr_worker_groups_without_timestamps_uses_zero_confidence(self) -> None:
@@ -998,6 +1002,7 @@ class FunASRBackendTests(unittest.TestCase):
 
         with (
             patch("yorishiro.audio.transcription.sf.read") as mock_read,
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
             patch(
                 "yorishiro.audio.transcription.get_funasr_model",
                 return_value=FakeFunASRModel(),
@@ -1044,6 +1049,7 @@ class FunASRBackendTests(unittest.TestCase):
 
         with (
             patch("yorishiro.audio.transcription.sf.read") as mock_read,
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
             patch(
                 "yorishiro.audio.transcription.get_funasr_model",
                 return_value=FakeFunASRModel(),
@@ -1073,11 +1079,20 @@ class FunASRBackendTests(unittest.TestCase):
             stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
         )
         transcriber = Transcriber(config)
+        groups = [
+            SpeechGroup(
+                group_id="g_000000_000000",
+                span_start_idx=0,
+                span_end_idx=0,
+                start=0.0,
+                end=1.0,
+            ),
+        ]
         with patch.object(
             transcriber, "_run_worker_groups_funasr", return_value=[]
         ) as mock_funasr:
             transcriber._run_worker_groups(
-                groups=[],
+                groups=groups,
                 worker_idx=0,
                 worker_config=config,
                 audio_path=Path("/tmp/test.wav"),
@@ -1090,6 +1105,319 @@ class FunASRBackendTests(unittest.TestCase):
                 save_result=lambda _r: None,
             )
         mock_funasr.assert_called_once()
+
+
+class ForcedAlignerConfigTests(unittest.TestCase):
+    def test_default_aligner_is_disabled(self) -> None:
+        config = TranscriberConfig()
+        self.assertFalse(config.forced_aligner_enabled)
+        self.assertEqual(config.forced_aligner_backend, "qwen3")
+        self.assertEqual(config.forced_aligner_model, "Qwen/Qwen3-ForcedAligner-0.6B")
+
+    def test_aligner_config_fields(self) -> None:
+        config = TranscriberConfig(
+            forced_aligner_enabled=True,
+            forced_aligner_backend="qwen3",
+            forced_aligner_model="Qwen/Qwen3-ForcedAligner-0.6B",
+            forced_aligner_device="cuda",
+            forced_aligner_min_confidence=0.3,
+            forced_aligner_merge_gap_seconds=0.2,
+        )
+        self.assertTrue(config.forced_aligner_enabled)
+        self.assertEqual(config.forced_aligner_backend, "qwen3")
+        self.assertEqual(config.forced_aligner_device, "cuda")
+
+
+class StripPunctuationTests(unittest.TestCase):
+    def test_strips_japanese_punctuation(self) -> None:
+        from yorishiro.audio.transcription import strip_punctuation_for_alignment
+
+        self.assertEqual(strip_punctuation_for_alignment("こんにちは。世界！"), "こんにちは世界")
+
+    def test_strips_english_punctuation(self) -> None:
+        from yorishiro.audio.transcription import strip_punctuation_for_alignment
+
+        self.assertEqual(strip_punctuation_for_alignment("Hello, world! How are you?"), "Hello world How are you")
+
+    def test_preserves_cjk_chars(self) -> None:
+        from yorishiro.audio.transcription import strip_punctuation_for_alignment
+
+        self.assertEqual(strip_punctuation_for_alignment("これはテストです"), "これはテストです")
+
+    def test_empty_string(self) -> None:
+        from yorishiro.audio.transcription import strip_punctuation_for_alignment
+
+        self.assertEqual(strip_punctuation_for_alignment(""), "")
+
+
+class BuildDisplayToAlignMapTests(unittest.TestCase):
+    def test_basic_mapping(self) -> None:
+        from yorishiro.audio.transcription import build_display_to_align_map
+
+        display = "こんにちは。"
+        align = "こんにちは"
+        pos_map = build_display_to_align_map(display, align)
+        assert pos_map[0] == 0  # こ
+        assert pos_map[1] == 1  # ん
+        assert pos_map[2] == 2  # に
+        assert pos_map[3] == 3  # ち
+        assert pos_map[4] == 4  # は
+        assert pos_map[5] is None  # 。
+
+    def test_english_punctuation_mapping(self) -> None:
+        from yorishiro.audio.transcription import build_display_to_align_map
+
+        display = "Hi, there!"
+        align = "Hi there"
+        pos_map = build_display_to_align_map(display, align)
+        assert pos_map[0] == 0  # H
+        assert pos_map[1] == 1  # i
+        assert pos_map[2] is None  # ,
+        assert pos_map[3] is None  # space
+        assert pos_map[4] == 2  # t
+
+
+class STTEntryAlignmentFieldsTests(unittest.TestCase):
+    def test_stt_entry_accepts_optional_alignment_fields(self) -> None:
+        entry = STTEntry(
+            entry_id="utt_000000",
+            start=0.0,
+            end=1.0,
+            text="こんにちは",
+            confidence=0.9,
+            stt_confidence=0.85,
+            alignment_confidence=0.92,
+        )
+        self.assertEqual(entry.stt_confidence, 0.85)
+        self.assertEqual(entry.alignment_confidence, 0.92)
+
+    def test_stt_entry_defaults_alignment_fields_to_none(self) -> None:
+        entry = STTEntry(
+            entry_id="utt_000000",
+            start=0.0,
+            end=1.0,
+            text="こんにちは",
+            confidence=0.9,
+        )
+        self.assertIsNone(entry.stt_confidence)
+        self.assertIsNone(entry.alignment_confidence)
+
+    def test_stt_entry_backward_compatible_without_new_fields(self) -> None:
+        data = {
+            "entry_id": "utt_000000",
+            "start": 0.0,
+            "end": 1.0,
+            "text": "こんにちは",
+            "confidence": 0.9,
+        }
+        entry = STTEntry(**data)
+        self.assertEqual(entry.text, "こんにちは")
+        self.assertEqual(entry.confidence, 0.9)
+        self.assertIsNone(entry.stt_confidence)
+        self.assertIsNone(entry.alignment_confidence)
+
+
+class Qwen3LanguageMappingTests(unittest.TestCase):
+    def test_common_languages_map_to_names(self) -> None:
+        from yorishiro.audio._speech_support import qwen3_language
+
+        self.assertEqual(qwen3_language("ja"), "Japanese")
+        self.assertEqual(qwen3_language("en"), "English")
+        self.assertEqual(qwen3_language("zh"), "Chinese")
+        self.assertEqual(qwen3_language("ko"), "Korean")
+
+    def test_none_language_returns_english(self) -> None:
+        from yorishiro.audio._speech_support import qwen3_language
+
+        self.assertEqual(qwen3_language(None), "English")
+
+    def test_unknown_language_defaults_to_english(self) -> None:
+        from yorishiro.audio._speech_support import qwen3_language
+
+        self.assertEqual(qwen3_language("xx"), "English")
+
+    def test_normalizes_language_before_mapping(self) -> None:
+        from yorishiro.audio._speech_support import qwen3_language
+
+        self.assertEqual(qwen3_language("ja-JP"), "Japanese")
+        self.assertEqual(qwen3_language("en-US"), "English")
+
+
+class ForcedAlignerRegistryTests(unittest.TestCase):
+    def test_aligner_config_in_cache_key_contains_aligner_fields(self) -> None:
+        cfg = {
+            "backend": "funasr",
+            "model": "FunASRNano",
+            "forced_aligner_enabled": True,
+            "forced_aligner_model": "Qwen/Qwen3-ForcedAligner-0.6B",
+        }
+        parts = [
+            "transcriber",
+            str(cfg.get("backend", "")),
+            str(cfg.get("model", "")),
+            str(cfg.get("forced_aligner_enabled", "")),
+            str(cfg.get("forced_aligner_model", "")),
+        ]
+        key = "film.audio.stt::" + "|".join(parts)
+        self.assertIn("True", key)
+        self.assertIn("Qwen", key)
+
+
+class ForcedAlignmentFlowTests(unittest.TestCase):
+    def test_align_group_result_rebases_chunk_relative_timestamps(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                forced_aligner_enabled=True,
+                forced_aligner_model="Qwen/Qwen3-ForcedAligner-0.6B",
+                forced_aligner_merge_gap_seconds=0.05,
+            )
+        )
+        result = GroupResult(
+            group_id="g_000000_000000",
+            span_start_idx=0,
+            span_end_idx=0,
+            start=5.0,
+            end=8.0,
+            entries=[
+                {"text": "Hello, world!", "start": 5.0, "end": 8.0, "confidence": 0.7},
+            ],
+            detected_language="en",
+            source_mtime=1.0,
+            raw_text="Hello, world!",
+            raw_alignment_text="Hello world",
+        )
+
+        captured_audio: list[object] = []
+
+        class FakeAligner:
+            def align(self, audio, text, language, **kwargs):
+                del kwargs
+                captured_audio.append(audio)
+                self.text = text
+                self.language = language
+                return [[
+                    SimpleNamespace(text="Hello", start_time=0.2, end_time=0.8),
+                    SimpleNamespace(text="world", start_time=0.9, end_time=1.5),
+                ]]
+
+        with (
+            patch("yorishiro.audio.transcription.get_qwen3_forced_aligner", return_value=FakeAligner()),
+            patch("yorishiro.audio.transcription.sf.read", return_value=(np.zeros(48000, dtype=np.float32), 16000)),
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
+        ):
+            aligned = transcriber._align_group_result(
+                result,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="en",
+                resample_module=types.SimpleNamespace(resample=lambda audio, **_kw: audio),
+            )
+
+        self.assertTrue(aligned.alignment_applied)
+        self.assertEqual(len(aligned.entries), 2)
+        self.assertAlmostEqual(aligned.entries[0]["start"], 5.2, places=3)
+        self.assertAlmostEqual(aligned.entries[0]["end"], 5.8, places=3)
+        self.assertAlmostEqual(aligned.entries[1]["start"], 5.9, places=3)
+        self.assertAlmostEqual(aligned.entries[1]["end"], 6.5, places=3)
+        assert isinstance(captured_audio[0], tuple)
+        self.assertEqual(captured_audio[0][1], 16000)
+
+    def test_align_group_result_uses_raw_text_without_inserting_spaces(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                forced_aligner_enabled=True,
+                forced_aligner_model="Qwen/Qwen3-ForcedAligner-0.6B",
+            )
+        )
+        result = GroupResult(
+            group_id="g_000000_000000",
+            span_start_idx=0,
+            span_end_idx=0,
+            start=0.0,
+            end=2.0,
+            entries=[
+                {"text": "こんにちは。", "start": 0.0, "end": 1.0, "confidence": 0.7},
+                {"text": "世界！", "start": 1.0, "end": 2.0, "confidence": 0.7},
+            ],
+            detected_language="ja",
+            source_mtime=1.0,
+            raw_text="こんにちは。世界！",
+            raw_alignment_text="こんにちは世界",
+        )
+
+        class FakeAligner:
+            def __init__(self) -> None:
+                self.seen_text = ""
+
+            def align(self, audio, text, language, **kwargs):
+                del audio, language, kwargs
+                self.seen_text = text
+                return [[
+                    SimpleNamespace(text="こんにちは", start_time=0.0, end_time=0.9),
+                    SimpleNamespace(text="世界", start_time=1.0, end_time=1.8),
+                ]]
+
+        fake_aligner = FakeAligner()
+        with (
+            patch("yorishiro.audio.transcription.get_qwen3_forced_aligner", return_value=fake_aligner),
+            patch("yorishiro.audio.transcription.sf.read", return_value=(np.zeros(32000, dtype=np.float32), 16000)),
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
+        ):
+            aligned = transcriber._align_group_result(
+                result,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="ja",
+                resample_module=types.SimpleNamespace(resample=lambda audio, **_kw: audio),
+            )
+
+        self.assertEqual(fake_aligner.seen_text, "こんにちは世界")
+        self.assertEqual(aligned.raw_text, "こんにちは。世界！")
+
+    def test_run_transcription_aligns_when_resuming_from_checkpoints(self) -> None:
+        transcriber = Transcriber(TranscriberConfig(forced_aligner_enabled=True))
+        group = SpeechGroup(
+            group_id="g_000000_000000",
+            span_start_idx=0,
+            span_end_idx=0,
+            start=0.0,
+            end=1.0,
+        )
+        completed = {
+            group.group_id: GroupResult(
+                group_id=group.group_id,
+                span_start_idx=group.span_start_idx,
+                span_end_idx=group.span_end_idx,
+                start=group.start,
+                end=group.end,
+                entries=[{"text": "a", "start": 0.0, "end": 1.0, "confidence": 0.5}],
+                detected_language="en",
+                source_mtime=1.0,
+            )
+        }
+
+        with (
+            patch("yorishiro.audio.transcription.sf.SoundFile") as FakeSoundFile,
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
+            patch.object(transcriber, "_speech_spans", return_value=[SpeechSpan(index=0, start=0.0, end=1.0)]),
+            patch.object(transcriber, "_build_speech_groups", return_value=[group]),
+            patch.object(transcriber, "_prepare_checkpoint_dir", return_value=Path("/tmp/.stt_checkpoints")),
+            patch.object(transcriber, "_load_group_results", return_value=completed),
+            patch.object(transcriber, "_maybe_align_results", wraps=transcriber._maybe_align_results) as maybe_align,
+            patch.object(transcriber, "_assemble_transcript", return_value=STTTranscript(language="en", entries=[])),
+        ):
+            FakeSoundFile.return_value.__enter__ = lambda s: SimpleNamespace(samplerate=16000, frames=16000)
+            FakeSoundFile.return_value.__exit__ = lambda s, *a: None
+            with patch.object(transcriber, "_align_group_result", side_effect=lambda result, **kwargs: result):
+                transcriber._run_transcription(
+                    Path("/tmp/test.wav"),
+                    [{"start": 0.0, "end": 1.0}],
+                    "en",
+                    output_dir=Path("/tmp"),
+                    input_signature="sig",
+                )
+
+        maybe_align.assert_called_once()
 
 
 class SpeakerAttributorTests(unittest.TestCase):

@@ -865,6 +865,233 @@ class TranscriberTests(unittest.TestCase):
         self.assertEqual(config.stt_extra_args, {})
 
 
+class FunASRLanguageMappingTests(unittest.TestCase):
+    def test_common_languages_map_to_chinese_names(self) -> None:
+        from yorishiro.audio._speech_support import funasr_language
+
+        self.assertEqual(funasr_language("ja"), "日文")
+        self.assertEqual(funasr_language("en"), "英文")
+        self.assertEqual(funasr_language("zh"), "中文")
+        self.assertEqual(funasr_language("ko"), "韩文")
+
+    def test_none_language_returns_auto(self) -> None:
+        from yorishiro.audio._speech_support import funasr_language
+
+        self.assertEqual(funasr_language(None), "auto")
+
+    def test_unknown_language_passes_through(self) -> None:
+        from yorishiro.audio._speech_support import funasr_language
+
+        self.assertEqual(funasr_language("fr"), "fr")
+
+    def test_normalizes_language_before_mapping(self) -> None:
+        from yorishiro.audio._speech_support import funasr_language
+
+        self.assertEqual(funasr_language("ja-JP"), "日文")
+        self.assertEqual(funasr_language("en-US"), "英文")
+
+
+class FunASRBackendTests(unittest.TestCase):
+    def test_funasr_config_instantiates_correctly(self) -> None:
+        config = TranscriberConfig(
+            stt_backend="funasr",
+            stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+        )
+        self.assertEqual(config.stt_backend, "funasr")
+        self.assertEqual(config.stt_model, "FunAudioLLM/Fun-ASR-MLT-Nano-2512")
+
+    def test_funasr_worker_groups_processes_single_group(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                stt_backend="funasr",
+                stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+            )
+        )
+        groups = [
+            SpeechGroup(
+                group_id="g_000000_000000",
+                span_start_idx=0,
+                span_end_idx=0,
+                start=5.0,
+                end=7.5,
+            ),
+        ]
+
+        class FakeFunASRModel:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate(self, input, **kwargs):
+                self.calls += 1
+                return [
+                    {
+                        "key": "utt_0",
+                        "text": "これはテストです。",
+                        "text_tn": "これはテストです",
+                        "timestamps": [
+                            {"token": "こ", "start_time": 5.0, "end_time": 5.2, "score": 0.95},
+                            {"token": "れ", "start_time": 5.2, "end_time": 5.4, "score": 0.90},
+                            {"token": "は", "start_time": 5.4, "end_time": 5.6, "score": 0.88},
+                        ],
+                    }
+                ]
+
+        fake_model = FakeFunASRModel()
+        saved_results: list[GroupResult] = []
+
+        with (
+            patch("yorishiro.audio.transcription.sf.read") as mock_read,
+            patch(
+                "yorishiro.audio.transcription.get_funasr_model",
+                return_value=fake_model,
+            ),
+        ):
+            mock_read.return_value = (np.zeros(40000, dtype=np.float32), 16000)
+            results = transcriber._run_worker_groups_funasr(
+                groups,
+                worker_idx=0,
+                worker_config=transcriber.config,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="ja",
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+                update_progress=lambda _delta: None,
+                save_result=lambda result: saved_results.append(result),
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].group_id, "g_000000_000000")
+        self.assertGreater(len(results[0].entries), 0)
+        self.assertEqual(results[0].entries[0]["text"], "これはテストです。")
+        self.assertAlmostEqual(results[0].entries[0]["confidence"], (0.95 + 0.90 + 0.88) / 3, places=4)
+        self.assertEqual(results[0].detected_language, "ja")
+        self.assertEqual(fake_model.calls, 1)
+
+    def test_funasr_worker_groups_without_timestamps_uses_zero_confidence(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                stt_backend="funasr",
+                stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+            )
+        )
+        groups = [
+            SpeechGroup(
+                group_id="g_000000_000000",
+                span_start_idx=0,
+                span_end_idx=0,
+                start=0.0,
+                end=2.0,
+            ),
+        ]
+
+        class FakeFunASRModel:
+            def generate(self, input, **kwargs):
+                return [
+                    {
+                        "key": "utt_0",
+                        "text": "Hello world",
+                        "text_tn": "Hello world",
+                    }
+                ]
+
+        with (
+            patch("yorishiro.audio.transcription.sf.read") as mock_read,
+            patch(
+                "yorishiro.audio.transcription.get_funasr_model",
+                return_value=FakeFunASRModel(),
+            ),
+        ):
+            mock_read.return_value = (np.zeros(32000, dtype=np.float32), 16000)
+            results = transcriber._run_worker_groups_funasr(
+                groups,
+                worker_idx=0,
+                worker_config=transcriber.config,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="en",
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+                update_progress=lambda _delta: None,
+                save_result=lambda _r: None,
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertAlmostEqual(results[0].entries[0]["confidence"], 0.0)
+
+    def test_funasr_worker_groups_empty_text_produces_no_entries(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                stt_backend="funasr",
+                stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+            )
+        )
+        groups = [
+            SpeechGroup(
+                group_id="g_000000_000000",
+                span_start_idx=0,
+                span_end_idx=0,
+                start=0.0,
+                end=1.0,
+            ),
+        ]
+
+        class FakeFunASRModel:
+            def generate(self, input, **kwargs):
+                return [{"key": "utt_0", "text": ""}]
+
+        with (
+            patch("yorishiro.audio.transcription.sf.read") as mock_read,
+            patch(
+                "yorishiro.audio.transcription.get_funasr_model",
+                return_value=FakeFunASRModel(),
+            ),
+        ):
+            mock_read.return_value = (np.zeros(16000, dtype=np.float32), 16000)
+            results = transcriber._run_worker_groups_funasr(
+                groups,
+                worker_idx=0,
+                worker_config=transcriber.config,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language=None,
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+                update_progress=lambda _delta: None,
+                save_result=lambda _r: None,
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(results[0].entries), 0)
+
+    def test_funasr_dispatches_to_funasr_worker(self) -> None:
+        config = TranscriberConfig(
+            stt_backend="funasr",
+            stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+        )
+        transcriber = Transcriber(config)
+        with patch.object(
+            transcriber, "_run_worker_groups_funasr", return_value=[]
+        ) as mock_funasr:
+            transcriber._run_worker_groups(
+                groups=[],
+                worker_idx=0,
+                worker_config=config,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="ja",
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+                update_progress=lambda _delta: None,
+                save_result=lambda _r: None,
+            )
+        mock_funasr.assert_called_once()
+
+
 class SpeakerAttributorTests(unittest.TestCase):
     def test_unknown_attribution_preserves_stt_entry_ids(self) -> None:
         attributor = SpeakerAttributor()

@@ -207,6 +207,7 @@ class ModelRegistry:
             str(cfg.get("min_confidence", "")),
             str(cfg.get("max_chars_per_second", "")),
             str(cfg.get("min_segment_seconds", "")),
+            str(cfg.get("language", "")),
         ]
         return "film.audio.stt::" + "|".join(parts)
 

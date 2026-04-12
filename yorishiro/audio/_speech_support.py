@@ -87,10 +87,59 @@ class EmotionModelLike(Protocol):
     def generate(self, **kwargs: Any) -> Any: ...
 
 
+class FunASRModelLike(Protocol):
+    def generate(self, input: Any, **kwargs: Any) -> Any: ...
+
+
+_FUNASR_LANGUAGE_MAP: dict[str, str] = {
+    "ja": "日文",
+    "en": "英文",
+    "zh": "中文",
+    "ko": "韩文",
+    "vi": "越南语",
+    "th": "泰语",
+    "id": "印尼语",
+    "ms": "马来语",
+    "fil": "菲律宾语",
+    "ar": "阿拉伯语",
+    "hi": "印地语",
+    "bg": "保加利亚语",
+    "hr": "克罗地亚语",
+    "cs": "捷克语",
+    "da": "丹麦语",
+    "nl": "荷兰语",
+    "et": "爱沙尼亚语",
+    "fi": "芬兰语",
+    "el": "希腊语",
+    "hu": "匈牙利语",
+    "ga": "爱尔兰语",
+    "lv": "拉脱维亚语",
+    "lt": "立陶宛语",
+    "mt": "马耳他语",
+    "pl": "波兰语",
+    "pt": "葡萄牙语",
+    "ro": "罗马尼亚语",
+    "sk": "斯洛伐克语",
+    "sl": "斯洛文尼亚语",
+    "sv": "瑞典语",
+    "yue": "粤语",
+}
+
+
+def funasr_language(language: str | None) -> str:
+    if not language:
+        return "auto"
+    normalized = normalize_language(language)
+    if normalized is None:
+        return "auto"
+    return _FUNASR_LANGUAGE_MAP.get(normalized, normalized)
+
+
 _DIARIZATION_PIPELINES: dict[tuple[str, int, str], DiarizationPipelineLike] = {}
 _WHISPER_MODELS: dict[tuple[str, int, int], WhisperModelLike] = {}
 _TRANSFORMERS_PIPELINES: dict[tuple[str, str, str], TransformersPipelineLike] = {}
 _EMOTION_MODELS: dict[tuple[str, str], EmotionModelLike] = {}
+_FUNASR_MODELS: dict[tuple[str, str], FunASRModelLike] = {}
 
 
 def get_diarization_pipeline(config: DiarizerConfigLike) -> DiarizationPipelineLike:
@@ -172,6 +221,29 @@ def get_transformers_pipeline(
     print(f"    [STT] Loaded transformers pipeline {model_name} on {device}")
     _TRANSFORMERS_PIPELINES[key] = cast(TransformersPipelineLike, pipe)
     return cast(TransformersPipelineLike, pipe)
+
+
+def get_funasr_model(config: TranscriberConfigLike, *, instance_key: str = "default") -> FunASRModelLike:
+    from funasr import AutoModel
+
+    device = get_device()
+    model_name = config.stt_model
+    key = (f"{model_name}:{instance_key}", device)
+    cached = _FUNASR_MODELS.get(key)
+    if cached is not None:
+        return cast(FunASRModelLike, cached)
+
+    model = AutoModel(
+        model=model_name,
+        trust_remote_code=True,
+        remote_code="./model.py",
+        hub="hf",
+        disable_update=True,
+        device=device,
+    )
+    print(f"    [STT] Loaded FunASR model {model_name} on {device}")
+    _FUNASR_MODELS[key] = cast(FunASRModelLike, model)
+    return cast(FunASRModelLike, model)
 
 
 def get_emotion_model(config: EmotionAnalyzerConfigLike) -> EmotionModelLike:

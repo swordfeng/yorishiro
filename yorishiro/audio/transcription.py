@@ -24,6 +24,8 @@ import torch
 from yorishiro.audio import resample as audio_resample
 from yorishiro.audio._speech_support import (
     TranscribeKwargs,
+    funasr_language,
+    get_funasr_model,
     get_transformers_pipeline,
     get_whisper_model,
     split_text_heuristically,
@@ -308,6 +310,18 @@ class Transcriber:
                 update_progress=update_progress,
                 save_result=save_result,
             )
+        if backend == "funasr":
+            return self._run_worker_groups_funasr(
+                groups,
+                worker_idx=worker_idx,
+                worker_config=worker_config,
+                audio_path=audio_path,
+                file_sample_rate=file_sample_rate,
+                language=language,
+                resample_module=resample_module,
+                update_progress=update_progress,
+                save_result=save_result,
+            )
 
         whisper_model = get_whisper_model(worker_config, instance_key=f"worker-{worker_idx}")
         transcribe_kwargs: TranscribeKwargs = {
@@ -458,6 +472,79 @@ class Transcriber:
                     end=group.end,
                     entries=entries,
                     detected_language=detected,
+                    source_mtime=source_mtime,
+                )
+            )
+            save_result(results[-1])
+            update_progress(group.span_end_idx - group.span_start_idx + 1)
+        return results
+
+    def _run_worker_groups_funasr(
+        self,
+        groups: list[SpeechGroup],
+        *,
+        worker_idx: int,
+        worker_config: TranscriberConfig,
+        audio_path: Path,
+        file_sample_rate: int,
+        language: str | None,
+        resample_module: Any,
+        update_progress: Any,
+        save_result: Any,
+    ) -> list[GroupResult]:
+        model = get_funasr_model(worker_config, instance_key=f"worker-{worker_idx}")
+        funasr_lang = funasr_language(language)
+
+        source_mtime = audio_path.stat().st_mtime
+        results: list[GroupResult] = []
+        for group in groups:
+            start_frame = int(group.start * file_sample_rate)
+            end_frame = int(group.end * file_sample_rate)
+            chunk_audio, _ = sf.read(str(audio_path), start=start_frame, stop=end_frame, dtype="float32")
+            if getattr(chunk_audio, "ndim", 1) > 1:
+                chunk_audio = chunk_audio.mean(axis=1)
+            if file_sample_rate != 16000:
+                chunk_audio = resample_module.resample(
+                    chunk_audio, orig_sr=file_sample_rate, target_sr=16000
+                )
+
+            res = model.generate(
+                input=[chunk_audio],
+                cache={},
+                batch_size=1,
+                language=funasr_lang,
+                itn=True,
+            )
+
+            text = ""
+            confidence = 0.0
+            if res and len(res) > 0:
+                text = res[0].get("text", "").strip()
+                timestamps = res[0].get("timestamps")
+                if timestamps and isinstance(timestamps, list) and len(timestamps) > 0:
+                    scores = [
+                        ts.get("score", 0.0) if isinstance(ts, dict) else 0.0
+                        for ts in timestamps
+                    ]
+                    confidence = sum(scores) / len(scores) if scores else 0.0
+
+            chunk_language = language
+            entries: list[dict[str, Any]] = []
+            if text:
+                for entry in self._split_entry_text(
+                    group.start, group.end, text, confidence, chunk_language
+                ):
+                    entries.append(entry.model_dump())
+
+            results.append(
+                GroupResult(
+                    group_id=group.group_id,
+                    span_start_idx=group.span_start_idx,
+                    span_end_idx=group.span_end_idx,
+                    start=group.start,
+                    end=group.end,
+                    entries=entries,
+                    detected_language=language,
                     source_mtime=source_mtime,
                 )
             )

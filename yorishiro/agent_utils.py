@@ -9,10 +9,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import tiktoken
 from pydantic_ai import Agent
+from pydantic_ai.settings import ModelSettings
 
 from yorishiro.project import ModelConfig, ThinkingEffort
 
@@ -58,7 +59,7 @@ def add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--thinking",
         default=None,
-        choices=["none", "low", "medium", "high"],
+        choices=["none", "minimal", "low", "medium", "high", "xhigh"],
         help="Model thinking/reasoning effort",
     )
     parser.add_argument(
@@ -67,7 +68,69 @@ def add_model_args(parser: argparse.ArgumentParser) -> None:
         choices=["tool", "native", "prompted"],
         help="Structured output mode",
     )
-    
+
+
+_OPENAI_REASONING_PROVIDERS = {
+    "openai",
+    "openrouter",
+    "deepseek",
+    "moonshotai",
+    "ollama",
+}
+
+
+def _normalize_openai_reasoning_effort(thinking: ThinkingEffort) -> str | None:
+    if thinking == "none":
+        return None
+    if thinking == "minimal":
+        return "low"
+    if thinking == "xhigh":
+        return "high"
+    return thinking
+
+
+def _anthropic_thinking_budget(thinking: ThinkingEffort) -> int | None:
+    return {
+        "none": None,
+        "minimal": 1024,
+        "low": 2048,
+        "medium": 4096,
+        "high": 8192,
+        "xhigh": 16384,
+    }[thinking]
+
+
+def _build_model_settings(
+    provider_name: str,
+    thinking: ThinkingEffort,
+    output_mode: str,
+) -> ModelSettings | None:
+    provider_key = provider_name.lower()
+    if provider_key in _OPENAI_REASONING_PROVIDERS:
+        effort = _normalize_openai_reasoning_effort(thinking)
+        if effort is None:
+            return None
+        return cast(ModelSettings, {"openai_reasoning_effort": effort})
+
+    if provider_key == "anthropic":
+        budget = _anthropic_thinking_budget(thinking)
+        if budget is None:
+            return None
+        if output_mode == "tool":
+            raise ValueError(
+                "Anthropic thinking is incompatible with output_mode='tool'; "
+                "use output_mode='prompted' or set thinking='none'"
+            )
+        settings: dict[str, Any] = {
+            "anthropic_thinking": {
+                "type": "enabled",
+                "budget_tokens": budget,
+            }
+        }
+        return cast(ModelSettings, settings)
+
+    return None
+
 
 def build_agent(
     model_name: str,
@@ -87,7 +150,6 @@ def build_agent(
     """
     from pydantic_ai.models import infer_model
     from pydantic_ai.providers import infer_provider_class
-    from pydantic_ai.capabilities import Thinking
     from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 
     cls = infer_provider_class(provider_name)
@@ -97,10 +159,7 @@ def build_agent(
     provider = cls(**kwargs)
 
     model = infer_model(f"{provider_name}:{model_name}", provider_factory=lambda _: provider)
-
-    capabilities = []
-    if thinking != "none":
-        capabilities.append(Thinking(effort=thinking))
+    model_settings = _build_model_settings(provider_name, thinking, output_mode)
 
     if output_mode == "native":
         wrapped_output = NativeOutput(output_type)
@@ -113,7 +172,7 @@ def build_agent(
         model=model,
         output_type=wrapped_output,
         system_prompt=system_prompt,
-        capabilities=capabilities,
+        model_settings=model_settings,
         tools=tools or [],
     )
     # pydantic-ai's NativeOutput/PromptedOutput/ToolOutput constructors are typed via

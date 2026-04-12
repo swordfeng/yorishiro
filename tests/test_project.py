@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import argparse
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from yorishiro.agent_utils import build_agent_from_config
+from yorishiro.agent_utils import (
+    _build_model_settings,
+    add_model_args,
+    build_agent,
+    build_agent_from_config,
+)
 from yorishiro.project import ModelConfig, Project
 
 
@@ -180,3 +186,68 @@ class AgentConfigTests(unittest.TestCase):
 
         self.assertEqual(agent, "agent")
         self.assertEqual(build_agent.call_args.kwargs["api_key"], "env-secret")
+
+    def test_openai_compatible_providers_map_thinking_to_reasoning_effort(self) -> None:
+        for provider in ["openai", "openrouter", "deepseek", "moonshotai", "ollama"]:
+            with self.subTest(provider=provider):
+                self.assertEqual(
+                    _build_model_settings(provider, "medium", "tool"),
+                    {"openai_reasoning_effort": "medium"},
+                )
+
+    def test_openai_reasoning_effort_normalizes_extremes(self) -> None:
+        self.assertEqual(
+            _build_model_settings("openai", "minimal", "tool"),
+            {"openai_reasoning_effort": "low"},
+        )
+        self.assertEqual(
+            _build_model_settings("openai", "xhigh", "tool"),
+            {"openai_reasoning_effort": "high"},
+        )
+
+    def test_anthropic_thinking_uses_budget_tokens(self) -> None:
+        self.assertEqual(
+            _build_model_settings("anthropic", "medium", "prompted"),
+            {"anthropic_thinking": {"type": "enabled", "budget_tokens": 4096}},
+        )
+
+    def test_anthropic_thinking_rejects_tool_output_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Anthropic thinking is incompatible"):
+            _build_model_settings("anthropic", "medium", "tool")
+
+    def test_unknown_provider_ignores_thinking(self) -> None:
+        self.assertIsNone(_build_model_settings("google", "medium", "tool"))
+
+    def test_thinking_none_disables_model_settings(self) -> None:
+        self.assertIsNone(_build_model_settings("openai", "none", "tool"))
+        self.assertIsNone(_build_model_settings("anthropic", "none", "prompted"))
+
+    def test_build_agent_passes_model_settings_to_agent(self) -> None:
+        fake_provider = object()
+        with (
+            patch("pydantic_ai.providers.infer_provider_class", return_value=lambda **kwargs: fake_provider),
+            patch("pydantic_ai.models.infer_model", return_value="resolved-model"),
+            patch("yorishiro.agent_utils.Agent", return_value="agent") as agent_cls,
+        ):
+            agent = build_agent(
+                model_name="gpt-5-mini",
+                provider_name="openrouter",
+                api_key="secret",
+                base_url="",
+                output_type=dict,
+                system_prompt="prompt",
+                thinking="medium",
+                output_mode="tool",
+            )
+
+        self.assertEqual(agent, "agent")
+        self.assertEqual(
+            agent_cls.call_args.kwargs["model_settings"],
+            {"openai_reasoning_effort": "medium"},
+        )
+
+    def test_add_model_args_accepts_extended_thinking_levels(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_model_args(parser)
+        args = parser.parse_args(["--thinking", "minimal"])
+        self.assertEqual(args.thinking, "minimal")

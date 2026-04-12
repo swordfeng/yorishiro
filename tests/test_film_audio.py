@@ -1203,14 +1203,13 @@ class STTEntryAlignmentFieldsTests(unittest.TestCase):
         self.assertIsNone(entry.alignment_confidence)
 
     def test_stt_entry_backward_compatible_without_new_fields(self) -> None:
-        data = {
-            "entry_id": "utt_000000",
-            "start": 0.0,
-            "end": 1.0,
-            "text": "こんにちは",
-            "confidence": 0.9,
-        }
-        entry = STTEntry(**data)
+        entry = STTEntry(
+            entry_id="utt_000000",
+            start=0.0,
+            end=1.0,
+            text="こんにちは",
+            confidence=0.9,
+        )
         self.assertEqual(entry.text, "こんにちは")
         self.assertEqual(entry.confidence, 0.9)
         self.assertIsNone(entry.stt_confidence)

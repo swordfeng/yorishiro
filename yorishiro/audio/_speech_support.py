@@ -260,7 +260,7 @@ def get_funasr_model(config: TranscriberConfigLike, *, instance_key: str = "defa
     key = (f"{model_name}:{instance_key}", device)
     cached = _FUNASR_MODELS.get(key)
     if cached is not None:
-        return cast(FunASRModelLike, cached)
+        return cached
 
     model = AutoModel(
         model=model_name,
@@ -289,7 +289,7 @@ def get_qwen3_forced_aligner(
     key = (f"{model_name}:{instance_key}", device)
     cached = _FORCED_ALIGNERS.get(key)
     if cached is not None:
-        return cast(ForcedAlignerLike, cached)
+        return cached
 
     kwargs: dict[str, Any] = {
         "device_map": device,

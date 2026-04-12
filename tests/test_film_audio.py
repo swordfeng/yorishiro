@@ -313,6 +313,32 @@ class TranscriberTests(unittest.TestCase):
             self.assertEqual(saved["entries"][0]["text"], "hello")
             self.assertFalse(ckpt_dir.exists())
 
+    def test_force_run_removes_existing_stt_output_before_transcribing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            (output_dir / "vad.json").write_text(
+                json.dumps([{"start": 0.0, "end": 1.0}]), encoding="utf-8"
+            )
+            stt_path = output_dir / "stt.json"
+            stt_path.write_text(
+                json.dumps({"language": "ja", "entries": [{"text": "old"}]}),
+                encoding="utf-8",
+            )
+
+            transcriber = Transcriber(TranscriberConfig())
+            with patch.object(
+                transcriber,
+                "_run_transcription",
+                side_effect=KeyboardInterrupt(),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    transcriber.run(audio_path, output_dir, force=True)
+
+            self.assertFalse(stt_path.exists())
+
     def test_run_discards_stale_checkpoints_and_reruns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = Path(tmp_dir) / "voice.flac"

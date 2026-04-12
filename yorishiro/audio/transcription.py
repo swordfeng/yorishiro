@@ -87,6 +87,10 @@ class Transcriber:
         force: bool = False,
     ) -> STTTranscript:
         output_dir.mkdir(parents=True, exist_ok=True)
+        out = output_dir / "stt.json"
+        if force and out.exists():
+            out.unlink()
+            print("    [STT] Cleared output (force)")
         vad_path = output_dir / "vad.json"
         detected_language = language or self.config.language
         input_signature = self._input_signature(
@@ -118,7 +122,6 @@ class Transcriber:
         except RuntimeError:
             self._cleanup_checkpoint_dir(checkpoint_dir)
             raise
-        out = output_dir / "stt.json"
         self._atomic_write_text(out, transcript.model_dump_json(indent=2))
         self._cleanup_checkpoint_dir(checkpoint_dir)
         print(

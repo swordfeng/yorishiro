@@ -236,6 +236,47 @@ steps:
         self.assertEqual(transcriber.config.stt_min_confidence, -0.7)
         self.assertEqual(transcriber.config.stt_max_chars_per_second, 19.0)
 
+    def test_transcriber_step_reads_extra_args(self) -> None:
+        project = load_project(
+            """project:
+  name: Demo
+  code: demo
+  sources: []
+steps:
+  film.audio.stt:
+    backend: transformers-whisper
+    model: kotoba-tech/kotoba-whisper-v2.1
+    extra_args:
+      batch_size: 16
+"""
+        )
+        registry = ModelRegistry(project)
+
+        runtime = registry.for_step("film.audio.stt")
+        transcriber = runtime.instance()
+
+        self.assertEqual(transcriber.config.stt_backend, "transformers-whisper")
+        self.assertEqual(transcriber.config.stt_model, "kotoba-tech/kotoba-whisper-v2.1")
+        self.assertEqual(transcriber.config.stt_extra_args, {"batch_size": 16})
+
+    def test_transcriber_step_defaults_extra_args_to_empty(self) -> None:
+        project = load_project(
+            """project:
+  name: Demo
+  code: demo
+  sources: []
+steps:
+  film.audio.stt:
+    backend: faster-whisper
+"""
+        )
+        registry = ModelRegistry(project)
+
+        runtime = registry.for_step("film.audio.stt")
+        transcriber = runtime.instance()
+
+        self.assertEqual(transcriber.config.stt_extra_args, {})
+
     def test_vad_step_reads_profile_config(self) -> None:
         project = load_project(
             """project:

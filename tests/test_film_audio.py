@@ -12,6 +12,7 @@ from typing import cast
 from unittest.mock import Mock, patch
 
 import numpy as np
+import torch
 
 from yorishiro.audio.diarization import Diarizer, DiarizerConfig
 from yorishiro.audio.emotion_analysis import EmotionAnalyzer
@@ -590,6 +591,42 @@ class TranscriberTests(unittest.TestCase):
             )
             self.assertEqual(saved_group_ids, ["g_000000_000000", "g_000001_000001"])
 
+    def test_save_group_results_batch_persists_multiple_groups(self) -> None:
+        transcriber = Transcriber(TranscriberConfig(stt_checkpoint_shard_size=2))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = Path(tmp_dir) / ".stt_checkpoints"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            transcriber._save_group_results_batch(
+                checkpoint_dir,
+                [
+                    GroupResult(
+                        group_id="g_000000_000000",
+                        span_start_idx=0,
+                        span_end_idx=0,
+                        start=0.0,
+                        end=1.0,
+                        entries=[],
+                        detected_language="en",
+                        source_mtime=1.0,
+                    ),
+                    GroupResult(
+                        group_id="g_000001_000001",
+                        span_start_idx=1,
+                        span_end_idx=1,
+                        start=1.0,
+                        end=2.0,
+                        entries=[],
+                        detected_language="en",
+                        source_mtime=1.0,
+                    ),
+                ],
+            )
+            payload = json.loads((checkpoint_dir / "groups_0000.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [item["group_id"] for item in payload["groups"]],
+                ["g_000000_000000", "g_000001_000001"],
+            )
+
     def test_split_entry_text_preserves_pieces(self) -> None:
         transcriber = Transcriber()
         entries = transcriber._split_entry_text(
@@ -670,6 +707,162 @@ class TranscriberTests(unittest.TestCase):
             "ja",
         )
         self.assertEqual(entries, [])
+
+    def test_transformers_chunks_to_segments_converts_timestamps(self) -> None:
+        chunks = [
+            {"text": " hello", "timestamp": (0.0, 1.5)},
+            {"text": " world", "timestamp": (1.5, 2.8)},
+        ]
+        segments = Transcriber._transformers_chunks_to_segments(
+            chunks, 10.0, 15.0, "en"
+        )
+        self.assertEqual(len(segments), 2)
+        self.assertAlmostEqual(segments[0].start, 0.0)
+        self.assertAlmostEqual(segments[0].end, 1.5)
+        self.assertEqual(segments[0].text, "hello")
+        self.assertEqual(segments[1].text, "world")
+
+    def test_transformers_chunks_to_segments_skips_empty(self) -> None:
+        chunks = [
+            {"text": "hello", "timestamp": (0.0, 1.0)},
+            {"text": "", "timestamp": (1.0, 2.0)},
+            {"text": "  ", "timestamp": (2.0, 3.0)},
+        ]
+        segments = Transcriber._transformers_chunks_to_segments(
+            chunks, 0.0, 5.0, "en"
+        )
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, "hello")
+
+    def test_transformers_chunks_to_segments_handles_missing_timestamps(self) -> None:
+        chunks = [
+            {"text": "no timestamps"},
+        ]
+        segments = Transcriber._transformers_chunks_to_segments(
+            chunks, 0.0, 5.0, "en"
+        )
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].start, 0.0)
+        self.assertEqual(segments[0].end, 0.0)
+
+    def test_transformers_backend_dispatches_to_transformers_path(self) -> None:
+        config = TranscriberConfig(
+            stt_backend="transformers-whisper",
+            stt_model="kotoba-tech/kotoba-whisper-v2.1",
+            stt_extra_args={"batch_size": 8},
+        )
+        transcriber = Transcriber(config)
+        groups = [
+            SpeechGroup(
+                group_id="g_000000_000000",
+                span_start_idx=0,
+                span_end_idx=0,
+                start=0.0,
+                end=1.0,
+            ),
+        ]
+
+        class FakePipeline:
+            def __call__(self, audio, **kwargs):
+                del audio, kwargs
+                return {
+                    "text": "hello world",
+                    "chunks": [
+                        {"text": " hello", "timestamp": (0.0, 0.5)},
+                        {"text": " world", "timestamp": (0.5, 1.0)},
+                    ],
+                }
+
+        fake_pipeline = FakePipeline()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "test.wav"
+            audio_path.write_bytes(b"stub")
+            with (
+                patch(
+                    "yorishiro.audio.transcription.get_transformers_pipeline",
+                    return_value=fake_pipeline,
+                ),
+                patch(
+                    "yorishiro.audio.transcription.sf.read",
+                    return_value=(np.zeros(16000, dtype=np.float32), 16000),
+                ),
+                patch("yorishiro.audio.transcription.sf.SoundFile") as FakeSoundFile,
+            ):
+                FakeSoundFile.return_value.__enter__ = lambda s: SimpleNamespace(
+                    samplerate=16000, frames=16000
+                )
+                FakeSoundFile.return_value.__exit__ = lambda s, *a: None
+                results = transcriber._run_worker_groups(
+                    groups,
+                    worker_idx=0,
+                    worker_config=config,
+                    audio_path=audio_path,
+                    file_sample_rate=16000,
+                    language="ja",
+                    resample_module=types.SimpleNamespace(
+                        resample=lambda audio, **_kw: audio
+                    ),
+                    update_progress=lambda _delta: None,
+                    save_result=lambda _r: None,
+                )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].detected_language, "ja")
+
+    def test_transformers_chunks_to_segments_uses_group_confidence(self) -> None:
+        chunks = [
+            {"text": "hello", "timestamp": (0.0, 0.5)},
+            {"text": "world", "timestamp": (0.5, 1.0)},
+        ]
+        segments = Transcriber._transformers_chunks_to_segments(
+            chunks,
+            0.0,
+            1.0,
+            "en",
+            group_confidence=-0.35,
+        )
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0].avg_logprob, -0.35)
+        self.assertEqual(segments[1].avg_logprob, -0.35)
+
+    def test_extract_segment_avg_logprob_from_scores_and_tokens(self) -> None:
+        transcriber = Transcriber()
+        vocab_size = 4
+        score0 = torch.tensor([[-10.0, -10.0, 8.0, -10.0]], dtype=torch.float32)
+        score1 = torch.tensor([[-10.0, 9.0, -10.0, -10.0]], dtype=torch.float32)
+        segment = {
+            "idxs": (2, 4),
+            "result": {
+                "sequences": torch.tensor([[0, 0, 2, 1]], dtype=torch.long),
+                "scores": [score0[:, :vocab_size], score1[:, :vocab_size]],
+            },
+        }
+        confidence = transcriber._extract_segment_avg_logprob(segment)
+        self.assertIsNotNone(confidence)
+        assert confidence is not None
+        self.assertGreater(confidence, -0.001)
+
+    def test_transformers_group_confidence_averages_segment_scores(self) -> None:
+        transcriber = Transcriber()
+        generated = {
+            "segments": [[
+                {"result": {"sequences_scores": torch.tensor([-0.2])}},
+                {"result": {"sequences_scores": torch.tensor([-0.6])}},
+            ]]
+        }
+        confidence = transcriber._transformers_group_confidence([generated])
+        self.assertIsNotNone(confidence)
+        assert confidence is not None
+        self.assertAlmostEqual(confidence, -0.4)
+
+    def test_faster_whisper_backend_remains_default(self) -> None:
+        config = TranscriberConfig()
+        self.assertEqual(config.stt_backend, "faster-whisper")
+        self.assertEqual(config.stt_extra_args, {})
+
+    def test_extra_args_default_is_empty_dict(self) -> None:
+        config = TranscriberConfig(stt_backend="transformers-whisper")
+        self.assertEqual(config.stt_extra_args, {})
 
 
 class SpeakerAttributorTests(unittest.TestCase):

@@ -359,6 +359,8 @@ class ModelRegistry:
             kwargs["stt_min_segment_seconds"] = float(cfg["min_segment_seconds"])
         if cfg.get("language") is not None:
             kwargs["language"] = cfg["language"]
+        if cfg.get("extra_args") is not None:
+            kwargs["stt_extra_args"] = dict(cfg["extra_args"])
 
         return Transcriber(TranscriberConfig(**kwargs))
 

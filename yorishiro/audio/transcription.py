@@ -11,9 +11,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from dataclasses import dataclass
+from dataclasses import field
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 import soundfile as sf
 import torch
@@ -21,10 +24,13 @@ import torch
 from yorishiro.audio import resample as audio_resample
 from yorishiro.audio._speech_support import (
     TranscribeKwargs,
+    get_transformers_pipeline,
     get_whisper_model,
     split_text_heuristically,
 )
 from yorishiro.models.film_models import STTEntry, STTTranscript
+
+_STT_CHECKPOINT_FLUSH_GROUPS = 16
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,7 @@ class TranscriberConfig:
     stt_min_confidence: float = -0.5
     stt_max_chars_per_second: float = 28.0
     stt_min_segment_seconds: float = 0.3
+    stt_extra_args: dict[str, Any] = field(default_factory=dict)
     language: str | None = None
 
 
@@ -160,6 +167,7 @@ class Transcriber:
 
         progress_lock = threading.Lock()
         checkpoint_lock = threading.Lock()
+        pending_checkpoint_results: list[GroupResult] = []
         completed_spans = sum(
             group.span_end_idx - group.span_start_idx + 1
             for group in groups
@@ -185,17 +193,30 @@ class Transcriber:
                 if checkpoint_dir is None:
                     return
                 with checkpoint_lock:
-                    self._save_group_result(checkpoint_dir, result)
+                    pending_checkpoint_results.append(result)
+                    if len(pending_checkpoint_results) >= _STT_CHECKPOINT_FLUSH_GROUPS:
+                        self._flush_pending_checkpoint_results(
+                            checkpoint_dir,
+                            pending_checkpoint_results,
+                        )
 
-            new_results = self._transcribe_groups(
-                pending_groups,
-                audio_path=audio_path,
-                file_sample_rate=file_sample_rate,
-                language=language,
-                resample_module=audio_resample,
-                update_progress=update_progress,
-                save_result=save_result,
-            )
+            try:
+                new_results = self._transcribe_groups(
+                    pending_groups,
+                    audio_path=audio_path,
+                    file_sample_rate=file_sample_rate,
+                    language=language,
+                    resample_module=audio_resample,
+                    update_progress=update_progress,
+                    save_result=save_result,
+                )
+            finally:
+                if checkpoint_dir is not None:
+                    with checkpoint_lock:
+                        self._flush_pending_checkpoint_results(
+                            checkpoint_dir,
+                            pending_checkpoint_results,
+                        )
 
         completed.update({result.group_id: result for result in new_results})
         return self._assemble_transcript(groups, completed, language)
@@ -274,6 +295,20 @@ class Transcriber:
         if not groups:
             return []
 
+        backend = worker_config.stt_backend
+        if backend == "transformers-whisper":
+            return self._run_worker_groups_transformers(
+                groups,
+                worker_idx=worker_idx,
+                worker_config=worker_config,
+                audio_path=audio_path,
+                file_sample_rate=file_sample_rate,
+                language=language,
+                resample_module=resample_module,
+                update_progress=update_progress,
+                save_result=save_result,
+            )
+
         whisper_model = get_whisper_model(worker_config, instance_key=f"worker-{worker_idx}")
         transcribe_kwargs: TranscribeKwargs = {
             "language": language or None,
@@ -325,6 +360,278 @@ class Transcriber:
             save_result(results[-1])
             update_progress(group.span_end_idx - group.span_start_idx + 1)
         return results
+
+    def _run_worker_groups_transformers(
+        self,
+        groups: list[SpeechGroup],
+        *,
+        worker_idx: int,
+        worker_config: TranscriberConfig,
+        audio_path: Path,
+        file_sample_rate: int,
+        language: str | None,
+        resample_module: Any,
+        update_progress: Any,
+        save_result: Any,
+    ) -> list[GroupResult]:
+        pipe = get_transformers_pipeline(worker_config, instance_key=f"worker-{worker_idx}")
+        generate_kwargs: dict[str, Any] = {}
+        if language:
+            generate_kwargs["language"] = language
+            generate_kwargs["task"] = "transcribe"
+
+        source_mtime = audio_path.stat().st_mtime
+        results: list[GroupResult] = []
+        for group in groups:
+            start_frame = int(group.start * file_sample_rate)
+            end_frame = int(group.end * file_sample_rate)
+            chunk_audio, _ = sf.read(str(audio_path), start=start_frame, stop=end_frame, dtype="float32")
+            if getattr(chunk_audio, "ndim", 1) > 1:
+                chunk_audio = chunk_audio.mean(axis=1)
+            if file_sample_rate != 16000:
+                chunk_audio = resample_module.resample(
+                    chunk_audio, orig_sr=file_sample_rate, target_sr=16000
+                )
+
+            group_confidence: float | None = None
+            model = getattr(pipe, "model", None)
+            if model is not None and hasattr(model, "generate"):
+                captured_generate_outputs: list[Any] = []
+                original_generate = model.generate
+
+                def _capturing_generate(*args: Any, **kwargs: Any) -> Any:
+                    original_kwargs = dict(kwargs)
+                    kwargs["output_scores"] = True
+                    kwargs["return_segments"] = True
+                    kwargs["return_dict_in_generate"] = True
+                    try:
+                        generated = original_generate(*args, **kwargs)
+                    except Exception:
+                        generated = original_generate(*args, **original_kwargs)
+                    captured_generate_outputs.append(generated)
+                    sequences = self._extract_generate_sequences(generated)
+                    return sequences if sequences is not None else generated
+
+                try:
+                    with patch.object(model, "generate", _capturing_generate):
+                        output = pipe(
+                            chunk_audio,
+                            return_timestamps=True,
+                            generate_kwargs=generate_kwargs if generate_kwargs else None,
+                        )
+                except Exception:
+                    output = pipe(
+                        chunk_audio,
+                        return_timestamps=True,
+                        generate_kwargs=generate_kwargs if generate_kwargs else None,
+                    )
+                group_confidence = self._transformers_group_confidence(
+                    captured_generate_outputs
+                )
+            else:
+                output = pipe(
+                    chunk_audio,
+                    return_timestamps=True,
+                    generate_kwargs=generate_kwargs if generate_kwargs else None,
+                )
+
+            detected = output.get("language", language)
+            chunk_language = language or detected
+            entries: list[dict[str, Any]] = []
+            for segment in self._transformers_chunks_to_segments(
+                output.get("chunks", []),
+                group.start,
+                group.end,
+                chunk_language,
+                group_confidence=group_confidence,
+            ):
+                for entry in self._segment_to_entries(
+                    segment, group.start, group.end, chunk_language
+                ):
+                    entries.append(entry.model_dump())
+            results.append(
+                GroupResult(
+                    group_id=group.group_id,
+                    span_start_idx=group.span_start_idx,
+                    span_end_idx=group.span_end_idx,
+                    start=group.start,
+                    end=group.end,
+                    entries=entries,
+                    detected_language=detected,
+                    source_mtime=source_mtime,
+                )
+            )
+            save_result(results[-1])
+            update_progress(group.span_end_idx - group.span_start_idx + 1)
+        return results
+
+    @staticmethod
+    def _transformers_chunks_to_segments(
+        chunks: list[dict[str, Any]],
+        chunk_start: float,
+        chunk_end: float,
+        language: str | None,
+        *,
+        group_confidence: float | None = None,
+    ) -> list[Any]:
+        """Convert transformers pipeline chunks into segment-like objects."""
+        segments: list[Any] = []
+        for chunk in chunks:
+            text = chunk.get("text", "").strip()
+            if not text:
+                continue
+            timestamp = chunk.get("timestamp")
+            if timestamp and isinstance(timestamp, (list, tuple)) and len(timestamp) >= 2:
+                start = float(timestamp[0]) if timestamp[0] is not None else 0.0
+                end = float(timestamp[1]) if timestamp[1] is not None else 0.0
+            else:
+                start = 0.0
+                end = 0.0
+            segments.append(
+                SimpleNamespace(
+                    start=start,
+                    end=end,
+                    text=text,
+                    avg_logprob=group_confidence,
+                    words=[],
+                )
+            )
+        return segments
+
+    @staticmethod
+    def _extract_generate_segments(outputs: Any) -> list[Any]:
+        segments = Transcriber._segment_value(outputs, "segments")
+        if segments is None:
+            return []
+        if not isinstance(segments, list):
+            return []
+        if segments and isinstance(segments[0], list):
+            first = segments[0]
+            return first if isinstance(first, list) else []
+        return segments
+
+    @staticmethod
+    def _extract_generate_sequences(outputs: Any) -> torch.Tensor | None:
+        if isinstance(outputs, torch.Tensor):
+            return outputs
+        sequences = Transcriber._segment_value(outputs, "sequences")
+        if isinstance(sequences, torch.Tensor):
+            return sequences
+        return None
+
+    def _transformers_group_confidence(self, generate_outputs: list[Any]) -> float | None:
+        scores: list[float] = []
+        for generated in generate_outputs:
+            segments = self._extract_generate_segments(generated)
+            for segment in segments:
+                segment_score = self._extract_segment_avg_logprob(segment)
+                if segment_score is not None:
+                    scores.append(segment_score)
+            if segments:
+                continue
+            seq_scores = self._segment_value(generated, "sequences_scores")
+            if isinstance(seq_scores, torch.Tensor):
+                scores.extend(float(value.item()) for value in seq_scores.flatten())
+            elif isinstance(seq_scores, (list, tuple)):
+                scores.extend(
+                    score for item in seq_scores if (score := self._as_float(item)) is not None
+                )
+            elif (score := self._as_float(seq_scores)) is not None:
+                scores.append(score)
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
+
+    @staticmethod
+    def _segment_value(obj: Any, key: str) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key)
+        if hasattr(obj, key):
+            return getattr(obj, key)
+        try:
+            return obj[key]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _as_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        if hasattr(value, "item"):
+            try:
+                return float(value.item())
+            except Exception:
+                return None
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+    def _extract_segment_avg_logprob(self, segment: Any) -> float | None:
+        result = self._segment_value(segment, "result")
+        if result is None:
+            return None
+
+        seq_scores = self._segment_value(result, "sequences_scores")
+        if seq_scores is not None:
+            if isinstance(seq_scores, torch.Tensor):
+                if seq_scores.numel() == 0:
+                    return None
+                return float(seq_scores.flatten()[0].item())
+            if isinstance(seq_scores, (list, tuple)) and seq_scores:
+                return self._as_float(seq_scores[0])
+            return self._as_float(seq_scores)
+
+        scores = self._segment_value(result, "scores")
+        sequences = self._segment_value(result, "sequences")
+        idxs = self._segment_value(segment, "idxs")
+        if not isinstance(scores, (list, tuple)) or sequences is None:
+            return None
+        if not isinstance(idxs, (list, tuple)) or len(idxs) < 2:
+            return None
+
+        if isinstance(sequences, torch.Tensor):
+            if sequences.ndim == 0:
+                return None
+            sequence = sequences[0] if sequences.ndim > 1 else sequences
+        else:
+            return None
+
+        gen_steps = len(scores)
+        seq_len = int(sequence.shape[0]) if hasattr(sequence, "shape") else len(sequence)
+        if gen_steps <= 0 or seq_len <= 0:
+            return None
+
+        score_offset = seq_len - gen_steps
+        if score_offset < 0:
+            return None
+
+        start_idx = int(idxs[0])
+        end_idx = int(idxs[1])
+        if end_idx <= start_idx:
+            return None
+
+        local_start = max(0, start_idx - score_offset)
+        local_end = min(gen_steps, end_idx - score_offset)
+        if local_end <= local_start:
+            return None
+
+        token_positions = range(score_offset + local_start, score_offset + local_end)
+        logprob_values: list[float] = []
+        for score_idx, token_pos in enumerate(token_positions, start=local_start):
+            logits = scores[score_idx]
+            if not isinstance(logits, torch.Tensor):
+                return None
+            step_logits = logits[0] if logits.ndim > 1 else logits
+            if not isinstance(step_logits, torch.Tensor):
+                return None
+            token_id = int(sequence[token_pos].item())
+            token_logprob = torch.log_softmax(step_logits.float(), dim=-1)[token_id]
+            logprob_values.append(float(token_logprob.item()))
+
+        if not logprob_values:
+            return None
+        return sum(logprob_values) / len(logprob_values)
 
     def _worker_configs(self, worker_total: int) -> list[TranscriberConfig]:
         if torch.cuda.is_available():
@@ -534,6 +841,52 @@ class Transcriber:
             json.dumps(shard_payload, ensure_ascii=False, indent=2),
         )
 
+    def _save_group_results_batch(
+        self,
+        checkpoint_dir: Path,
+        results: list[GroupResult],
+    ) -> None:
+        if not results:
+            return
+        shard_updates: dict[int, dict[str, GroupResult]] = {}
+        for result in results:
+            shard_idx = result.span_start_idx // self.config.stt_checkpoint_shard_size
+            updates = shard_updates.setdefault(shard_idx, {})
+            updates[result.group_id] = result
+
+        for shard_idx, updates in shard_updates.items():
+            shard_path = checkpoint_dir / f"groups_{shard_idx:04d}.json"
+            existing: dict[str, GroupResult] = {}
+            if shard_path.exists():
+                shard = json.loads(shard_path.read_text(encoding="utf-8"))
+                for record in cast(list[dict[str, Any]], shard.get("groups", [])):
+                    existing_result = GroupResult(**record)
+                    existing[existing_result.group_id] = existing_result
+
+            existing.update(updates)
+            shard_payload = {
+                "groups": [
+                    asdict(item)
+                    for item in sorted(
+                        existing.values(), key=lambda item: item.span_start_idx
+                    )
+                ]
+            }
+            self._atomic_write_text(
+                shard_path,
+                json.dumps(shard_payload, ensure_ascii=False, indent=2),
+            )
+
+    def _flush_pending_checkpoint_results(
+        self,
+        checkpoint_dir: Path,
+        pending_results: list[GroupResult],
+    ) -> None:
+        if not pending_results:
+            return
+        self._save_group_results_batch(checkpoint_dir, pending_results)
+        pending_results.clear()
+
     def _assemble_transcript(
         self,
         groups: list[SpeechGroup],
@@ -565,14 +918,16 @@ class Transcriber:
         if not text:
             return []
 
-        confidence = segment.avg_logprob if hasattr(segment, "avg_logprob") else 0.9
+        raw_confidence = getattr(segment, "avg_logprob", None)
+        raw_confidence = getattr(segment, "avg_logprob", None)
+        confidence = raw_confidence if raw_confidence is not None else 0.0
         abs_start = chunk_start + float(segment.start)
         abs_end = chunk_start + float(segment.end)
         clamped_start = max(abs_start, chunk_start)
         clamped_end = min(abs_end, chunk_end)
         duration = max(clamped_end - clamped_start, 0.0)
         chars_per_second = (len(text) / duration) if duration > 0 else float("inf")
-        if confidence < self.config.stt_min_confidence:
+        if raw_confidence is not None and confidence < self.config.stt_min_confidence:
             return []
         if duration < float(max(self.config.stt_min_segment_seconds, 0.0)):
             return []

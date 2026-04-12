@@ -64,6 +64,7 @@ class TranscriberConfigLike(Protocol):
     stt_word_timestamps: bool
     stt_vad_filter: bool
     stt_vad_min_silence_duration_ms: int
+    stt_extra_args: dict[str, Any]
 
 
 class EmotionAnalyzerConfigLike(Protocol):
@@ -78,12 +79,17 @@ class WhisperModelLike(Protocol):
     def transcribe(self, audio: Any, **kwargs: Any) -> tuple[Any, Any]: ...
 
 
+class TransformersPipelineLike(Protocol):
+    def __call__(self, audio: Any, **kwargs: Any) -> dict[str, Any]: ...
+
+
 class EmotionModelLike(Protocol):
     def generate(self, **kwargs: Any) -> Any: ...
 
 
 _DIARIZATION_PIPELINES: dict[tuple[str, int, str], DiarizationPipelineLike] = {}
 _WHISPER_MODELS: dict[tuple[str, int, int], WhisperModelLike] = {}
+_TRANSFORMERS_PIPELINES: dict[tuple[str, str, str], TransformersPipelineLike] = {}
 _EMOTION_MODELS: dict[tuple[str, str], EmotionModelLike] = {}
 
 
@@ -130,6 +136,42 @@ def get_whisper_model(config: TranscriberConfigLike, *, instance_key: str = "def
     print(f"    [STT] Loaded {config.stt_model} on {device} ({cpu_threads} threads x {num_workers} workers)")
     _WHISPER_MODELS[key] = cast(WhisperModelLike, model)
     return cast(WhisperModelLike, model)
+
+
+def get_transformers_pipeline(
+    config: TranscriberConfigLike,
+    *,
+    instance_key: str = "default",
+) -> TransformersPipelineLike:
+    from transformers import pipeline as hf_pipeline
+
+    device = get_device()
+    model_name = config.stt_model
+    extra_args = config.stt_extra_args
+    key = (f"{model_name}:{instance_key}", device, str(sorted(extra_args.items())))
+    cached = _TRANSFORMERS_PIPELINES.get(key)
+    if cached is not None:
+        return cached
+
+    torch_dtype = torch.float16 if device != "cpu" else torch.float32
+    model_kwargs: dict[str, Any] = {}
+    if device != "cpu":
+        model_kwargs["attn_implementation"] = "sdpa"
+
+    pipeline_kwargs: dict[str, Any] = {
+        "task": "automatic-speech-recognition",
+        "model": model_name,
+        "torch_dtype": torch_dtype,
+        "device": device,
+        "trust_remote_code": True,
+        "model_kwargs": model_kwargs,
+    }
+    pipeline_kwargs.update(extra_args)
+
+    pipe = hf_pipeline(**pipeline_kwargs)
+    print(f"    [STT] Loaded transformers pipeline {model_name} on {device}")
+    _TRANSFORMERS_PIPELINES[key] = cast(TransformersPipelineLike, pipe)
+    return cast(TransformersPipelineLike, pipe)
 
 
 def get_emotion_model(config: EmotionAnalyzerConfigLike) -> EmotionModelLike:

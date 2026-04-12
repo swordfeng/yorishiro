@@ -31,9 +31,11 @@ film = [
     "av>=12.0.0", # PyAV - video processing (supports AVIF)
     "torch>=2.0.0", # CLIP, pyannote, emotion2vec
     "torchvision>=0.15.0", # CLIP
-    "transformers>=4.40.0", # CLIP model loading
+    "transformers>=4.40.0", # CLIP, kotoba-whisper pipeline
     "openai-whisper>=20231117", # faster-whisper alternative
-    "faster-whisper>=1.0.0", # STT
+    "faster-whisper>=1.0.0", # STT (faster-whisper backend)
+    "punctuators>=0.0.5", # kotoba-whisper punctuation
+    "stable-ts>=2.16.0", # kotoba-whisper timestamp stabilization
     "pyannote.audio>=3.1.0", # speaker diarization
     "huggingface-hub>=0.20.0", # model downloads
     "librosa>=0.10.0", # audio processing
@@ -59,6 +61,7 @@ packages = ["yorishiro"]
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.39.0",
     "coverage[toml]>=7.10.0",
     "ruff>=0.15.7",
     "ty>=0.0.27",

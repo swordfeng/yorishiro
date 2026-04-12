@@ -368,7 +368,7 @@ def main() -> None:
         sys.exit(1)
     
     # Get model config
-    config = project.resolved_model_config("synthesize")
+    config = project.resolved_model_config("cross.synthesize")
     
     # Resolve characters to process
     if args.character:
@@ -410,7 +410,7 @@ def main() -> None:
         config=config,
     )
     
-    model_display = args.model or config.name or "unknown"
+    model_display = args.model or config.model or "unknown"
     print(f"Synthesizing {len(target_characters)} characters with {model_display} ...")
 
     async def run() -> None:

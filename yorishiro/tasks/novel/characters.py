@@ -28,7 +28,7 @@ class NovelCharactersTask(Task):
         scenes_dir: Path,
         aliases_file: Path,
         output_dir: Path,
-        project_yaml: Path,
+        project_config: Path,
         runtime: StepRuntime,
         batch_tokens: int = 32000,
         target_characters: list[str] | None = None,
@@ -36,13 +36,13 @@ class NovelCharactersTask(Task):
         self._scenes_dir = scenes_dir
         self._aliases_file = aliases_file
         self._output_dir = output_dir
-        self._project_yaml = project_yaml
+        self._project_config = project_config
         self._runtime = runtime
         self._batch_tokens = batch_tokens
         self._target_characters = target_characters
 
     def input_paths(self) -> list[Path]:
-        return [self._aliases_file, self._project_yaml]
+        return [self._aliases_file, self._project_config]
 
     def output_paths(self) -> list[Path]:
         # Return existing insights.md files as output markers; fall back to placeholder
@@ -105,7 +105,7 @@ class NovelCharactersStep(Step):
                 scenes_dir=self._project.step_dir(self._source_id, "scenes"),
                 aliases_file=self._project.step_dir(self._source_id, "aliases") / "character_aliases.json",
                 output_dir=self._project.step_dir(self._source_id, "characters"),
-                project_yaml=self._project.root / "project.yaml",
+                project_config=self._project.config_path,
                 runtime=runtime,
                 batch_tokens=batch_tokens,
             )

@@ -31,14 +31,14 @@ def estimate_tokens(text: str) -> int:
 
 def add_model_args(parser: argparse.ArgumentParser) -> None:
     """Add standard model/provider CLI arguments to an ArgumentParser.
-    
-    All arguments default to None. Values should come from project.yaml 
+
+    All arguments default to None. Values should come from project.yaml
     or be specified explicitly on the command line.
     """
     parser.add_argument(
         "--provider",
         default=None,
-        help="Provider name (e.g., openrouter, openai)",
+        help="Upstream provider name override (e.g., openrouter, openai)",
     )
     parser.add_argument(
         "--model",
@@ -135,22 +135,30 @@ def build_agent_from_config(
     is expected to already include project-level fallbacks via
     Project.resolved_model_config().
     """
+    backend = config.backend
     provider = config.provider
-    model_name = config.name
+    model_name = config.model
     thinking = config.thinking or "medium"
     output_mode = config.output_mode or "tool"
     base_url = config.base_url or ""
     api_key_env = config.api_key_env or "YORISHIRO_API_KEY"
 
+    if backend != "pydantic-ai":
+        raise ValueError(f"Unsupported agent backend '{backend}' in ModelConfig")
     if provider is None:
         raise ValueError("No provider specified in ModelConfig")
     if model_name is None:
         raise ValueError("No model specified in ModelConfig")
 
-    api_key = os.environ.get(api_key_env)
+    api_key = config.api_key
     if not api_key:
-        print(f"Error: {api_key_env} environment variable is not set", file=sys.stderr)
-        sys.exit(1)
+        api_key = os.environ.get(api_key_env)
+        if not api_key:
+            print(
+                f"Error: {api_key_env} environment variable is not set",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     return build_agent(
         model_name=model_name,
@@ -173,57 +181,60 @@ def build_agent_from_args(
     tools: list | None = None,
 ) -> Agent[None, _OutputT]:
     """Build a pydantic-ai Agent from CLI arguments and optional config.
-    
+
     Precedence: args > config > fallback.
-    
+
     Config should come from Project.resolved_model_config() which includes
     fallbacks for optional fields.
-    
+
     Args:
         args: Argument namespace from argparse (all fields default to None).
         output_type: A Pydantic model class for structured output.
         system_prompt: The system prompt for the agent.
         config: Optional ModelConfig from project.yaml (with fallbacks applied).
         tools: Optional list of plain Python functions to register as agent tools.
-    
+
     Returns:
         Configured Agent instance.
-    
+
     Raises:
         ValueError: If provider or model not specified.
     """
     # Resolve with precedence: args > config > fallback
     provider = args.provider or (config.provider if config else None)
-    model_name = args.model or (config.name if config else None)
+    model_name = args.model or (config.model if config else None)
     thinking = args.thinking or (config.thinking if config else None)
     output_mode = args.output_mode or (config.output_mode if config else None)
     base_url = args.base_url or (config.base_url if config else None)
     api_key_env = args.api_key_env or (config.api_key_env if config else None)
-    
+    api_key = None if args.api_key_env else (config.api_key if config else None)
+
     # Apply final fallbacks for optional fields
     thinking = thinking or "medium"
     output_mode = output_mode or "tool"
     api_key_env = api_key_env or "YORISHIRO_API_KEY"
-    
+
     # Validate required fields
     if provider is None:
         raise ValueError(
             "No provider specified. Use --provider CLI argument or "
-            "set 'model.default.provider' in project.yaml"
+            "set the step provider profile in project.yaml"
         )
     if model_name is None:
         raise ValueError(
             "No model specified. Use --model CLI argument or "
-            "set 'model.default.name' in project.yaml"
+            "set the step model in project.yaml"
         )
-    
+
     return build_agent_from_config(
         ModelConfig(
+            backend="pydantic-ai",
             provider=provider,
-            name=model_name,
+            model=model_name,
             thinking=thinking,
             output_mode=output_mode,
             base_url=base_url,
+            api_key=api_key,
             api_key_env=api_key_env,
         ),
         output_type=output_type,

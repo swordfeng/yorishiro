@@ -224,6 +224,14 @@ class SegmentationState:
         self.chunk_size = min(self.chunk_size * 2, config.max_chunk_size)
 
 
+class FailedEndTextError(ValueError):
+    """Raised when a scene end_text cannot be matched in the source chunk."""
+
+    def __init__(self, end_text: str, message: str) -> None:
+        super().__init__(message)
+        self.end_text = end_text
+
+
 def parse_chapter_file(path: Path) -> tuple[dict, str]:
     """Parse YAML frontmatter chapter file. Returns (metadata, content)."""
     text = path.read_text(encoding="utf-8")
@@ -367,12 +375,15 @@ def process_scene_batch(
         if not seg.end_text:
             break
 
-        scene_end = find_end_offset(
-            chapter_text,
-            seg.end_text,
-            batch_cursor,
-            search_limit=state.chunk_size + len(seg.end_text) + 500,
-        )
+        try:
+            scene_end = find_end_offset(
+                chapter_text,
+                seg.end_text,
+                batch_cursor,
+                search_limit=state.chunk_size + len(seg.end_text) + 500,
+            )
+        except ValueError as e:
+            raise FailedEndTextError(seg.end_text, str(e)) from e
         append_scene(state.last_scenes, scene_start, scene_end, seg)
         batch_cursor = scene_end
 
@@ -431,6 +442,11 @@ async def segment_chapter(
 
         try:
             batch_cursor, reached_end = process_scene_batch(chapter_text, state, data)
+        except FailedEndTextError as e:
+            print(f"  Warning: {e}. Continuing from last good cut.", file=sys.stderr)
+            state.failed_end_text = e.end_text
+            grow_chunk_or_raise(state, config, "Stalled")
+            continue
         except ValueError as e:
             print(f"  Warning: {e}. Continuing from last good cut.", file=sys.stderr)
             state.failed_end_text = data.scenes[-1].end_text

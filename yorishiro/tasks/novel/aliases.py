@@ -34,19 +34,19 @@ class NovelAliasesTask(Task):
         self,
         scenes_dir: Path,
         output_dir: Path,
-        project_yaml: Path,
+        project_config: Path,
         runtime: StepRuntime,
         batch_tokens: int = 32000,
     ) -> None:
         self._scenes_dir = scenes_dir
         self._output_dir = output_dir
-        self._project_yaml = project_yaml
+        self._project_config = project_config
         self._runtime = runtime
         self._batch_tokens = batch_tokens
 
     def input_paths(self) -> list[Path]:
         manifests = sorted(self._scenes_dir.rglob("scenes_manifest.json"))
-        return [self._project_yaml, *manifests]
+        return [self._project_config, *manifests]
 
     def output_paths(self) -> list[Path]:
         return [self._output_dir / "character_aliases.json"]
@@ -113,7 +113,7 @@ class NovelAliasesStep(Step):
             NovelAliasesTask(
                 scenes_dir=self._project.step_dir(self._source_id, "scenes"),
                 output_dir=self._project.step_dir(self._source_id, "aliases"),
-                project_yaml=self._project.root / "project.yaml",
+                project_config=self._project.config_path,
                 runtime=runtime,
                 batch_tokens=batch_tokens,
             )

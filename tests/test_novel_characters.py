@@ -240,14 +240,15 @@ sources:
   - id: novel-src
     type: novel
     path: raw/novel.md
+providers:
+  openai_main:
+    type: openai
 steps:
   novel.characters:
-    model: char-model
+    backend: pydantic-ai
+    provider: openai_main
+    model: gpt-5-mini
     batch_tokens: 12345
-models:
-  char-model:
-    provider: openai
-    name: gpt-5-mini
 """,
                 encoding="utf-8",
             )
@@ -258,6 +259,7 @@ models:
             self.assertIsInstance(task, NovelCharactersTask)
             assert isinstance(task, NovelCharactersTask)
             self.assertEqual(task._batch_tokens, 12345)
+            self.assertEqual(task.input_paths()[1], project.config_path)
 
 
 if __name__ == "__main__":

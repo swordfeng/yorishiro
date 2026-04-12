@@ -84,7 +84,6 @@ class ModelRegistry:
                 "film.frames",
                 "model",
                 "backend",
-                "clip_model",
                 fallback="keyframe-extractor",
             ),
         ),
@@ -98,9 +97,7 @@ class ModelRegistry:
             instance_builder=lambda registry: registry._build_vad_runner(),
             cache_key_builder=lambda registry: registry._cache_key_for_step(
                 "film.audio.vad",
-                "vad_backend",
                 "backend",
-                "vad_profile",
                 "profile",
                 fallback="vad-runner",
             ),
@@ -130,9 +127,7 @@ class ModelRegistry:
         "film.audio.music": _RuntimeSpec(
             kind="instance",
             instance_builder=lambda registry: registry._build_music_analyzer(),
-            cache_key_builder=lambda registry: registry._cache_key_for_step(
-                "film.audio.music", fallback="music-analyzer"
-            ),
+            cache_key_builder=lambda registry: registry._music_analyzer_cache_key(),
         ),
     }
 
@@ -184,17 +179,15 @@ class ModelRegistry:
         return f"{step_id}::{identity}"
 
     def _audio_separator_cache_key(self) -> str:
-        step_cfg = self._project.steps.get("film.audio.separate", {})
-        sep_name = step_cfg.get("separator_model")
-        if sep_name:
-            model_cfg = self._project.models.get(sep_name, {})
-            identity = "|".join(
-                str(model_cfg.get(field, ""))
-                for field in ("backend", "model", "device")
-            )
-            return f"film.audio.separate::{sep_name}::{identity}"
         return self._cache_key_for_step(
-            "film.audio.separate", fallback="audio-separator"
+            "film.audio.separate",
+            "backend",
+            "model",
+            "device",
+            "sample_rate",
+            "processing_chunk_seconds",
+            "processing_overlap_seconds",
+            fallback="audio-separator",
         )
 
     def _transcriber_cache_key(self) -> str:
@@ -242,19 +235,36 @@ class ModelRegistry:
         return "film.audio.speakers::" + "|".join(parts)
 
     def _emotion_analyzer_cache_key(self) -> str:
-        cfg = self._project.steps.get("film.audio.emotion", {})
+        cfg = self._project.step_config("film.audio.emotion")
         return f"film.audio.emotion::{cfg.get('model', 'emotion2vec/emotion2vec_plus_base')}"
+
+    def _music_analyzer_cache_key(self) -> str:
+        cfg = self._project.step_config("film.audio.music")
+        separation = cfg.get("separation", {})
+        analysis = cfg.get("analysis", {})
+        if not isinstance(separation, dict):
+            separation = {}
+        if not isinstance(analysis, dict):
+            analysis = {}
+        parts = [
+            "music-analyzer",
+            str(separation.get("backend", "")),
+            str(separation.get("model", "")),
+            str(analysis.get("backend", "")),
+            str(analysis.get("model", "")),
+            str(cfg.get("detect_lyrics", "")),
+        ]
+        return "film.audio.music::" + "|".join(parts)
 
     def _build_shot_detector(self) -> Any:
         from yorishiro.video.shot_detector import ShotDetector, ShotDetectorConfig
 
         cfg = self._project.step_config("film.shots")
         kwargs: dict[str, Any] = {}
-        # Historical: some configs use "backend" to mean detector choice.
-        if cfg.get("detector") is not None:
-            kwargs["detector"] = cfg["detector"]
-        elif cfg.get("backend") is not None:
+        if cfg.get("backend") is not None:
             kwargs["detector"] = cfg["backend"]
+        elif cfg.get("detector") is not None:
+            kwargs["detector"] = cfg["detector"]
         if cfg.get("threshold") is not None:
             kwargs["threshold"] = float(cfg["threshold"])
         if cfg.get("min_content_val") is not None:
@@ -271,7 +281,9 @@ class ModelRegistry:
         kwargs: dict[str, Any] = {}
         if cfg.get("backend") is not None:
             kwargs["backend"] = cfg["backend"]
-        if cfg.get("clip_model") is not None:
+        if cfg.get("model") is not None:
+            kwargs["model"] = cfg["model"]
+        elif cfg.get("clip_model") is not None:
             kwargs["model"] = cfg["clip_model"]
         if cfg.get("min_frames_per_shot") is not None:
             kwargs["min_frames_per_shot"] = int(cfg["min_frames_per_shot"])
@@ -290,14 +302,14 @@ class ModelRegistry:
 
         cfg = self._project.step_config("film.audio.vad")
         kwargs: dict[str, Any] = {}
-        if cfg.get("vad_backend") is not None:
-            kwargs["vad_backend"] = cfg["vad_backend"]
-        elif cfg.get("backend") is not None:
+        if cfg.get("backend") is not None:
             kwargs["vad_backend"] = cfg["backend"]
-        if cfg.get("vad_profile") is not None:
-            kwargs["vad_profile"] = cfg["vad_profile"]
-        elif cfg.get("profile") is not None:
+        elif cfg.get("vad_backend") is not None:
+            kwargs["vad_backend"] = cfg["vad_backend"]
+        if cfg.get("profile") is not None:
             kwargs["vad_profile"] = cfg["profile"]
+        elif cfg.get("vad_profile") is not None:
+            kwargs["vad_profile"] = cfg["vad_profile"]
         return VadRunner(VadConfig(**kwargs))
 
     def _build_transcriber(self) -> Any:
@@ -419,7 +431,7 @@ class ModelRegistry:
             EmotionAnalyzerConfig,
         )
 
-        cfg = self._project.steps.get("film.audio.emotion", {})
+        cfg = self._project.step_config("film.audio.emotion")
         kwargs: dict[str, Any] = {}
         if cfg.get("backend") is not None:
             kwargs["emotion_backend"] = cfg["backend"]
@@ -433,19 +445,49 @@ class ModelRegistry:
             SoundEventDetectorConfig,
         )
 
-        return SoundEventDetector(SoundEventDetectorConfig())
+        cfg = self._project.step_config("film.audio.sound_events")
+        kwargs: dict[str, Any] = {}
+        if cfg.get("backend") is not None:
+            kwargs["backend"] = cfg["backend"]
+        if cfg.get("model") is not None:
+            kwargs["model"] = cfg["model"]
+        return SoundEventDetector(SoundEventDetectorConfig(**kwargs))
 
     def _build_music_analyzer(self) -> Any:
         from yorishiro.audio.music_analyzer import MusicAnalyzer, MusicAnalyzerConfig
 
-        return MusicAnalyzer(MusicAnalyzerConfig())
+        cfg = self._project.step_config("film.audio.music")
+        separation = cfg.get("separation", {})
+        analysis = cfg.get("analysis", {})
+        if not isinstance(separation, dict):
+            separation = {}
+        if not isinstance(analysis, dict):
+            analysis = {}
+
+        def _parse_bool(v: object) -> bool:
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str):
+                return v.strip().lower() in {"1", "true", "yes", "y", "on"}
+            if v is None:
+                return False
+            return bool(v)
+
+        kwargs: dict[str, Any] = {}
+        if separation.get("backend") is not None:
+            kwargs["separation_backend"] = str(separation["backend"])
+        if separation.get("model") is not None:
+            kwargs["separation_model"] = str(separation["model"])
+        if analysis.get("backend") is not None:
+            kwargs["analysis_backend"] = str(analysis["backend"])
+        if cfg.get("detect_lyrics") is not None:
+            kwargs["detect_lyrics"] = _parse_bool(cfg["detect_lyrics"])
+        return MusicAnalyzer(MusicAnalyzerConfig(**kwargs))
 
     def _build_audio_separator(self) -> Any:
         from yorishiro.audio.separator import AudioSeparator, AudioSeparatorConfig
 
-        cfg = self._project.steps.get("film.audio.separate", {})
-        sep_name = cfg.get("separator_model")
-        sep_cfg = dict(self._project.models.get(sep_name, {})) if sep_name else {}
+        cfg = self._project.step_config("film.audio.separate")
         kwargs: dict[str, Any] = {}
         for key, dest, conv in [
             ("backend", "backend", str),
@@ -455,6 +497,6 @@ class ModelRegistry:
             ("processing_chunk_seconds", "processing_chunk_seconds", float),
             ("processing_overlap_seconds", "processing_overlap_seconds", float),
         ]:
-            if sep_cfg.get(key) is not None:
-                kwargs[dest] = conv(sep_cfg[key])
+            if cfg.get(key) is not None:
+                kwargs[dest] = conv(cfg[key])
         return AudioSeparator(AudioSeparatorConfig(**kwargs))

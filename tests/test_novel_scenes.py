@@ -218,7 +218,6 @@ class SegmentChapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scenes[0].end_offset, len(chapter_text))
         self.assertEqual(len(agent.prompts), 2)
 
-    @unittest.expectedFailure
     async def test_segment_chapter_reports_actual_failed_end_text_on_retry(self) -> None:
         chapter_text = "First scene ends here. Second scene ends here."
         bad_first_end_text = "THIS TEXT IS NOT PRESENT"
@@ -247,13 +246,14 @@ class SegmentChapterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NovelScenesStepTests(unittest.TestCase):
-    def test_step_reads_chunk_size_overrides_from_project_yaml(self) -> None:
+    def test_step_reads_chunk_size_overrides_from_resolved_project_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             chapter_dir = root / "processed" / "novel-src" / "steps" / "chapters"
             chapter_dir.mkdir(parents=True)
             (chapter_dir / "ch000.txt").write_text("---\nindex: 0\ntitle: One\n---\nAlpha", encoding="utf-8")
-            (root / "project.yaml").write_text(
+            config_path = root / "project.yaml"
+            config_path.write_text(
                 """project:
   name: Demo
   code: demo
@@ -261,15 +261,16 @@ sources:
   - id: novel-src
     type: novel
     path: raw/novel.md
+providers:
+  openai_main:
+    type: openai
 steps:
   novel.scenes:
-    model: scene-model
+    backend: pydantic-ai
+    provider: openai_main
+    model: gpt-5-mini
     initial_chunk_size: 1234
     max_chunk_size: 5678
-models:
-  scene-model:
-    provider: openai
-    name: gpt-5-mini
 """,
                 encoding="utf-8",
             )
@@ -283,6 +284,7 @@ models:
                 task._segmentation_config,
                 SceneSegmentationConfig(initial_chunk_size=1234, max_chunk_size=5678),
             )
+            self.assertEqual(task.input_paths(), [chapter_dir / "ch000.txt", config_path])
 
 
 if __name__ == "__main__":

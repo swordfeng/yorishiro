@@ -22,15 +22,17 @@ class ModelRegistryAgentTests(unittest.TestCase):
   name: Demo
   code: demo
 sources: []
+providers:
+  openai_main:
+    type: openai
+    api_key_env: OPENAI_API_KEY
 steps:
   novel.aliases:
-    model: alias-model
-    output_mode: native
-models:
-  alias-model:
-    provider: openai
-    name: gpt-5-mini
+    backend: pydantic-ai
+    provider: openai_main
+    model: gpt-5-mini
     thinking: low
+    output_mode: native
 """
         )
         registry = ModelRegistry(project)
@@ -45,8 +47,9 @@ models:
 
         self.assertEqual(agent, "agent")
         config = build_agent.call_args.args[0]
+        self.assertEqual(config.backend, "pydantic-ai")
         self.assertEqual(config.provider, "openai")
-        self.assertEqual(config.name, "gpt-5-mini")
+        self.assertEqual(config.model, "gpt-5-mini")
         self.assertEqual(config.thinking, "low")
         self.assertEqual(config.output_mode, "native")
 
@@ -56,13 +59,14 @@ models:
   name: Demo
   code: demo
 sources: []
+providers:
+  openai_main:
+    type: openai
 steps:
   novel.aliases:
-    model: alias-model
-models:
-  alias-model:
-    provider: openai
-    name: gpt-5-mini
+    backend: pydantic-ai
+    provider: openai_main
+    model: gpt-5-mini
 """
         )
         registry = ModelRegistry(project)
@@ -97,6 +101,58 @@ steps:
         self.assertIs(second, sentinel)
         self.assertEqual(build_detector.call_count, 1)
 
+    def test_audio_separator_reads_inline_runtime_config(self) -> None:
+        project = load_project(
+            """project:
+  name: Demo
+  code: demo
+sources: []
+steps:
+  film.audio.separate:
+    backend: demucs
+    model: htdemucs_ft
+    device: cuda
+    sample_rate: 48000
+    processing_chunk_seconds: 90
+    processing_overlap_seconds: 1.5
+"""
+        )
+        registry = ModelRegistry(project)
+
+        separator = registry.for_step("film.audio.separate").instance()
+
+        self.assertEqual(separator.config.backend, "demucs")
+        self.assertEqual(separator.config.model, "htdemucs_ft")
+        self.assertEqual(separator.config.device, "cuda")
+        self.assertEqual(separator.config.sample_rate, 48000)
+        self.assertEqual(separator.config.processing_chunk_seconds, 90)
+        self.assertEqual(separator.config.processing_overlap_seconds, 1.5)
+
+    def test_music_analyzer_reads_nested_runtime_config(self) -> None:
+        project = load_project(
+            """project:
+  name: Demo
+  code: demo
+sources: []
+steps:
+  film.audio.music:
+    detect_lyrics: false
+    separation:
+      backend: demucs
+      model: mdx_extra
+    analysis:
+      backend: essentia
+"""
+        )
+        registry = ModelRegistry(project)
+
+        analyzer = registry.for_step("film.audio.music").instance()
+
+        self.assertEqual(analyzer.config.separation_backend, "demucs")
+        self.assertEqual(analyzer.config.separation_model, "mdx_extra")
+        self.assertEqual(analyzer.config.analysis_backend, "essentia")
+        self.assertFalse(analyzer.config.detect_lyrics)
+
     def test_audio_steps_resolve_distinct_stage_runtimes(self) -> None:
         project = load_project(
             """project:
@@ -112,6 +168,7 @@ steps:
   film.audio.speakers:
     speaker_similarity_threshold: 0.8
   film.audio.emotion:
+    backend: emotion2vec
     model: emotion2vec/emotion2vec_plus_base
 """
         )

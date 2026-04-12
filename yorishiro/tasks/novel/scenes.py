@@ -18,19 +18,19 @@ class NovelScenesTask(Task):
         self,
         chapter_path: Path,
         output_dir: Path,
-        project_yaml: Path,
+        project_config: Path,
         runtime: StepRuntime,
         segmentation_config: SceneSegmentationConfig,
     ) -> None:
         self.key = chapter_path.stem
         self._chapter_path = chapter_path
         self._output_dir = output_dir
-        self._project_yaml = project_yaml
+        self._project_config = project_config
         self._runtime = runtime
         self._segmentation_config = segmentation_config
 
     def input_paths(self) -> list[Path]:
-        return [self._chapter_path, self._project_yaml]
+        return [self._chapter_path, self._project_config]
 
     def output_paths(self) -> list[Path]:
         return [self._output_dir / "scenes_manifest.json"]
@@ -44,7 +44,7 @@ class NovelScenesTask(Task):
             force=True,
             runtime=self._runtime,
             segmentation_config=self._segmentation_config,
-            material_yaml=self._project_yaml,
+            material_yaml=self._project_config,
         )
 
 
@@ -62,13 +62,12 @@ class NovelScenesStep(Step):
         segmentation_config = SceneSegmentationConfig.from_step_config(step_config)
         chapters = self._project.list_chapters(self._source_id)
         scenes_dir = self._project.step_dir(self._source_id, "scenes")
-        project_yaml = self._project.root / "project.yaml"
 
         return [
             NovelScenesTask(
                 chapter_path=chapter_path,
                 output_dir=scenes_dir / chapter_path.stem,
-                project_yaml=project_yaml,
+                project_config=self._project.config_path,
                 runtime=runtime,
                 segmentation_config=segmentation_config,
             )

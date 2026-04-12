@@ -35,22 +35,30 @@ class Source:
 @dataclass
 class ModelConfig:
     """Model configuration for a cloud LLM processing step."""
+    backend: str | None = None
     provider: str | None = None
-    name: str | None = None
+    model: str | None = None
     thinking: ThinkingEffort | None = None
     output_mode: str | None = None
     base_url: str | None = None
+    api_key: str | None = None
     api_key_env: str | None = None
 
     def merge(self, other: ModelConfig) -> ModelConfig:
         """Merge with another config. Values in `other` take precedence over `self`."""
         return ModelConfig(
-            provider=other.provider or self.provider,
-            name=other.name or self.name,
-            thinking=other.thinking or self.thinking,
-            output_mode=other.output_mode or self.output_mode,
-            base_url=other.base_url or self.base_url,
-            api_key_env=other.api_key_env or self.api_key_env,
+            backend=other.backend if other.backend is not None else self.backend,
+            provider=other.provider if other.provider is not None else self.provider,
+            model=other.model if other.model is not None else self.model,
+            thinking=other.thinking if other.thinking is not None else self.thinking,
+            output_mode=(
+                other.output_mode if other.output_mode is not None else self.output_mode
+            ),
+            base_url=other.base_url if other.base_url is not None else self.base_url,
+            api_key=other.api_key if other.api_key is not None else self.api_key,
+            api_key_env=(
+                other.api_key_env if other.api_key_env is not None else self.api_key_env
+            ),
         )
 
 
@@ -59,39 +67,49 @@ FALLBACK_CONFIG = ModelConfig(
     thinking="medium",
     output_mode="tool",
     base_url=None,
+    api_key=None,
     api_key_env="YORISHIRO_API_KEY",
 )
 
 # Fields that belong to ModelConfig (cloud models only)
-_CLOUD_MODEL_FIELDS = {"provider", "name", "thinking", "output_mode", "base_url", "api_key_env"}
+_CLOUD_MODEL_FIELDS = {
+    "backend",
+    "provider",
+    "model",
+    "thinking",
+    "output_mode",
+    "base_url",
+    "api_key",
+    "api_key_env",
+}
 
 
 @dataclass
 class Project:
     """Project configuration loaded from project.yaml."""
+    config_path: Path
     root: Path
     name: str
     code: str
     sources: list[Source]
-    # New schema: flat model registry + per-step config
-    models: dict[str, dict]         # models.<name> → raw definition dict
-    steps: dict[str, dict]          # steps.<step_id> → raw config dict
+    providers: dict[str, dict[str, Any]]
+    steps: dict[str, dict[str, Any]]
     step_groups: dict[str, list[str]]
 
     @classmethod
     def load(cls, path: Path) -> Project:
-        """Load project from directory containing project.yaml."""
+        """Load project from a config file or directory."""
         if path.is_file():
             config_path = path
             root = path.parent
         else:
-            config_path = path / "project.yaml"
             root = path
+            config_path = root / "project.yaml"
 
         if not config_path.exists():
             raise FileNotFoundError(f"project.yaml not found at {config_path}")
 
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
 
         project_data = raw.get("project", {})
         sources_data = raw.get("sources", [])
@@ -107,16 +125,17 @@ class Project:
             for s in sources_data
         ]
 
-        models = raw.get("models", {})
+        providers = raw.get("providers", {})
         steps = raw.get("steps", {})
         step_groups = raw.get("step_groups", {})
 
         return cls(
+            config_path=config_path,
             root=root,
             name=project_data.get("name", ""),
             code=project_data.get("code", ""),
             sources=sources,
-            models=models,
+            providers=providers,
             steps=steps,
             step_groups=step_groups,
         )
@@ -172,24 +191,57 @@ class Project:
     # ------------------------------------------------------------------
 
     def step_config(self, step_id: str) -> dict[str, Any]:
-        """Return merged config for a step: step overrides → model definition.
-
-        The 'model' key is resolved and its fields merged underneath step fields.
-        """
-        step = dict(self.steps.get(step_id, {}))
-        model_name = step.pop("model", None)
-        model_def = dict(self.models.get(model_name, {})) if model_name else {}
-        # step fields override model definition fields
-        return {**model_def, **step}
+        """Return the raw config mapping for a step."""
+        return dict(self.steps.get(step_id, {}))
 
     def resolved_model_config(self, step_id: str) -> ModelConfig:
         """Return resolved ModelConfig for a cloud LLM step.
 
-        Merges: step config → model definition → FALLBACK_CONFIG.
-        Only cloud-model fields are extracted (provider, name, thinking, …).
+        Merges: fallback defaults → provider profile → step-local overrides.
+        The step must declare `backend: pydantic-ai`, a provider profile reference,
+        and a concrete `model` id.
         """
-        cfg = self.step_config(step_id)
-        cloud_fields = {k: cfg[k] for k in _CLOUD_MODEL_FIELDS if k in cfg}
+        step_cfg = self.step_config(step_id)
+        backend = step_cfg.get("backend")
+        if backend != "pydantic-ai":
+            raise ValueError(
+                f"Step '{step_id}' must set backend: pydantic-ai "
+                "to use cloud agent runtime"
+            )
+
+        provider_profile = step_cfg.get("provider")
+        if not provider_profile:
+            raise ValueError(
+                f"Step '{step_id}' with backend 'pydantic-ai' is missing provider"
+            )
+
+        provider_cfg = self.providers.get(str(provider_profile))
+        if provider_cfg is None:
+            raise ValueError(
+                f"Step '{step_id}' references unknown provider profile "
+                f"'{provider_profile}'"
+            )
+
+        provider_type = provider_cfg.get("type")
+        if not provider_type:
+            raise ValueError(
+                f"Provider profile '{provider_profile}' for step '{step_id}' "
+                "is missing required field 'type'"
+            )
+
+        if not step_cfg.get("model"):
+            raise ValueError(
+                f"Step '{step_id}' with backend 'pydantic-ai' is missing model"
+            )
+
+        merged_cfg = {**provider_cfg}
+        merged_cfg["provider"] = provider_type
+        merged_cfg.pop("type", None)
+        for key, value in step_cfg.items():
+            if key != "provider":
+                merged_cfg[key] = value
+
+        cloud_fields = {k: merged_cfg[k] for k in _CLOUD_MODEL_FIELDS if k in merged_cfg}
         step_mc = ModelConfig(**cloud_fields)
         return FALLBACK_CONFIG.merge(step_mc)
 

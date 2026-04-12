@@ -284,7 +284,7 @@ steps:
                 task._segmentation_config,
                 SceneSegmentationConfig(initial_chunk_size=1234, max_chunk_size=5678),
             )
-            self.assertEqual(task.input_paths(), [chapter_dir / "ch000.txt", config_path])
+            self.assertEqual(task.input_paths(), [chapter_dir / "ch000.txt"])
 
 
 if __name__ == "__main__":

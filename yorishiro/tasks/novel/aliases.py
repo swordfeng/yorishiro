@@ -46,7 +46,7 @@ class NovelAliasesTask(Task):
 
     def input_paths(self) -> list[Path]:
         manifests = sorted(self._scenes_dir.rglob("scenes_manifest.json"))
-        return [self._project_config, *manifests]
+        return manifests
 
     def output_paths(self) -> list[Path]:
         return [self._output_dir / "character_aliases.json"]

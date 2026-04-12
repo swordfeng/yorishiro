@@ -259,7 +259,10 @@ steps:
             self.assertIsInstance(task, NovelCharactersTask)
             assert isinstance(task, NovelCharactersTask)
             self.assertEqual(task._batch_tokens, 12345)
-            self.assertEqual(task.input_paths()[1], project.config_path)
+            self.assertEqual(
+                task.input_paths(),
+                [project.step_dir("novel-src", "aliases") / "character_aliases.json"],
+            )
 
 
 if __name__ == "__main__":

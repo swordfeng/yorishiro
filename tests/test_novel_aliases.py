@@ -294,7 +294,7 @@ steps:
             self.assertIsInstance(task, NovelAliasesTask)
             assert isinstance(task, NovelAliasesTask)
             self.assertEqual(task._batch_tokens, 12345)
-            self.assertEqual(task.input_paths()[0], project.config_path)
+            self.assertEqual(task.input_paths(), [scenes_dir / "scenes_manifest.json"])
 
 
 if __name__ == "__main__":

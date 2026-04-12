@@ -30,7 +30,7 @@ class NovelScenesTask(Task):
         self._segmentation_config = segmentation_config
 
     def input_paths(self) -> list[Path]:
-        return [self._chapter_path, self._project_config]
+        return [self._chapter_path]
 
     def output_paths(self) -> list[Path]:
         return [self._output_dir / "scenes_manifest.json"]

@@ -42,7 +42,7 @@ class NovelCharactersTask(Task):
         self._target_characters = target_characters
 
     def input_paths(self) -> list[Path]:
-        return [self._aliases_file, self._project_config]
+        return [self._aliases_file]
 
     def output_paths(self) -> list[Path]:
         # Return existing insights.md files as output markers; fall back to placeholder

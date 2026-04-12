@@ -1,0 +1,46 @@
+[
+  {
+    "character": "竹取の翁",
+    "chapter_index": 3,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "竹取の翁としての取り次ぎ役",
+    "dialogue_samples": [
+      "この皇子に申し給ひし蓬莱の玉の枝を、一つの所もあやしき處なく、あやまたず持ておはしませり。何をもちてか、とかく申すべきにあらず。旅の御姿ながら、我が御家へも寄り給はずしておはしましたり。はやこの皇子に婚ひ仕うまつり給へ"
+    ],
+    "language_traits": "感心と世話焼きが前面に出て、相手を褒めてまとめようとする",
+    "emotional_state": "安堵と喜び",
+    "inferred_motivation": "若い二人を結び付けたい",
+    "internal_conflict": "赫映姫の意向と皇子の成果の間で調停したい",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "結婚を勧める父",
+        "shift": "圧力が強まる"
+      },
+      {
+        "target": "車持皇子",
+        "dynamic": "成功を称える仲介者",
+        "shift": "信頼を寄せる"
+      }
+    ],
+    "actions_taken": "皇子の成功を受け、赫映姫に婚姻を促した",
+    "actions_avoided": "偽装の裏を疑うこと",
+    "decision_logic": "目に見える成果を真実とみなし、家庭の安定を優先した",
+    "arc_marker": "養父としての判断が見誤りになりうることが露呈",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "皇子が蓬莱の玉の枝を持ち帰ったと信じた"
+      ],
+      "facts_hidden": [
+        "それが工匠の証言で崩れること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "玉の枝の見た目"
+    ]
+  }
+]

@@ -1,0 +1,42 @@
+[
+  {
+    "character": "秋田",
+    "chapter_index": 0,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "命名役としての秋田",
+    "dialogue_samples": [],
+    "language_traits": "儀礼的で簡潔",
+    "emotional_state": "務めを果たす落ち着き",
+    "inferred_motivation": "赫映姫に相応しい名を付けること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "命名者と被命名者",
+        "shift": "社会的存在として固定"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "依頼を受けて名付ける",
+        "shift": "役目の完遂"
+      }
+    ],
+    "actions_taken": "『なよ竹の赫映姫』と名付けた",
+    "actions_avoided": "",
+    "decision_logic": "美しさと若さを際立てる名を選んだ",
+    "arc_marker": "赫映姫が共同体に登録される節目",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫の名が定まった"
+      ],
+      "facts_hidden": [
+        "名前の選択が後の物語に結びつくこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

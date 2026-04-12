@@ -1,0 +1,49 @@
+[
+  {
+    "character": "赫映姫",
+    "chapter_index": 4,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "うるはしき皮なめり。わきて眞の皮ならむとも知らず",
+      "早燒きて見給へ",
+      "名殘なく燃ゆと知りせばかは衣おもひの外に置きて見ましを"
+    ],
+    "language_traits": "検証志向で、相手の虚実を暴く言い方をする",
+    "emotional_state": "冷静な観察から、真偽判定で得た安堵へ",
+    "inferred_motivation": "真物かどうかを確かめ、阿倍御主人の誇張を見抜くこと",
+    "internal_conflict": "相手を試したい気持ちと、悪意を見せすぎたくない気持ち",
+    "relationships": [
+      {
+        "target": "阿倍御主人",
+        "dynamic": "検証者と被検証者",
+        "shift": "優位が逆転"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "取り次ぎを通じて判断する",
+        "shift": "翁を介した対面"
+      }
+    ],
+    "actions_taken": "裘を火で焼かせ、偽物と判定し、返歌を添えて突き返した",
+    "actions_avoided": "素直に受け取ること",
+    "decision_logic": "火に耐えるかで真贋が分かると見た",
+    "arc_marker": "赫映姫の試験が相手を脱落させる機能を持つと明確化",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "裘が火に焼けることを見た"
+      ],
+      "facts_hidden": [
+        "阿倍御主人が真正品を持っていないこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "燃える裘",
+      "箱の瑠璃"
+    ]
+  }
+]

@@ -1,0 +1,47 @@
+{
+  "chapter_index": 6,
+  "chapter_stem": "ch006",
+  "chapter_title": "燕の子安貝",
+  "total_length": 1853,
+  "scene_count": 3,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "中納言の家",
+      "time": "昼",
+      "characters": [
+        "中納言",
+        "男ども",
+        "くらつ麿"
+      ],
+      "start_offset": 0,
+      "end_offset": 969,
+      "file": "scene_000.txt"
+    },
+    {
+      "scene_index": 1,
+      "location": "大炊寮",
+      "time": "夜",
+      "characters": [
+        "中納言",
+        "くらつ麿",
+        "人々"
+      ],
+      "start_offset": 969,
+      "end_offset": 1661,
+      "file": "scene_001.txt"
+    },
+    {
+      "scene_index": 2,
+      "location": "中納言の家",
+      "time": "のち",
+      "characters": [
+        "中納言",
+        "赫映姫"
+      ],
+      "start_offset": 1661,
+      "end_offset": 1853,
+      "file": "scene_002.txt"
+    }
+  ]
+}

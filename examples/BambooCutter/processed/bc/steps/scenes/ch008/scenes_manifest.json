@@ -1,0 +1,85 @@
+{
+  "chapter_index": 8,
+  "chapter_stem": "ch008",
+  "chapter_title": "天の羽衣",
+  "total_length": 4294,
+  "scene_count": 5,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "竹取の翁の家",
+      "time": "春の初〜七月の望",
+      "characters": [
+        "赫映姫",
+        "竹取の翁",
+        "近く使はるゝ人々",
+        "或人"
+      ],
+      "start_offset": 0,
+      "end_offset": 542,
+      "file": "scene_000.txt"
+    },
+    {
+      "scene_index": 1,
+      "location": "竹取の翁の家",
+      "time": "八月の望",
+      "characters": [
+        "赫映姫",
+        "竹取の翁",
+        "使ふ人々"
+      ],
+      "start_offset": 542,
+      "end_offset": 1176,
+      "file": "scene_001.txt"
+    },
+    {
+      "scene_index": 2,
+      "location": "竹取の翁の家",
+      "time": "八月（望の前日）",
+      "characters": [
+        "帝",
+        "竹取の翁",
+        "赫映姫",
+        "御使",
+        "少將高野大國",
+        "嫗",
+        "守る人々"
+      ],
+      "start_offset": 1176,
+      "end_offset": 2304,
+      "file": "scene_002.txt"
+    },
+    {
+      "scene_index": 3,
+      "location": "竹取の翁の家",
+      "time": "八月十五日夜（子の時）",
+      "characters": [
+        "赫映姫",
+        "竹取",
+        "造麿",
+        "嫗",
+        "天人",
+        "王と覺しき人",
+        "頭中將"
+      ],
+      "start_offset": 2304,
+      "end_offset": 3829,
+      "file": "scene_003.txt"
+    },
+    {
+      "scene_index": 4,
+      "location": "帝の御所",
+      "time": "その後",
+      "characters": [
+        "翁",
+        "嫗",
+        "帝",
+        "中將",
+        "調の岩笠"
+      ],
+      "start_offset": 3829,
+      "end_offset": 4294,
+      "file": "scene_004.txt"
+    }
+  ]
+}

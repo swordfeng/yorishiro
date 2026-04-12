@@ -1,0 +1,41 @@
+[
+  {
+    "character": "竹取の翁",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "養父としての竹取の翁",
+    "dialogue_samples": [
+      "我が子の佛、變化の人と申しながら、こゝら大さまで養ひ奉る志疎かならず。翁の申さむこと聞き給ひてむや",
+      "思の如くも宣ふかな"
+    ],
+    "language_traits": "親しみを込めつつも、婚姻を促すときは年長者らしい説得口調",
+    "emotional_state": "親心と世間体の不安が混じる",
+    "inferred_motivation": "赫映姫に納得できる相手を選ばせたい",
+    "internal_conflict": "父として尊重したい気持ちと、婚姻を進めたい焦り",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "説得する養父",
+        "shift": "婚姻をめぐる対話へ"
+      }
+    ],
+    "actions_taken": "五人の求婚者の提案を伝え、試す形で条件を整えた",
+    "actions_avoided": "赫映姫の拒否を力で押し切ること",
+    "decision_logic": "本人の納得が必要だと見て、まず条件を提示する道を選んだ",
+    "arc_marker": "養育から婚姻調停へ役割が広がる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫に求婚者が集まっている",
+        "相手の深い志を見たいという彼女の条件"
+      ],
+      "facts_hidden": [
+        "五人の課題が実はほぼ不可能であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

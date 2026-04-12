@@ -1,0 +1,21 @@
+{
+  "chapter_index": 2,
+  "chapter_stem": "ch002",
+  "chapter_title": "佛の御石の鉢",
+  "total_length": 450,
+  "scene_count": 1,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "赫映姫の家",
+      "time": "不明",
+      "characters": [
+        "石作皇子",
+        "赫映姫"
+      ],
+      "start_offset": 0,
+      "end_offset": 450,
+      "file": "scene_000.txt"
+    }
+  ]
+}

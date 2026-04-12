@@ -1,0 +1,84 @@
+[
+  {
+    "character": "赫映姫",
+    "chapter_index": 3,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [],
+    "language_traits": "表面は静かだが、内心の敗北感が強く出る",
+    "emotional_state": "動揺、悔しさ、胸つぶれるような屈辱",
+    "inferred_motivation": "車持皇子の真贋を見抜き、面目を保つこと",
+    "internal_conflict": "一度は条件を出した手前、勝敗を受け止めねばならない",
+    "relationships": [
+      {
+        "target": "車持皇子",
+        "dynamic": "策を見抜こうとする相手",
+        "shift": "負けを意識する"
+      }
+    ],
+    "actions_taken": "『優曇華の花持ちて上り給へり』との噂を聞き、自分が負けるかもしれぬと悟った",
+    "actions_avoided": "公然と敗北を認めること",
+    "decision_logic": "人前では抑え、心中でのみ敗北を味わった",
+    "arc_marker": "婚姻ゲームへの自負が揺らぐ",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "車持皇子が工匠と密かに造作したと知った"
+      ],
+      "facts_hidden": [
+        "皇子がまだ自分の前で成功を演出しようとしていること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "優曇華の花という世評"
+    ]
+  },
+  {
+    "character": "赫映姫",
+    "chapter_index": 3,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "親の宣ふ事を、一向に辭み申さむ事のいとほしさに、得難き物を、ゆかし、とは申しつるを、かく淺ましく持て來る事をなむ、妬く思ひ侍る"
+    ],
+    "language_traits": "理知的だが、露見時は感情が鋭く出る",
+    "emotional_state": "怒りと失望",
+    "inferred_motivation": "偽りを見抜き、相手の浅さを暴くこと",
+    "internal_conflict": "見抜いたことを表立って断罪したいが、翁の面目も気にする",
+    "relationships": [
+      {
+        "target": "車持皇子",
+        "dynamic": "偽りを持ち込む求婚者",
+        "shift": "信頼が崩壊"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "取り次ぎ役として間に立つ",
+        "shift": "失望を共有"
+      }
+    ],
+    "actions_taken": "玉の枝を返し、偽装を暴いた",
+    "actions_avoided": "婚姻を受け入れること",
+    "decision_logic": "浅ましい虚事では志を量れないと見切った",
+    "arc_marker": "相手を見破る判断力がはっきりする",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "玉の枝が虚事だと知った"
+      ],
+      "facts_hidden": [
+        "車持皇子が工匠を抱え込み偽造したことの全貌"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "玉の枝",
+      "文の書き付け"
+    ]
+  }
+]

@@ -1,0 +1,148 @@
+[
+  {
+    "character": "嫗",
+    "chapter_index": 8,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "養母としての嫗",
+    "dialogue_samples": [],
+    "language_traits": "沈黙の看取り役",
+    "emotional_state": "案じる気持ちが強い",
+    "inferred_motivation": "赫映姫を落ち着かせ、日々を守ること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "泣く娘を見守る",
+        "shift": "不安の共有"
+      }
+    ],
+    "actions_taken": "近くで様子を見守った",
+    "actions_avoided": "無理に理由を聞き出すこと",
+    "decision_logic": "まずは静かに見守るべきだと考えた",
+    "arc_marker": "別れの予兆をまだ理解しない家族",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が月を見るたび物思いする"
+      ],
+      "facts_hidden": [
+        "迎えがもうすぐ来ること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "月夜"
+    ]
+  },
+  {
+    "character": "嫗",
+    "chapter_index": 8,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "養母としての嫗",
+    "dialogue_samples": [],
+    "language_traits": "発話は少ないが、泣き崩れる感情は深い",
+    "emotional_state": "絶望、喪失感",
+    "inferred_motivation": "娘を失いたくない",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "別れを迫られる養母",
+        "shift": "喪失への恐怖が顕在化"
+      }
+    ],
+    "actions_taken": "泣き崩れ、別れを悲しんだ",
+    "actions_avoided": "冷静に受け入れること",
+    "decision_logic": "娘として育てた存在を手放せない",
+    "arc_marker": "家族の喪失感が最初に崩れる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が帰ると告げた"
+      ],
+      "facts_hidden": [
+        "自分では引き留められないこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "嫗",
+    "chapter_index": 8,
+    "scene_index": 3,
+    "source": "novel",
+    "active_persona": "養母としての嫗",
+    "dialogue_samples": [],
+    "language_traits": "ここでは抱きしめる沈黙の人",
+    "emotional_state": "悲嘆、喪失、諦め",
+    "inferred_motivation": "最後まで赫映姫を守ろうとすること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "抱きかかえる養母",
+        "shift": "守護が最後まで続く"
+      }
+    ],
+    "actions_taken": "赫映姫を抱いて塗籠から守ろうとした",
+    "actions_avoided": "自分から手放すこと",
+    "decision_logic": "抱き留める以外にできることがない",
+    "arc_marker": "養母の役割が喪失の直前で止まる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "迎えが本当に来た"
+      ],
+      "facts_hidden": [
+        "抱き留めても連れ去られること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "天人の光"
+    ]
+  },
+  {
+    "character": "嫗",
+    "chapter_index": 8,
+    "scene_index": 4,
+    "source": "novel",
+    "active_persona": "養母としての嫗",
+    "dialogue_samples": [],
+    "language_traits": "語らず、泣き沈む",
+    "emotional_state": "深い喪失と疲弊",
+    "inferred_motivation": "赫映姫を失った悲しみを抱えること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "失った娘",
+        "shift": "喪失の確定"
+      }
+    ],
+    "actions_taken": "翁とともに血の涙を流して嘆いた",
+    "actions_avoided": "前を向くこと",
+    "decision_logic": "受け入れるしかないが、それができない",
+    "arc_marker": "家族の終わりを受け止めきれない",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が去り、薬も残された"
+      ],
+      "facts_hidden": [
+        "翁がすぐに病み伏せること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "赫映姫の不在"
+    ]
+  }
+]

@@ -1,0 +1,42 @@
+[
+  {
+    "character": "小野房守",
+    "chapter_index": 4,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "使者としての小野房守",
+    "dialogue_samples": [],
+    "language_traits": "寡黙で実務的、命を受けて動く",
+    "emotional_state": "忠実だが緊張",
+    "inferred_motivation": "右大臣の命を果たすこと",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "阿倍御主人",
+        "dynamic": "命を受けて動く家人",
+        "shift": "任務の開始"
+      },
+      {
+        "target": "王卿",
+        "dynamic": "金銭を渡して交渉する相手",
+        "shift": "渡航先での取引"
+      }
+    ],
+    "actions_taken": "唐土船の王卿のもとへ向かい、金を渡した",
+    "actions_avoided": "命令に疑問を差し挟むこと",
+    "decision_logic": "主君の命をそのまま実行する",
+    "arc_marker": "遠隔交易を支える従者像",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "火鼠の裘の購入交渉に派遣された"
+      ],
+      "facts_hidden": [
+        "王卿の返事が高額請求になること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

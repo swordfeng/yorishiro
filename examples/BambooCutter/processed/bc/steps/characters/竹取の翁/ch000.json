@@ -1,0 +1,85 @@
+[
+  {
+    "character": "竹取の翁",
+    "chapter_index": 0,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "竹取の翁としての養父",
+    "dialogue_samples": [
+      "われ朝夕毎に見る竹の中に、おはするにて知りぬ。子になり給ふべき人なめり"
+    ],
+    "language_traits": "古風で婉曲、驚きつつも断定して保護を宣言する",
+    "emotional_state": "驚愕しつつ、即座に愛情と庇護心が勝つ",
+    "inferred_motivation": "得体の知れぬ子を家へ連れ帰り、守って育てるため",
+    "internal_conflict": "怪異への畏れと、養父としての責任が同時に立つ",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "拾い子をその場でわが子として受け入れる",
+        "shift": "出会いの瞬間に保護関係が成立"
+      }
+    ],
+    "actions_taken": "光る竹を割って赫映姫を見つけ、手に入れて家へ持ち帰り、嫗に預けた",
+    "actions_avoided": "人を呼んで騒ぐことや、怪異として拒絶すること",
+    "decision_logic": "怪しさよりも子としての縁を優先し、まず家へ連れ帰って養うのが最善と判断した",
+    "arc_marker": "養父としての役割が始まる起点",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "竹の中に三寸ばかりの子がいた",
+        "その子を家で養うべきだと即断した"
+      ],
+      "facts_hidden": [
+        "赫映姫の正体は月の都に関わる存在である",
+        "この邂逅が後の別離につながる"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "怪異を見つけた竹取の翁から、即座に父性的な保護者へ"
+    ],
+    "sensory_triggers": [
+      "竹の内からの光"
+    ]
+  },
+  {
+    "character": "竹取の翁",
+    "chapter_index": 0,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "竹取の翁としての養父",
+    "dialogue_samples": [],
+    "language_traits": "世話焼きで祝い好き、富の増加を淡々と受け止める",
+    "emotional_state": "満足、愛情、安堵",
+    "inferred_motivation": "赫映姫を立派に育て、家を保つこと",
+    "internal_conflict": "愛情を深めるほど、世間への備えも必要になる",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "成長を見守る養父",
+        "shift": "家族としての絆が固定"
+      }
+    ],
+    "actions_taken": "赫映姫に髪上げ・裳着をさせ、外に出さず養い、秋田を呼んで名を付けさせた",
+    "actions_avoided": "早く外へ嫁がせること",
+    "decision_logic": "幼さゆえに囲って育てるのが最善と判断した",
+    "arc_marker": "養育が豊かさと連動し、家の内が聖域化する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "竹から金が出て家が豊かになった",
+        "赫映姫が並外れて美しく育った"
+      ],
+      "facts_hidden": [
+        "金の連続発見の意味",
+        "赫映姫の真の年齢や来歴"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "家の内に満ちる光",
+      "三日うちあげ遊び"
+    ]
+  }
+]

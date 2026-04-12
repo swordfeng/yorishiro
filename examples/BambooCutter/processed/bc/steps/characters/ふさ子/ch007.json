@@ -1,0 +1,45 @@
+[
+  {
+    "character": "ふさ子",
+    "chapter_index": 7,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "内侍としてのふさ子",
+    "dialogue_samples": [
+      "よく見て參るべきよし宣はせつるになむ參りつる",
+      "口惜しくこの幼き者は、強く侍る者にて、對面すまじきと申す"
+    ],
+    "language_traits": "非常に丁寧で、宮中と民家の間を滑らかに往復する",
+    "emotional_state": "緊張と困惑",
+    "inferred_motivation": "帝の命を果たしつつ、場を荒立てないこと",
+    "internal_conflict": "宮中の圧力と、赫映姫側の拒絶の間で板挟み",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "命を受ける使者",
+        "shift": "報告義務を負う"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "対面を求める相手",
+        "shift": "拒否を受けて困る"
+      }
+    ],
+    "actions_taken": "竹取の家へ赴き、赫映姫の容貌を見ようとした",
+    "actions_avoided": "無理に顔を見せるよう迫ること",
+    "decision_logic": "まずは穏便に伝えるのが内侍の務めと考えた",
+    "arc_marker": "宮中の命令が民家で跳ね返される",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が帝の使いにも会おうとしない"
+      ],
+      "facts_hidden": [
+        "この拒絶がのちに帝の直接行幸を招くこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

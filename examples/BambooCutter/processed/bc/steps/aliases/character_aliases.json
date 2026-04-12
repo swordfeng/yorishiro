@@ -1,0 +1,530 @@
+{
+  "竹取の翁": [
+    {
+      "chapter": "ch000",
+      "scene": 0,
+      "alias": "翁"
+    },
+    {
+      "chapter": "ch000",
+      "scene": 0,
+      "alias": "讃岐造麿"
+    },
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "翁"
+    },
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "竹取"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 0,
+      "alias": "翁"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 0,
+      "alias": "竹取"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 1,
+      "alias": "翁"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 2,
+      "alias": "翁"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 3,
+      "alias": "翁"
+    },
+    {
+      "chapter": "ch004",
+      "scene": 1,
+      "alias": "竹取"
+    },
+    {
+      "chapter": "ch004",
+      "scene": 1,
+      "alias": "翁"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 1,
+      "alias": "翁"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 2,
+      "alias": "造麿"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 0,
+      "alias": "竹取の翁"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 1,
+      "alias": "竹取の翁"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 2,
+      "alias": "竹取の翁"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 3,
+      "alias": "竹取"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 3,
+      "alias": "造麿"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 4,
+      "alias": "翁"
+    }
+  ],
+  "嫗": [
+    {
+      "chapter": "ch000",
+      "scene": 0,
+      "alias": "嫗"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 0,
+      "alias": "嫗"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 2,
+      "alias": "嫗"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 3,
+      "alias": "嫗"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 4,
+      "alias": "嫗"
+    }
+  ],
+  "赫映姫": [
+    {
+      "chapter": "ch000",
+      "scene": 0,
+      "alias": "子"
+    },
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "子"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 0,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 1,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch002",
+      "scene": 0,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 1,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 2,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 3,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch004",
+      "scene": 1,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch005",
+      "scene": 0,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch006",
+      "scene": 2,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 0,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 1,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 2,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 0,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 1,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 2,
+      "alias": "赫映姫"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 3,
+      "alias": "赫映姫"
+    }
+  ],
+  "秋田": [
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "秋田"
+    }
+  ],
+  "石作皇子": [
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "石作皇子"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 0,
+      "alias": "石作皇子"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 1,
+      "alias": "石作皇子"
+    },
+    {
+      "chapter": "ch002",
+      "scene": 0,
+      "alias": "石作皇子"
+    }
+  ],
+  "車持皇子": [
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "車持皇子"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 0,
+      "alias": "車持皇子"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 1,
+      "alias": "車持皇子"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 0,
+      "alias": "車持皇子"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 0,
+      "alias": "御送の人々"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 1,
+      "alias": "車持皇子"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 2,
+      "alias": "車持皇子"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 3,
+      "alias": "車持皇子"
+    }
+  ],
+  "阿倍御主人": [
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "右大臣阿倍御主人"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 0,
+      "alias": "右大臣阿倍御主人"
+    },
+    {
+      "chapter": "ch004",
+      "scene": 0,
+      "alias": "阿倍御主人"
+    },
+    {
+      "chapter": "ch004",
+      "scene": 1,
+      "alias": "大臣"
+    }
+  ],
+  "大伴御行": [
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "大納言大伴御行"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 0,
+      "alias": "大納言大伴御行"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 1,
+      "alias": "大伴大納言"
+    },
+    {
+      "chapter": "ch005",
+      "scene": 0,
+      "alias": "大伴御行"
+    },
+    {
+      "chapter": "ch005",
+      "scene": 0,
+      "alias": "男ども"
+    },
+    {
+      "chapter": "ch005",
+      "scene": 0,
+      "alias": "大納言"
+    },
+    {
+      "chapter": "ch005",
+      "scene": 1,
+      "alias": "大納言"
+    },
+    {
+      "chapter": "ch005",
+      "scene": 1,
+      "alias": "舍人"
+    },
+    {
+      "chapter": "ch005",
+      "scene": 2,
+      "alias": "大納言"
+    },
+    {
+      "chapter": "ch005",
+      "scene": 2,
+      "alias": "男ども"
+    }
+  ],
+  "石上麻呂": [
+    {
+      "chapter": "ch000",
+      "scene": 1,
+      "alias": "中納言石上麻呂"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 0,
+      "alias": "中納言石上麻呂"
+    },
+    {
+      "chapter": "ch001",
+      "scene": 1,
+      "alias": "石上中納言"
+    },
+    {
+      "chapter": "ch006",
+      "scene": 0,
+      "alias": "中納言"
+    },
+    {
+      "chapter": "ch006",
+      "scene": 0,
+      "alias": "男ども"
+    },
+    {
+      "chapter": "ch006",
+      "scene": 1,
+      "alias": "中納言"
+    },
+    {
+      "chapter": "ch006",
+      "scene": 1,
+      "alias": "人々"
+    },
+    {
+      "chapter": "ch006",
+      "scene": 2,
+      "alias": "中納言"
+    }
+  ],
+  "小野房守": [
+    {
+      "chapter": "ch004",
+      "scene": 0,
+      "alias": "小野房守"
+    }
+  ],
+  "王卿": [
+    {
+      "chapter": "ch004",
+      "scene": 0,
+      "alias": "王卿"
+    }
+  ],
+  "ふさ子": [
+    {
+      "chapter": "ch007",
+      "scene": 0,
+      "alias": "ふさ子"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 1,
+      "alias": "内侍"
+    }
+  ],
+  "帝": [
+    {
+      "chapter": "ch007",
+      "scene": 0,
+      "alias": "帝"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 1,
+      "alias": "帝"
+    },
+    {
+      "chapter": "ch007",
+      "scene": 2,
+      "alias": "帝"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 2,
+      "alias": "帝"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 4,
+      "alias": "帝"
+    }
+  ],
+  "内侍": [],
+  "少將高野大國": [
+    {
+      "chapter": "ch003",
+      "scene": 3,
+      "alias": "宮司侍ふ人々"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 2,
+      "alias": "御使"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 2,
+      "alias": "少將高野大國"
+    },
+    {
+      "chapter": "ch008",
+      "scene": 2,
+      "alias": "守る人々"
+    }
+  ],
+  "調の岩笠": [
+    {
+      "chapter": "ch008",
+      "scene": 4,
+      "alias": "調の岩笠"
+    }
+  ],
+  "漢部内麿": [
+    {
+      "chapter": "ch003",
+      "scene": 1,
+      "alias": "工匠等"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 3,
+      "alias": "工匠等"
+    },
+    {
+      "chapter": "ch003",
+      "scene": 3,
+      "alias": "漢部内麿"
+    }
+  ],
+  "くらつ麿": [
+    {
+      "chapter": "ch006",
+      "scene": 0,
+      "alias": "くらつ麿"
+    },
+    {
+      "chapter": "ch006",
+      "scene": 1,
+      "alias": "くらつ麿"
+    }
+  ],
+  "本の上": [
+    {
+      "chapter": "ch005",
+      "scene": 2,
+      "alias": "本の上"
+    }
+  ],
+  "UNRESOLVED": []
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "character": "少將高野大國",
+    "chapter_index": 8,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "勅使としての少將高野大國",
+    "dialogue_samples": [],
+    "language_traits": "武装した実務官として、命令に従う",
+    "emotional_state": "緊張と警戒",
+    "inferred_motivation": "帝命を受け、赫映姫の迎えを阻むこと",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "勅命を受ける",
+        "shift": "兵力配備の責任者へ"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "守る側ではなく監視側",
+        "shift": "包囲の一員"
+      }
+    ],
+    "actions_taken": "六衛府と合わせて二千人を率い、家を取り巻かせた",
+    "actions_avoided": "個人判断で介入すること",
+    "decision_logic": "命じられた以上、最大限の包囲で応じた",
+    "arc_marker": "国家権力が私人の別れに介入する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "月の都の迎えを警戒している"
+      ],
+      "facts_hidden": [
+        "天人の前ではこの包囲が無力なこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

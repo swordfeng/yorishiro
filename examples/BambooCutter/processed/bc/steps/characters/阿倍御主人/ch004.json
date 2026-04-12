@@ -1,0 +1,88 @@
+[
+  {
+    "character": "阿倍御主人",
+    "chapter_index": 4,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "右大臣としての阿倍御主人",
+    "dialogue_samples": [
+      "火鼠の裘といふなるもの買ひておこせよ"
+    ],
+    "language_traits": "権勢にふさわしい命令口調で、商取引も支配の延長として扱う",
+    "emotional_state": "自信満々、希少品への執着が強い",
+    "inferred_motivation": "赫映姫に対して珍宝で優位に立つこと",
+    "internal_conflict": "財力への自負と、手に入るか分からぬ不安",
+    "relationships": [
+      {
+        "target": "小野房守",
+        "dynamic": "忠実な使者として使う",
+        "shift": "命令関係"
+      },
+      {
+        "target": "王卿",
+        "dynamic": "対価交渉の相手",
+        "shift": "海外商取引の相手"
+      }
+    ],
+    "actions_taken": "小野房守を遣わし、火鼠の裘の購入を命じた",
+    "actions_avoided": "自分で危地へ赴くこと",
+    "decision_logic": "遠方の珍品は使者を通して手に入れるのが当然と考えた",
+    "arc_marker": "権力による希少品収集の開始",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "火鼠の裘を求めている"
+      ],
+      "facts_hidden": [
+        "その裘がすでに怪しい手応えの品であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "阿倍御主人",
+    "chapter_index": 4,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "右大臣としての阿倍御主人",
+    "dialogue_samples": [
+      "この皮は唐土にも無かりけるを、辛うじて覓め尋ね得たるなり。何の疑かあらむ。"
+    ],
+    "language_traits": "自信満々だが、疑われると理屈で押し返す",
+    "emotional_state": "期待と不安の交錯",
+    "inferred_motivation": "珍品の真正を認めさせ、赫映姫に勝つこと",
+    "internal_conflict": "本物だと信じたい思いと、焼却への恐れ",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "認めさせたい相手",
+        "shift": "勝負が最終段階へ"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "取り次がれる立場",
+        "shift": "尊大さが試される"
+      }
+    ],
+    "actions_taken": "火鼠の裘を持参し、真物だと主張した",
+    "actions_avoided": "赫映姫の検証に先回りして自白すること",
+    "decision_logic": "入手難度そのものが真物の証だと考えた",
+    "arc_marker": "希少品への自信が崩れる前段",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "火鼠の裘を持ち帰ったと主張した"
+      ],
+      "facts_hidden": [
+        "赫映姫が焼いて真偽を確かめようとしていること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "火鼠の裘の色と輝き"
+    ]
+  }
+]

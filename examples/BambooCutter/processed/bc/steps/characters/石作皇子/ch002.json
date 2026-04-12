@@ -1,0 +1,44 @@
+[
+  {
+    "character": "石作皇子",
+    "chapter_index": 2,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "求婚者としての石作皇子",
+    "dialogue_samples": [
+      "今日なむ天竺へ石の鉢とりに罷る",
+      "海山の路に心を盡くし果て御石の鉢の涙流れき"
+    ],
+    "language_traits": "大仰で芝居がかった言い回しを使い、偽装を重ねる",
+    "emotional_state": "虚勢と焦り",
+    "inferred_motivation": "赫映姫をだましてでも振り向かせること",
+    "internal_conflict": "体面を保ちつつ失敗を隠したい",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "騙しにかかる相手",
+        "shift": "真贋を試される側に回る"
+      }
+    ],
+    "actions_taken": "山寺の鉢を偽装し、歌を添えて持ち帰った",
+    "actions_avoided": "本当に天竺へ向かうこと",
+    "decision_logic": "相手に見抜かれなければ勝てると踏んだ",
+    "arc_marker": "偽物の努力が最初の敗北として露呈",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫に返歌で見破られた"
+      ],
+      "facts_hidden": [
+        "本物の天竺の鉢は手に入れていないこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "豪胆な求婚者→見破られる偽装者"
+    ],
+    "sensory_triggers": [
+      "鉢の煤けた黒さ"
+    ]
+  }
+]

@@ -1,0 +1,176 @@
+[
+  {
+    "character": "車持皇子",
+    "chapter_index": 3,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "求婚者としての車持皇子",
+    "dialogue_samples": [
+      "筑紫國に湯あみに罷らむ",
+      "玉の枝取りになむ罷る"
+    ],
+    "language_traits": "表向きは旅の口実を立て、内実は隠密行動に向く",
+    "emotional_state": "策を巡らす緊張",
+    "inferred_motivation": "赫映姫にふさわしい成果を見せること",
+    "internal_conflict": "高い身分と、秘密行動の卑近さ",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "策で落とそうとする相手",
+        "shift": "密かな勝負への出発"
+      }
+    ],
+    "actions_taken": "難波まで見送られつつ、少人数で出発した",
+    "actions_avoided": "堂々と大部隊を率いること",
+    "decision_logic": "秘密裏に進めた方が成功しやすいと考えた",
+    "arc_marker": "詐術の求婚が本格化する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "表向きは筑紫への湯治と偽った"
+      ],
+      "facts_hidden": [
+        "実際に玉の枝を作らせる算段をしている"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "車持皇子",
+    "chapter_index": 3,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "求婚者としての車持皇子",
+    "dialogue_samples": [],
+    "language_traits": "沈黙のうちに段取りを進める、実務型の策謀家",
+    "emotional_state": "緊張と隠し事による消耗",
+    "inferred_motivation": "偽の成功を完成させること",
+    "internal_conflict": "成功への欲望と、露見への恐怖",
+    "relationships": [
+      {
+        "target": "漢部内麿",
+        "dynamic": "工匠を利用する立場",
+        "shift": "協力関係だが支配的"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "見せかけの成果で騙そうとする",
+        "shift": "偽装の強化"
+      }
+    ],
+    "actions_taken": "工匠を囲い込み、玉の枝を作らせ、密かに都へ運んだ",
+    "actions_avoided": "正面から真の冒険に出ること",
+    "decision_logic": "人を使って成果を作れば勝てると踏んだ",
+    "arc_marker": "詐術の完成が近づく一方、露見の危険も増す",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "千余日にわたる密造を行った"
+      ],
+      "facts_hidden": [
+        "赫映姫が工匠たちの証言で真相を知ること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "閉じ込めた家",
+      "玉の枝の造作"
+    ]
+  },
+  {
+    "character": "車持皇子",
+    "chapter_index": 3,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "旅姿の車持皇子",
+    "dialogue_samples": [
+      "命を捨てて、かの玉の枝持て來たり",
+      "今さら何かといふべからず"
+    ],
+    "language_traits": "英雄的な言い回しを装い、結果を誇示する",
+    "emotional_state": "得意と警戒が混じる",
+    "inferred_motivation": "偽りの成果で赫映姫を納得させること",
+    "internal_conflict": "成功を演じたいが、内心では露見を恐れる",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "成果を見せて勝ちたい相手",
+        "shift": "対面での勝負へ"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "取り次ぎ役",
+        "shift": "翁を通して姫へ迫る"
+      }
+    ],
+    "actions_taken": "玉の枝を携えて帰還し、赫映姫に見せるよう求めた",
+    "actions_avoided": "失敗の真相を自ら明かすこと",
+    "decision_logic": "物証があれば説得できると考えた",
+    "arc_marker": "詐術の勝利を確信した直後に崩れる前段",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "玉の枝を持ち帰ったと見せかけた"
+      ],
+      "facts_hidden": [
+        "工匠たちの告発で偽物とばれること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "旅姿",
+      "玉の枝"
+    ]
+  },
+  {
+    "character": "車持皇子",
+    "chapter_index": 3,
+    "scene_index": 3,
+    "source": "novel",
+    "active_persona": "求婚者としての車持皇子",
+    "dialogue_samples": [],
+    "language_traits": "表向きは立派でも、実際は失態後の暴力で取り繕う",
+    "emotional_state": "羞恥、恐慌、怒り",
+    "inferred_motivation": "失敗を隠し、体面を回復すること",
+    "internal_conflict": "勝者でありたい自尊心と、完全敗北の現実",
+    "relationships": [
+      {
+        "target": "漢部内麿",
+        "dynamic": "利用した工匠たち",
+        "shift": "証人化して自分を崩す"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "求婚に失敗する相手",
+        "shift": "完全な敗北"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "取り次ぎを担う家の主",
+        "shift": "顔を合わせるのが苦痛"
+      }
+    ],
+    "actions_taken": "恥を抱えたまま退場し、後に工匠を打擲した",
+    "actions_avoided": "失敗を認めて退くこと",
+    "decision_logic": "力でごまかせるうちはごまかそうとした",
+    "arc_marker": "策士が恥辱で崩落する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "工匠たちの告発で虚構が明るみに出た"
+      ],
+      "facts_hidden": [
+        "赫映姫が完全に見抜いていたこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "自信ある求婚者→恥に沈む敗者"
+    ],
+    "sensory_triggers": []
+  }
+]

@@ -1,0 +1,76 @@
+[
+  {
+    "character": "大伴御行",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "大納言としての大伴御行",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "豪胆で断定的、威勢で押し切ろうとする",
+    "emotional_state": "闘争心と焦燥",
+    "inferred_motivation": "赫映姫を勝ち取るための意地",
+    "internal_conflict": "自信満々な態度と、実は困難を察している不安",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "身分を武器に求婚する",
+        "shift": "難題を受けても退かない"
+      }
+    ],
+    "actions_taken": "求婚者として列に加わり、条件を受けた",
+    "actions_avoided": "諦めること",
+    "decision_logic": "自分の力なら突破できると高を括った",
+    "arc_marker": "後の大言大敗の伏線",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が難題を課した"
+      ],
+      "facts_hidden": [
+        "龍の首の玉が無理難題であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "大伴御行",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "大納言としての大伴御行",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "豪放で強気、負けを認めにくい",
+    "emotional_state": "好戦的な高揚",
+    "inferred_motivation": "赫映姫を射止めること",
+    "internal_conflict": "自信と不安が同居",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "身分を背景にした求愛",
+        "shift": "条件付きの競争へ"
+      }
+    ],
+    "actions_taken": "求婚者として同意した",
+    "actions_avoided": "撤退",
+    "decision_logic": "自分なら乗り越えられると高ぶった",
+    "arc_marker": "後の失敗の基礎がここで固まる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "条件が出された"
+      ],
+      "facts_hidden": [
+        "龍の首の玉が人智を超える難物であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

@@ -1,0 +1,50 @@
+{
+  "chapter_index": 7,
+  "chapter_stem": "ch007",
+  "chapter_title": "御狩のみゆき",
+  "total_length": 2125,
+  "scene_count": 3,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "竹取の家",
+      "time": "ある日",
+      "characters": [
+        "帝",
+        "ふさ子",
+        "嫗",
+        "赫映姫"
+      ],
+      "start_offset": 0,
+      "end_offset": 551,
+      "file": "scene_000.txt"
+    },
+    {
+      "scene_index": 1,
+      "location": "帝の御前 / 竹取の家",
+      "time": "その後",
+      "characters": [
+        "内侍",
+        "帝",
+        "翁",
+        "赫映姫"
+      ],
+      "start_offset": 551,
+      "end_offset": 1284,
+      "file": "scene_001.txt"
+    },
+    {
+      "scene_index": 2,
+      "location": "竹取の家 / 帝の御前",
+      "time": "後日（御狩の日）以降",
+      "characters": [
+        "帝",
+        "赫映姫",
+        "造麿"
+      ],
+      "start_offset": 1284,
+      "end_offset": 2125,
+      "file": "scene_002.txt"
+    }
+  ]
+}

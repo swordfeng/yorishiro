@@ -1,0 +1,84 @@
+[
+  {
+    "character": "赫映姫",
+    "chapter_index": 7,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "もはら然樣の宮仕つかう奉らじと思ふを、強ひて仕う奉らせ給はば、消え失せなむず。御官冠つかう奉りて死ぬばかりなり"
+    ],
+    "language_traits": "拒絶は明快で、遠慮より自己保存を優先する",
+    "emotional_state": "強い拒絶、緊張",
+    "inferred_motivation": "宮仕えを避け、地上での平穏を守ること",
+    "internal_conflict": "帝命への畏れと、自分の本心の拒絶",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "絶対権力にも屈しない",
+        "shift": "公的命令への明確な拒絶"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "心配をかける娘",
+        "shift": "守られる側から抵抗する側へ"
+      }
+    ],
+    "actions_taken": "宮仕えを断固拒否した",
+    "actions_avoided": "帝に従って宮中へ行くこと",
+    "decision_logic": "強いられれば消え失せるほど嫌だと判断した",
+    "arc_marker": "自分の意思で『行かない』を明言する転機",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "帝の命にも従いたくないほど宮仕えを嫌う"
+      ],
+      "facts_hidden": [
+        "この拒絶がさらに大きな包囲を呼ぶこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "赫映姫",
+    "chapter_index": 7,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "葎はふ下にも年は經ぬる身の何かは玉の臺をも見む"
+    ],
+    "language_traits": "和歌で距離を保ち、婉曲に拒む",
+    "emotional_state": "悲しみと諦念",
+    "inferred_motivation": "帝の望みに応えず、己の運命を守ること",
+    "internal_conflict": "見送るべきではない相手に情が動く",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "好意と拒絶が混じる相手",
+        "shift": "歌による別離"
+      }
+    ],
+    "actions_taken": "帝の申し出をやわらかく断り、歌を返した",
+    "actions_avoided": "宮中へ同行すること",
+    "decision_logic": "自分は『玉の臺』にふさわしくないと距離を置いた",
+    "arc_marker": "拒絶が単なる拒絶ではなく、別離の予告になる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "帝が本気で留めた"
+      ],
+      "facts_hidden": [
+        "自分が間もなく月へ帰ること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "玉の臺",
+      "帝の歌"
+    ]
+  }
+]

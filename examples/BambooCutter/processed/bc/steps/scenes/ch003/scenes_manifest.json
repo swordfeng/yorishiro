@@ -1,0 +1,63 @@
+{
+  "chapter_index": 3,
+  "chapter_stem": "ch003",
+  "chapter_title": "蓬莱の玉の枝",
+  "total_length": 2968,
+  "scene_count": 4,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "難波",
+      "time": "出発時",
+      "characters": [
+        "車持皇子",
+        "御送の人々"
+      ],
+      "start_offset": 0,
+      "end_offset": 155,
+      "file": "scene_000.txt"
+    },
+    {
+      "scene_index": 1,
+      "location": "工匠の隠れ家→都",
+      "time": "三日後〜千余日後",
+      "characters": [
+        "車持皇子",
+        "工匠等",
+        "赫映姫"
+      ],
+      "start_offset": 155,
+      "end_offset": 490,
+      "file": "scene_001.txt"
+    },
+    {
+      "scene_index": 2,
+      "location": "赫映姫の家",
+      "time": "その日の晩",
+      "characters": [
+        "車持皇子",
+        "赫映姫",
+        "翁"
+      ],
+      "start_offset": 490,
+      "end_offset": 2058,
+      "file": "scene_002.txt"
+    },
+    {
+      "scene_index": 3,
+      "location": "赫映姫の家",
+      "time": "同日晩〜その後",
+      "characters": [
+        "赫映姫",
+        "翁",
+        "車持皇子",
+        "工匠等",
+        "漢部内麿",
+        "宮司侍ふ人々"
+      ],
+      "start_offset": 2058,
+      "end_offset": 2968,
+      "file": "scene_003.txt"
+    }
+  ]
+}

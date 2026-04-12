@@ -1,0 +1,207 @@
+[
+  {
+    "character": "竹取の翁",
+    "chapter_index": 8,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "竹取の翁としての養父",
+    "dialogue_samples": [
+      "なでふ心地すれば、斯く物を思ひたる樣にて月を見給ふぞ、うましき世に",
+      "月な見給ひそ。これを見給へば、物思す氣色はあるぞ"
+    ],
+    "language_traits": "心配が先に立ち、諭す口ぶりになる",
+    "emotional_state": "不安、愛情、心配",
+    "inferred_motivation": "赫映姫の物思いの原因を取り除きたい",
+    "internal_conflict": "娘の心を尊重したい気持ちと、干渉したい気持ち",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "月見を止めたい父",
+        "shift": "心配が強まる"
+      }
+    ],
+    "actions_taken": "赫映姫の月見を制した",
+    "actions_avoided": "理由を深く問い詰めること",
+    "decision_logic": "月が彼女を苦しめるなら見せない方がよいと考えた",
+    "arc_marker": "翁の気遣いが、真相を知らぬまま空回りする",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が月を見ると泣く"
+      ],
+      "facts_hidden": [
+        "その理由が月の都への郷愁であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "月光"
+    ]
+  },
+  {
+    "character": "竹取の翁",
+    "chapter_index": 8,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "竹取の翁としての養父",
+    "dialogue_samples": [
+      "こはなでふ事を宣ふぞ。竹の中より見つけ聞えたりしかど、菜種の大さおはせしを、我が丈立ち竝ぶまで養ひ奉りたる我が子を、何人か迎へ聞えむ。まさに許さむや",
+      "我こそ死なめ"
+    ],
+    "language_traits": "激しく取り乱し、父親としての所有感がむき出しになる",
+    "emotional_state": "衝撃、怒り、絶望",
+    "inferred_motivation": "赫映姫を奪われたくない",
+    "internal_conflict": "育てた子の真実を受け入れられない",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "失いたくない娘",
+        "shift": "別離への拒否が頂点へ"
+      }
+    ],
+    "actions_taken": "迎えを拒み、泣きわめいた",
+    "actions_avoided": "事実を受け入れて静かに送り出すこと",
+    "decision_logic": "自分が育てた娘を誰にも渡せないと考えた",
+    "arc_marker": "養父の愛が喪失恐怖へ変わる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が月へ帰ると明言した"
+      ],
+      "facts_hidden": [
+        "その別れが避けられないこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "望の月"
+    ]
+  },
+  {
+    "character": "竹取の翁",
+    "chapter_index": 8,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "竹取の翁としての防衛者",
+    "dialogue_samples": [
+      "斯ばかり守る所に、天の人にも負けむや",
+      "つゆも物空に翔らば、ふと射殺し給へ",
+      "長き爪して眼を掴み潰さむ。さが髮を取りてかなぐり落さん。さが尻を掻き出でて、許多のおほやけ人に見せて恥見せむ"
+    ],
+    "language_traits": "荒々しく、防衛のためなら脅しも辞さない",
+    "emotional_state": "怒り、焦燥、過剰な防衛本能",
+    "inferred_motivation": "赫映姫を物理的に守り抜くこと",
+    "internal_conflict": "相手が天の人だと薄々感じつつ、諦められない",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "援軍を得たが、心は別の敵に向く",
+        "shift": "権力の後ろ盾に安堵"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "守り抜きたい娘",
+        "shift": "守護が極限化"
+      }
+    ],
+    "actions_taken": "屋上と築地に兵を並べ、迎え撃つ構えを整えた",
+    "actions_avoided": "月の使いを受け入れること",
+    "decision_logic": "数で囲っても守れると信じた",
+    "arc_marker": "家父長的防衛が頂点に達する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "月の都の迎えが軍事包囲では止められないらしい"
+      ],
+      "facts_hidden": [
+        "包囲そのものが意味をなさないこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "弓箭",
+      "屋上"
+    ]
+  },
+  {
+    "character": "竹取の翁",
+    "chapter_index": 8,
+    "scene_index": 3,
+    "source": "novel",
+    "active_persona": "竹取の翁としての別離の父",
+    "dialogue_samples": [
+      "何しに悲しきに見送り奉らむ。我をば如何にせよとて、棄てては昇り給ふぞ。具して率ておはせね"
+    ],
+    "language_traits": "泣き言が前面に出て、語気が荒れる",
+    "emotional_state": "絶望、取り乱し、喪失の痛み",
+    "inferred_motivation": "赫映姫を引き留め、せめて一緒に行きたい",
+    "internal_conflict": "見送るべきだと知っても、離れられない",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "別れを拒む養父",
+        "shift": "最後の執着がむき出しになる"
+      }
+    ],
+    "actions_taken": "泣いて引き留め、文を書かせた",
+    "actions_avoided": "静かに送り出すこと",
+    "decision_logic": "連れて行ってほしいほどに別離が耐え難いと感じた",
+    "arc_marker": "父性が喪失の叫びへ変わる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が天へ昇る直前である"
+      ],
+      "facts_hidden": [
+        "もう止められないこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "羽衣",
+      "飛車",
+      "光"
+    ]
+  },
+  {
+    "character": "竹取の翁",
+    "chapter_index": 8,
+    "scene_index": 4,
+    "source": "novel",
+    "active_persona": "竹取の翁としての喪失後の父",
+    "dialogue_samples": [],
+    "language_traits": "もう語気よりも、病と涙で語る",
+    "emotional_state": "消耗、絶望、無気力",
+    "inferred_motivation": "失った赫映姫への執着を抱えたまま倒れること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "失った娘",
+        "shift": "別離後も回復しない"
+      }
+    ],
+    "actions_taken": "書き置きを読み上げさせたが、薬も食べず病み伏した",
+    "actions_avoided": "回復して日常に戻ること",
+    "decision_logic": "もう何も意味がないと感じた",
+    "arc_marker": "養父の人生が別離で止まる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が完全に去った"
+      ],
+      "facts_hidden": [
+        "薬を焼く山が後に有名になること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "書き置きの文"
+    ]
+  }
+]

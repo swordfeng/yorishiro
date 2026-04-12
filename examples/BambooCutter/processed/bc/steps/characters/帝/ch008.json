@@ -1,0 +1,89 @@
+[
+  {
+    "character": "帝",
+    "chapter_index": 8,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "帝",
+    "dialogue_samples": [
+      "一目見給ひし御心にだに忘れ給はぬに、明暮見馴れたる赫映姫をやりては、如何思ふべき"
+    ],
+    "language_traits": "感情をこらえた命令調の中に、明確な執着がある",
+    "emotional_state": "焦燥、嫉妬、喪失への予感",
+    "inferred_motivation": "赫映姫を失わないために宮中の力を総動員すること",
+    "internal_conflict": "帝としての節度と、個人的な執着",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "失いたくない相手",
+        "shift": "保護と占有の混合へ"
+      },
+      {
+        "target": "少將高野大國",
+        "dynamic": "包囲を担う勅使",
+        "shift": "実力行使の手先"
+      }
+    ],
+    "actions_taken": "二千人を動員し、竹取の家を包囲させた",
+    "actions_avoided": "静かに別れを待つこと",
+    "decision_logic": "力で囲えば迎えを阻めると考えた",
+    "arc_marker": "帝の恋慕が国家権力の包囲へ変わる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "月の都の迎えが来ると知った"
+      ],
+      "facts_hidden": [
+        "包囲が通用しないこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "帝",
+    "chapter_index": 8,
+    "scene_index": 4,
+    "source": "novel",
+    "active_persona": "帝",
+    "dialogue_samples": [
+      "何せむにか命も惜しからむ。誰が爲にか何事も益もなし",
+      "逢ふことも涙に浮ぶ我が身には死なぬ藥も何にかはせむ"
+    ],
+    "language_traits": "失意の中で簡潔に人生観を吐く、和歌も感情の器になる",
+    "emotional_state": "深い悲しみ、無力感、執着の終焉",
+    "inferred_motivation": "赫映姫を失った喪失を何か別の行為に変えること",
+    "internal_conflict": "不死を望むべき立場と、死を厭わぬ心",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "失ってしまった相手",
+        "shift": "恋慕から諦念へ"
+      },
+      {
+        "target": "調の岩笠",
+        "dynamic": "命を託す勅使",
+        "shift": "儀式の執行者へ"
+      }
+    ],
+    "actions_taken": "不死の薬の壺に文を添え、山頂で焼くよう命じた",
+    "actions_avoided": "薬を自分で飲むこと",
+    "decision_logic": "赫映姫を失った今、不死は無意味だと感じた",
+    "arc_marker": "恋慕が死と煙へ変換される終局",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫を失って深く悲しんでいる"
+      ],
+      "facts_hidden": [
+        "薬を焼くことで山が名付けられること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "不死の薬の壺"
+    ]
+  }
+]

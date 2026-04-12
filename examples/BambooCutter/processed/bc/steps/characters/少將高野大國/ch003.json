@@ -1,0 +1,42 @@
+[
+  {
+    "character": "少將高野大國",
+    "chapter_index": 3,
+    "scene_index": 3,
+    "source": "novel",
+    "active_persona": "宮司侍ふ人々の側にいる勅使役",
+    "dialogue_samples": [],
+    "language_traits": "武官的で、秩序維持を担う",
+    "emotional_state": "冷静、ただし場の緊張を受ける",
+    "inferred_motivation": "騒ぎを収め、帝の顔を立てること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "公的命令を伝える側",
+        "shift": "直接の接触がほぼない"
+      },
+      {
+        "target": "車持皇子",
+        "dynamic": "失態を見届ける周辺",
+        "shift": "処理役"
+      }
+    ],
+    "actions_taken": "場に立ち会い、後始末に関わった",
+    "actions_avoided": "当事者への踏み込み",
+    "decision_logic": "儀礼と秩序を優先",
+    "arc_marker": "帝権の側にいる官人としての輪郭が出る",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "車持皇子の偽装が露見した"
+      ],
+      "facts_hidden": [
+        "赫映姫がこの騒ぎをどう評価しているか"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

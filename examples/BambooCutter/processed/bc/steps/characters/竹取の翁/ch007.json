@@ -1,0 +1,89 @@
+[
+  {
+    "character": "竹取の翁",
+    "chapter_index": 7,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "竹取の翁としての養父",
+    "dialogue_samples": [
+      "この女の童は、絶えて宮仕つかうまつるべくもあらず侍るを、もて煩ひ侍り。さりとも罷りて仰せ賜はむ",
+      "かの童を參らせむとて仕う奉れば、『宮仕に出し立てなば死ぬべし』と申す。造麿が手に産ませたる子にてもあらず。昔山にて見つけたる。斯かれば心ばせも世の人に似ずぞ侍る"
+    ],
+    "language_traits": "恐縮しつつも、娘を守るためには言葉を尽くす",
+    "emotional_state": "恐れ、困惑、庇護心",
+    "inferred_motivation": "赫映姫を宮仕えに出さず守ること",
+    "internal_conflict": "帝の命への畏れと、娘を失いたくない気持ち",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "命に逆らえず苦心する",
+        "shift": "服従と抵抗の両方"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "守るべき娘",
+        "shift": "防衛が強まる"
+      }
+    ],
+    "actions_taken": "帝へ事情を奏上し、赫映姫の不適合を訴えた",
+    "actions_avoided": "無理に娘を差し出すこと",
+    "decision_logic": "宮仕えは死につながると娘が拒む以上、無理強いはできないと考えた",
+    "arc_marker": "翁の保護本能が国家権力と衝突する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫は宮仕えを拒否する"
+      ],
+      "facts_hidden": [
+        "帝がさらに強い手段に出ること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "竹取の翁",
+    "chapter_index": 7,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "竹取の翁としての養父",
+    "dialogue_samples": [
+      "何しに悲しきに見送り奉らむ。我をば如何にせよとて、棄てては昇り給ふぞ。具して率ておはせね"
+    ],
+    "language_traits": "感情が高ぶると、取り繕わず泣き言になる",
+    "emotional_state": "動揺、怒り、取り乱し",
+    "inferred_motivation": "赫映姫を失いたくない",
+    "internal_conflict": "見送りたい心と、引き留めたい心が衝突",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "置き去りにされる養父",
+        "shift": "別離の恐怖が表面化"
+      },
+      {
+        "target": "帝",
+        "dynamic": "御供として来るが、結局去る相手",
+        "shift": "対面の短さが際立つ"
+      }
+    ],
+    "actions_taken": "泣き伏せ、文を求めた",
+    "actions_avoided": "理性的に受け入れること",
+    "decision_logic": "連れて行ってほしいほどに別れが耐え難いと感じた",
+    "arc_marker": "翁の父性が喪失の痛みで露わになる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が書き置きの必要を感じている"
+      ],
+      "facts_hidden": [
+        "本当に別離が確定していること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "赫映姫の離脱"
+    ]
+  }
+]

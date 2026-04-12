@@ -1,0 +1,40 @@
+[
+  {
+    "character": "調の岩笠",
+    "chapter_index": 8,
+    "scene_index": 4,
+    "source": "novel",
+    "active_persona": "勅使としての調の岩笠",
+    "dialogue_samples": [],
+    "language_traits": "命令を受けて淡々と執行する官人の語り",
+    "emotional_state": "緊張と敬虔",
+    "inferred_motivation": "帝の命で薬壺を山頂へ運び、焼くこと",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "帝",
+        "dynamic": "勅命を受ける",
+        "shift": "儀式の執行者へ"
+      }
+    ],
+    "actions_taken": "兵士を率いて山へ登り、薬壺と文を火にかけた",
+    "actions_avoided": "自分の判断で止めること",
+    "decision_logic": "勅命を正確に遂行することが務め",
+    "arc_marker": "国家儀礼が富士山伝説に接続する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "不死の薬を山で焼くよう命じられた"
+      ],
+      "facts_hidden": [
+        "その山がのちに富士と呼ばれること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "山頂",
+      "煙"
+    ]
+  }
+]

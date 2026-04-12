@@ -1,0 +1,39 @@
+[
+  {
+    "character": "阿倍御主人",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "右大臣としての阿倍御主人",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "貴族的で威厳があり、表向きの同意は柔らかい",
+    "emotional_state": "自負と執着",
+    "inferred_motivation": "権勢にふさわしい成果を手に入れたい",
+    "internal_conflict": "権力者としての余裕と、年若い姫への執念",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "権力を背景に求愛する",
+        "shift": "難題を受けても優位を失わない姿勢"
+      }
+    ],
+    "actions_taken": "求婚に参加し、条件を受けた",
+    "actions_avoided": "引き下がること",
+    "decision_logic": "身分の高さがあれば難事も越えられると考えた",
+    "arc_marker": "権勢が通用しない世界へ踏み込む",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が五人に試練を出した"
+      ],
+      "facts_hidden": [
+        "権威がこの姫には通じにくいこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

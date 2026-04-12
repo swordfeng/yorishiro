@@ -1,0 +1,133 @@
+[
+  {
+    "character": "石上麻呂",
+    "chapter_index": 6,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "中納言としての石上麻呂",
+    "dialogue_samples": [
+      "燕の巣くひたらば告げよ",
+      "燕の持たる子安貝取らむ料なり"
+    ],
+    "language_traits": "最初は簡潔な命令口調、のちに欲得が前面に出る",
+    "emotional_state": "好奇心と野心",
+    "inferred_motivation": "赫映姫にふさわしい宝を手に入れること",
+    "internal_conflict": "難事と知りつつも、功名心が勝つ",
+    "relationships": [
+      {
+        "target": "くらつ麿",
+        "dynamic": "実務助言を受ける立場",
+        "shift": "助言に期待する"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "宝で勝負する求婚者",
+        "shift": "挑戦関係"
+      }
+    ],
+    "actions_taken": "燕の巣を探させ、子安貝の取り方を検討した",
+    "actions_avoided": "諦めること",
+    "decision_logic": "燕の習性を使えば取れるかもしれぬと考えた",
+    "arc_marker": "理屈で無理を通そうとする段階に入る",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "燕の子安貝を求めている"
+      ],
+      "facts_hidden": [
+        "その方法がいかに危険か"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "燕の巣",
+      "大炊寮の屋根"
+    ]
+  },
+  {
+    "character": "石上麻呂",
+    "chapter_index": 6,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "中納言としての石上麻呂",
+    "dialogue_samples": [
+      "物も少し覺ゆれど、腰なむ動かれぬ。されど子安貝をふと握り持たれば、嬉しく覺ゆるなり。先づ脂燭さして來。この貝顏見む",
+      "あな詮なの業や"
+    ],
+    "language_traits": "挑戦的だが、失敗すると痛みを隠しきれない",
+    "emotional_state": "意地と痛み、後に羞恥",
+    "inferred_motivation": "自ら掴んだと思った子安貝を確保すること",
+    "internal_conflict": "勝ちたい気持ちと、怪我の痛みを認めたくない気持ち",
+    "relationships": [
+      {
+        "target": "くらつ麿",
+        "dynamic": "助言に従うが、最後は自分で無理をする",
+        "shift": "信頼から事故へ"
+      }
+    ],
+    "actions_taken": "籠に乗って上り、自分で手を伸ばして探り、落下した",
+    "actions_avoided": "十分に慎重に確かめること",
+    "decision_logic": "自分が行けば早いと焦った",
+    "arc_marker": "挑戦が即座に身体の破綻へ変わる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "握ったと思ったものが燕の糞だった"
+      ],
+      "facts_hidden": [
+        "この失敗が重い恥として残ること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "策を信じる求婚者→痛みで崩れる当事者"
+    ],
+    "sensory_triggers": [
+      "鼎の上への落下感",
+      "燕の古糞"
+    ]
+  },
+  {
+    "character": "石上麻呂",
+    "chapter_index": 6,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "中納言としての石上麻呂",
+    "dialogue_samples": [
+      "年を經て浪立ち寄らぬ住のえのまつかひなしと聞くは眞か",
+      "かひは斯くありけるものを侘び果てて死ぬる命を救ひやはせぬ"
+    ],
+    "language_traits": "弱りきると詠嘆と自嘲が強くなる",
+    "emotional_state": "衰弱、羞恥、半ば諦め",
+    "inferred_motivation": "せめて赫映姫に自分の無念を伝えたい",
+    "internal_conflict": "生き延びたいが、失敗の恥が重い",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "慰めを受ける求婚者",
+        "shift": "哀れみの対象へ"
+      }
+    ],
+    "actions_taken": "赫映姫からの歌を受け、返歌を書き、やがて息絶えた",
+    "actions_avoided": "恥を隠して平静を装うこと",
+    "decision_logic": "死ぬ前に返歌だけでも残したいと考えた",
+    "arc_marker": "勝負の失敗が人間的な哀れへ転化",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が少し哀れんでくれた"
+      ],
+      "facts_hidden": [
+        "彼女が完全な拒絶ではなく情を示したこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "意地の挑戦者→衰弱する病人"
+    ],
+    "sensory_triggers": [
+      "赫映姫の歌"
+    ]
+  }
+]

@@ -1,0 +1,45 @@
+[
+  {
+    "character": "嫗",
+    "chapter_index": 0,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "養母としての嫗",
+    "dialogue_samples": [],
+    "language_traits": "沈黙が多く、養育実務を担う",
+    "emotional_state": "驚きと庇護心",
+    "inferred_motivation": "翁の拾った子を無事に育てること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "養母として世話をする",
+        "shift": "受容"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "夫の決断を支える",
+        "shift": "一致"
+      }
+    ],
+    "actions_taken": "赫映姫を預かり、籠に入れて養った",
+    "actions_avoided": "怪異として拒絶すること",
+    "decision_logic": "夫の判断を受け入れ、子として扱う",
+    "arc_marker": "家族化の受け皿",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫を養育する役を担う"
+      ],
+      "facts_hidden": [
+        "赫映姫の出自"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "籠",
+      "幼子の気配"
+    ]
+  }
+]

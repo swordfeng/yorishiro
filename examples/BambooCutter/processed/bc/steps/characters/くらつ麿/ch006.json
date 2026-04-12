@@ -1,0 +1,80 @@
+[
+  {
+    "character": "くらつ麿",
+    "chapter_index": 6,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "寮の官人としてのくらつ麿",
+    "dialogue_samples": [
+      "子安貝取らむと思しめさば、たばかり申さむ",
+      "この燕の子安貝は、惡しくたばかりて取らせ給ふなり。さてはえ取らせ給はじ。あななひにおどろ／＼しく二十人の人の上りて侍れば、あれて寄りまうで來ずなむ。せさせ給ふべきやうは、このあななひを毀ちて、人皆退きて、實ならむ人一人を荒籠に載せすゑて、綱を構へて、鳥の子産まむ間に綱を釣り上げさせて、ふと子安貝を取らせ給はむなむよかるべき"
+    ],
+    "language_traits": "老練で具体的、仕掛けを説明するのがうまい",
+    "emotional_state": "自信あり、技巧への確信",
+    "inferred_motivation": "実地の手順で中納言を助けること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "石上麻呂",
+        "dynamic": "実務助言をする老翁",
+        "shift": "策の提供者"
+      },
+      {
+        "target": "人々",
+        "dynamic": "作業を動かす手足",
+        "shift": "配置替え"
+      }
+    ],
+    "actions_taken": "あななひの壊し方と、綱で吊るす方法を提案した",
+    "actions_avoided": "危険を自分で背負うこと",
+    "decision_logic": "人数と仕掛けを減らせば成功率が上がると考えた",
+    "arc_marker": "現場知が珍宝獲得の鍵になる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "燕の子安貝は技巧で狙うものだと示した"
+      ],
+      "facts_hidden": [
+        "その策が中納言を傷つけること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "くらつ麿",
+    "chapter_index": 6,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "寮の官人としてのくらつ麿",
+    "dialogue_samples": [],
+    "language_traits": "現場判断に長け、失敗後も状況を見つめる",
+    "emotional_state": "冷静だが、主の失態に気を遣う",
+    "inferred_motivation": "中納言を支え、場を収めること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "石上麻呂",
+        "dynamic": "助言者から介抱役へ",
+        "shift": "成功支援が事故対応に変わる"
+      }
+    ],
+    "actions_taken": "中納言を下ろし、介抱した",
+    "actions_avoided": "責めること",
+    "decision_logic": "まずは怪我の収拾が先と判断した",
+    "arc_marker": "技術者が最後は介抱者になる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "子安貝取りは失敗に終わった"
+      ],
+      "facts_hidden": [
+        "中納言がこの失敗を長く恥じること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

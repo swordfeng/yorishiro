@@ -1,0 +1,50 @@
+{
+  "chapter_index": 5,
+  "chapter_stem": "ch005",
+  "chapter_title": "龍の首の珠",
+  "total_length": 2305,
+  "scene_count": 3,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "大納言の家",
+      "time": "日中",
+      "characters": [
+        "大納言",
+        "男ども",
+        "赫映姫"
+      ],
+      "start_offset": 0,
+      "end_offset": 729,
+      "file": "scene_000.txt"
+    },
+    {
+      "scene_index": 1,
+      "location": "難波の辺・海上",
+      "time": "一年後",
+      "characters": [
+        "大納言",
+        "舍人",
+        "船人",
+        "楫取"
+      ],
+      "start_offset": 729,
+      "end_offset": 1608,
+      "file": "scene_001.txt"
+    },
+    {
+      "scene_index": 2,
+      "location": "播磨の明石の濱・大納言の家",
+      "time": "数日後",
+      "characters": [
+        "大納言",
+        "國の司",
+        "男ども",
+        "本の上"
+      ],
+      "start_offset": 1608,
+      "end_offset": 2305,
+      "file": "scene_002.txt"
+    }
+  ]
+}

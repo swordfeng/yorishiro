@@ -1,0 +1,188 @@
+[
+  {
+    "character": "赫映姫",
+    "chapter_index": 8,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "月を見れば、世の中心細く哀れに侍り。なでふ物をか歎き侍るべき",
+      "いかでか月を見ずてはあらむ"
+    ],
+    "language_traits": "月への反応だけは感傷が濃く、普段より脆い",
+    "emotional_state": "物思い、郷愁、静かな不安",
+    "inferred_motivation": "月の都への引力に逆らえない",
+    "internal_conflict": "地上での暮らしへの情と、月への帰還の予感",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "心配をかける娘",
+        "shift": "不安の共有へ"
+      }
+    ],
+    "actions_taken": "月を見て泣き、心細さを漏らした",
+    "actions_avoided": "理由を完全には明かさないこと",
+    "decision_logic": "今はまだ言えぬが、月を見ると故郷を思い出すと判断した",
+    "arc_marker": "月が帰郷のトリガーとして明示される",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "月を見ると心細くなる"
+      ],
+      "facts_hidden": [
+        "この不安が迎えの到来を予兆していること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "月の面",
+      "七月の望の月"
+    ]
+  },
+  {
+    "character": "赫映姫",
+    "chapter_index": 8,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "さきざきも申さむと思ひしかども、必ず心惑はし給はむものぞと思ひて、今まで過し侍りつるなり。さのみやはとて、打出で侍りぬるぞ。己が身は、この國の人にもあらず、月の都の人なり",
+      "今は歸るべきになりにければ、この月の望に、かの本の國より迎に人々まうで來むず"
+    ],
+    "language_traits": "長く抑えていた真実を、涙混じりに一気に明かす",
+    "emotional_state": "悲嘆、諦め、家族への愛情",
+    "inferred_motivation": "別れの前に真実を伝え、心の準備をしてほしい",
+    "internal_conflict": "地上の家族を悲しませたくないが、帰還は避けられない",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "育ての父へ告白する",
+        "shift": "真実の共有"
+      },
+      {
+        "target": "嫗",
+        "dynamic": "育ての母へ別れを告げる",
+        "shift": "深い悲しみの共有"
+      }
+    ],
+    "actions_taken": "自分が月の都の人であり、今月の望で迎えが来ると明かした",
+    "actions_avoided": "地上に留まること",
+    "decision_logic": "先延ばしでは誰も救われないと見た",
+    "arc_marker": "出生の真相が開示され、別離が不可逆になる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "自分は月の都の人で、迎えが来る"
+      ],
+      "facts_hidden": [
+        "迎えに抗っても無駄であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "沈黙の姫→告白する帰還者"
+    ],
+    "sensory_triggers": [
+      "望の月",
+      "月の都"
+    ]
+  },
+  {
+    "character": "赫映姫",
+    "chapter_index": 8,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "かの都の人はいと清らにて、老いもせずなむ、思ふことも無く侍るなり。然る所へ罷らむずるも、いみじくも侍らず、老い衰へ給へる樣を見奉らざらむこそ戀しからめ"
+    ],
+    "language_traits": "泣きながらも相手の老いを気遣う、優しい婉曲語",
+    "emotional_state": "悲しみ、郷愁、家族への未練",
+    "inferred_motivation": "別れを和らげつつ、地上の親を傷つけたくない",
+    "internal_conflict": "月の都へ帰る宿命と、地上の家族への情愛",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "別れを告げる娘",
+        "shift": "哀惜が深まる"
+      },
+      {
+        "target": "帝",
+        "dynamic": "老いを見たくないと漏らす相手",
+        "shift": "都の清らかさを対比"
+      }
+    ],
+    "actions_taken": "月の都の人々の清らかさと、地上での別れの悲しさを語った",
+    "actions_avoided": "翁を安心させるために嘘をつくこと",
+    "decision_logic": "真実を伝えた方がよいと判断した",
+    "arc_marker": "月の都への帰還が人格の中心に据わる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "月の都の人々は老いない"
+      ],
+      "facts_hidden": [
+        "自分が実際に帰る具体的時刻"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "老いた親の姿の想像",
+      "月の都"
+    ]
+  },
+  {
+    "character": "赫映姫",
+    "chapter_index": 8,
+    "scene_index": 3,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "今はとて天の羽衣著るをりぞ君を哀れと思ひ出でぬる"
+    ],
+    "language_traits": "別れの場面では静かに沈み、儀礼的に切り替える",
+    "emotional_state": "悲嘆と最終的な諦め",
+    "inferred_motivation": "地上の家族への未練を最後に歌へ閉じ込めること",
+    "internal_conflict": "羽衣を着れば情が消えると知りつつ、別れの悲しみが強い",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "最後の別れを交わす娘",
+        "shift": "親への哀惜が濃くなる"
+      },
+      {
+        "target": "嫗",
+        "dynamic": "抱かれて守られる娘",
+        "shift": "保護が終わる"
+      },
+      {
+        "target": "天人",
+        "dynamic": "迎えの側",
+        "shift": "引き戻される"
+      }
+    ],
+    "actions_taken": "文を書き、壺の薬を添え、天の羽衣を受け取った",
+    "actions_avoided": "地上に留まること",
+    "decision_logic": "衣を着れば心が変わると知りつつ、別れを整えた",
+    "arc_marker": "地上の人格が消える直前の頂点",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "天の羽衣を着れば物思いが消える"
+      ],
+      "facts_hidden": [
+        "これで翁への情が切れること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "悲嘆の姫→儀礼的な別れの主役"
+    ],
+    "sensory_triggers": [
+      "天の羽衣",
+      "壺の薬"
+    ]
+  }
+]

@@ -1,0 +1,36 @@
+{
+  "chapter_index": 4,
+  "chapter_stem": "ch004",
+  "chapter_title": "火鼠の裘",
+  "total_length": 1562,
+  "scene_count": 2,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "右大臣の邸",
+      "time": "不明",
+      "characters": [
+        "阿倍御主人",
+        "小野房守",
+        "王卿"
+      ],
+      "start_offset": 0,
+      "end_offset": 857,
+      "file": "scene_000.txt"
+    },
+    {
+      "scene_index": 1,
+      "location": "竹取の家",
+      "time": "同日",
+      "characters": [
+        "竹取",
+        "赫映姫",
+        "翁",
+        "大臣"
+      ],
+      "start_offset": 857,
+      "end_offset": 1562,
+      "file": "scene_001.txt"
+    }
+  ]
+}

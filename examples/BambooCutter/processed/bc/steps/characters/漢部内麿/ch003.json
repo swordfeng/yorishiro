@@ -1,0 +1,79 @@
+[
+  {
+    "character": "漢部内麿",
+    "chapter_index": 3,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "工匠としての漢部内麿",
+    "dialogue_samples": [
+      "皇子君千餘日賤しき工匠等と諸共に、同じ所に隱れ居給ひて、かしこき玉の枝を作らせ給ひて、官も賜はらむと仰せ給ひき。これを、この比案ずるに、御使とおはしますべき赫映姫の要じ給ふべきなりけり、と承りて、「この宮より賜はらむ」と申して賜はるべきなり。"
+    ],
+    "language_traits": "職人らしく具体的で、報酬要求をはっきり書面化する",
+    "emotional_state": "疲労と報酬への執着",
+    "inferred_motivation": "長期労働の見返りを得ること",
+    "internal_conflict": "公的には皇子の事業を支えるが、実際は賃金回収が最重要",
+    "relationships": [
+      {
+        "target": "車持皇子",
+        "dynamic": "従属しつつ報酬を求める",
+        "shift": "証言で上下を反転させる"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "真相を知らせる告発者側",
+        "shift": "露見の引き金"
+      }
+    ],
+    "actions_taken": "玉の枝製作に加わり、後に証文で報酬請求を行った",
+    "actions_avoided": "沈黙して使い捨てられること",
+    "decision_logic": "労働の対価を先に確保し、未払いを避ける",
+    "arc_marker": "下働きが権力者を裏切る契機になる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "車持皇子が工匠たちと密かに玉の枝を作っていた"
+      ],
+      "facts_hidden": [
+        "赫映姫がこれを聞いて激怒すること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "漢部内麿",
+    "chapter_index": 3,
+    "scene_index": 3,
+    "source": "novel",
+    "active_persona": "工匠としての漢部内麿",
+    "dialogue_samples": [],
+    "language_traits": "訴えを文書で整え、損得をはっきり求める",
+    "emotional_state": "報酬を得て安堵、同時に被害者意識もある",
+    "inferred_motivation": "未払いの功労を取り返すこと",
+    "internal_conflict": "皇子に従う立場と、自分の労働への誇り",
+    "relationships": [
+      {
+        "target": "車持皇子",
+        "dynamic": "雇われた職人と主君",
+        "shift": "報酬請求で上下が揺らぐ"
+      }
+    ],
+    "actions_taken": "証文を差し出し、報酬を求めた",
+    "actions_avoided": "沈黙して使い捨てられること",
+    "decision_logic": "労働の対価を明確に請求した方が得だと考えた",
+    "arc_marker": "下働きが権力者の偽装を崩す",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "玉の枝は工匠たちの手で作られた"
+      ],
+      "facts_hidden": [
+        "この証言で皇子が完全に恥をかくこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

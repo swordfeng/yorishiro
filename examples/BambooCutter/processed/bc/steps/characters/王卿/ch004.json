@@ -1,0 +1,45 @@
+[
+  {
+    "character": "王卿",
+    "chapter_index": 4,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "唐土船の王卿",
+    "dialogue_samples": [
+      "火鼠の裘、我が國に無き物なり。音には聞けども、未だ見ぬ物なり。世にある物ならば、この國にも持てまうで來なまし。いと難き商なり。然れども、若し天竺に邂逅に持て渡りなば、もし長者の邊に訪らひ求めむに、無き物ならば、使に添へて金をば返し奉らむ",
+      "今金五十兩賜はるべし"
+    ],
+    "language_traits": "商人的で、希少品の価値を即座に見積もる",
+    "emotional_state": "冷静、取引上の駆け引き",
+    "inferred_motivation": "珍品を利益に変えること",
+    "internal_conflict": "無い物は売れないが、機会があれば儲けたい",
+    "relationships": [
+      {
+        "target": "阿倍御主人",
+        "dynamic": "海外取引の相手",
+        "shift": "交渉相手として応じる"
+      },
+      {
+        "target": "小野房守",
+        "dynamic": "金を受けて使者を返す",
+        "shift": "取引の媒介"
+      }
+    ],
+    "actions_taken": "火鼠の裘の入手条件を示し、後に金額を請求した",
+    "actions_avoided": "即答で安売りすること",
+    "decision_logic": "珍品には対価が必要と見て、相応の代価を求めた",
+    "arc_marker": "希少性が貨幣化される場面",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "火鼠の裘は無い物として高値になる"
+      ],
+      "facts_hidden": [
+        "実際には偽物の可能性が高い"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

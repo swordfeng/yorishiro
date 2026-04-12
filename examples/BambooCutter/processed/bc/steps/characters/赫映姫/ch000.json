@@ -1,0 +1,94 @@
+[
+  {
+    "character": "赫映姫",
+    "chapter_index": 0,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "幼女の赫映姫",
+    "dialogue_samples": [],
+    "language_traits": "発話はなく、光そのものとして描かれる",
+    "emotional_state": "無垢で静謐、保護を受ける側の安堵",
+    "inferred_motivation": "養われながら成長すること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "父のように守られる",
+        "shift": "信頼の芽生え"
+      },
+      {
+        "target": "嫗",
+        "dynamic": "生活を支える養母に包まれる",
+        "shift": "安定"
+      }
+    ],
+    "actions_taken": "翁に拾われ、嫗に預けられ、籠で養われた",
+    "actions_avoided": "自発的に何かを選ぶ段階ではない",
+    "decision_logic": "",
+    "arc_marker": "地上での育成の始まり",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "翁と嫗に養育され始めた"
+      ],
+      "facts_hidden": [
+        "自分の来歴と月とのつながり"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "光る竹",
+      "籠の中の閉じた空間"
+    ]
+  },
+  {
+    "character": "赫映姫",
+    "chapter_index": 0,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "なよ竹の赫映姫",
+    "dialogue_samples": [],
+    "language_traits": "まだ幼く、沈黙の中に圧倒的な美しさがある",
+    "emotional_state": "静謐、無垢、見守られる安堵",
+    "inferred_motivation": "養われながら成長すること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "父のように守られる",
+        "shift": "親密さが増す"
+      },
+      {
+        "target": "嫗",
+        "dynamic": "生活を支える養母に包まれる",
+        "shift": "安定"
+      },
+      {
+        "target": "秋田",
+        "dynamic": "命名を受ける相手",
+        "shift": "社会的存在として固定される"
+      }
+    ],
+    "actions_taken": "髪上げ・裳着を受け、帳の内で育てられた",
+    "actions_avoided": "外部との接触",
+    "decision_logic": "",
+    "arc_marker": "人の世に馴染む一方、異様な光を帯び始める",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "名を『なよ竹の赫映姫』と付けられた",
+        "家の内を光で満たすほど美しくなった"
+      ],
+      "facts_hidden": [
+        "月の都の記憶",
+        "将来の別離"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "室内を満たす光"
+    ]
+  }
+]

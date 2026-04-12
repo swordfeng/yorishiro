@@ -1,0 +1,76 @@
+[
+  {
+    "character": "石上麻呂",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "中納言としての石上麻呂",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "上品だが、恋では意地を張る",
+    "emotional_state": "期待と焦り",
+    "inferred_motivation": "赫映姫を得ること",
+    "internal_conflict": "公的な体面と、私的な執着",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "条件を課される求婚者",
+        "shift": "競争に加わる"
+      }
+    ],
+    "actions_taken": "求婚に参加し、難題を受けた",
+    "actions_avoided": "退くこと",
+    "decision_logic": "他の公達に遅れまいとした",
+    "arc_marker": "以後の滑稽な挑戦の出発点",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が五人に条件を出した"
+      ],
+      "facts_hidden": [
+        "その条件が本質的に不可能であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "石上麻呂",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "中納言としての石上麻呂",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "柔らかく見えて、恋では意固地",
+    "emotional_state": "期待と警戒",
+    "inferred_motivation": "赫映姫に近づくこと",
+    "internal_conflict": "公的理性と私的執着",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "競争に入る求婚者",
+        "shift": "試練の受け手"
+      }
+    ],
+    "actions_taken": "条件を受け、求婚の列に加わった",
+    "actions_avoided": "辞退",
+    "decision_logic": "他の公達に遅れたくない",
+    "arc_marker": "以後の無茶な挑戦の布石",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "五人に条件が出た"
+      ],
+      "facts_hidden": [
+        "その条件が実質的に無理であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

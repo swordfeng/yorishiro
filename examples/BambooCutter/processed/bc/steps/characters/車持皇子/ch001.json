@@ -1,0 +1,76 @@
+[
+  {
+    "character": "車持皇子",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "求婚者としての車持皇子",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "表向きは従順だが、内心では策を巡らせる",
+    "emotional_state": "焦りを隠した野心",
+    "inferred_motivation": "赫映姫を勝ち取ること",
+    "internal_conflict": "華やかな身分と、実行に移す策の困難さ",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "求婚者",
+        "shift": "条件提示を受けても勝負を諦めない"
+      }
+    ],
+    "actions_taken": "条件に同意し、後の策に備えた",
+    "actions_avoided": "最初から難題を放棄すること",
+    "decision_logic": "表では従い、裏で勝つ道を探るタイプ",
+    "arc_marker": "機略の求婚者として輪郭が立つ",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫の条件が出た"
+      ],
+      "facts_hidden": [
+        "この後、詐術で玉の枝を作らせること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "車持皇子",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "求婚者としての車持皇子",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "策謀家らしく、同意も計算の一部",
+    "emotional_state": "野心と焦り",
+    "inferred_motivation": "赫映姫を得るための勝利",
+    "internal_conflict": "派手な身分と実際の手口の卑屈さ",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "条件を受けた競争相手",
+        "shift": "勝負へ移行"
+      }
+    ],
+    "actions_taken": "条件を受け、後の工作に備えた",
+    "actions_avoided": "諦めること",
+    "decision_logic": "策で勝てる場面だと見た",
+    "arc_marker": "機略の求婚者として固まる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が五人に試練を出した"
+      ],
+      "facts_hidden": [
+        "工匠を隠して偽物を作らせる手順"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

@@ -1,0 +1,37 @@
+[
+  {
+    "character": "本の上",
+    "chapter_index": 5,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "大伴御行の本の上",
+    "dialogue_samples": [],
+    "language_traits": "直接の発話はなく、笑いで応じる",
+    "emotional_state": "嘲笑と距離",
+    "inferred_motivation": "失敗した夫を見下ろし、家庭内の優位を保つこと",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "大伴御行",
+        "dynamic": "失敗した夫を笑う",
+        "shift": "同情より失笑が勝つ"
+      }
+    ],
+    "actions_taken": "夫の珍談を聞いて腹を切るほど笑った",
+    "actions_avoided": "慰めること",
+    "decision_logic": "失敗は笑い話として処理した",
+    "arc_marker": "家の外だけでなく内でも面目が崩れる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "大伴御行が大恥をかいた"
+      ],
+      "facts_hidden": [
+        "この失敗が世間の常識になること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

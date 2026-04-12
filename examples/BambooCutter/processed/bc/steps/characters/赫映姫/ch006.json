@@ -1,0 +1,41 @@
+[
+  {
+    "character": "赫映姫",
+    "chapter_index": 6,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "年を經て浪立ち寄らぬ住のえのまつかひなしと聞くは眞か"
+    ],
+    "language_traits": "歌で間接的に慰撫する、冷たさの中に情がある",
+    "emotional_state": "少し哀れみ、少し距離を置く",
+    "inferred_motivation": "失敗した相手を完全には捨てず、哀れを示すこと",
+    "internal_conflict": "情けと、求婚の失敗を受け止める厳しさ",
+    "relationships": [
+      {
+        "target": "石上麻呂",
+        "dynamic": "失敗した求婚者に歌で応じる",
+        "shift": "敵対から哀れみへ"
+      }
+    ],
+    "actions_taken": "見舞いの歌を送り、弱った返歌を受けた",
+    "actions_avoided": "直接対面して慰めること",
+    "decision_logic": "歌ならば礼を失わず情を示せると考えた",
+    "arc_marker": "赫映姫が少し人情を見せる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "石上麻呂が深く傷ついている"
+      ],
+      "facts_hidden": [
+        "彼がこのまま死にかけるほどの状態であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "歌の往復"
+    ]
+  }
+]

@@ -1,0 +1,100 @@
+[
+  {
+    "character": "赫映姫",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "何事をか宣はむ事を承らざらむ。變化の者にて侍りけむ身とも知らず、親とこそ思ひ奉れ",
+      "よくもあらぬ容貌を、深き心も知らで、徒心つきなば、後悔しき事もあるべきをと思ふばかりなり。世の畏き人なりとも、深き志を知らでは婚ひ難しとなむ思ふ"
+    ],
+    "language_traits": "丁寧で慎重、婚姻を理屈で退ける",
+    "emotional_state": "警戒と理性が前に出て、情に流されない",
+    "inferred_motivation": "相手の真意を見極め、軽々しく身を許さないこと",
+    "internal_conflict": "養父への孝心と、婚姻そのものへの拒否",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "親として敬うが要求は受け入れない",
+        "shift": "説得されつつも条件提示へ"
+      }
+    ],
+    "actions_taken": "五人の求婚者に『ゆかしき物』を持参させる条件を出した",
+    "actions_avoided": "即答で婚約すること",
+    "decision_logic": "志の深さが見えぬ相手を拒み、まず試すべきだと考えた",
+    "arc_marker": "受動的な姫から、婚姻の基準を自分で定める主体へ",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "求婚者を選別する条件を自ら提示した",
+        "翁を親と認めている"
+      ],
+      "facts_hidden": [
+        "その条件が実質的に相手を退ける装置であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "養われる子から、婚姻条件を定める裁定者へ"
+    ],
+    "sensory_triggers": []
+  },
+  {
+    "character": "赫映姫",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [
+      "何ばかりの深きをか見むといはむ。聊かの事なり。人の志等しかなり。いかでか中に劣勝は知らむ。『五人の人の中にゆかしき物見せ給へらむに、御志勝りたりとて仕うまつらむ』と、そのおはすらむ人々に申し給へ"
+    ],
+    "language_traits": "冷静で条件設定が巧み、相手を試す言い回しをする",
+    "emotional_state": "慎重で、相手を見定めようとする",
+    "inferred_motivation": "婚姻を望む者の真意を測ること",
+    "internal_conflict": "父への義理と、結婚への強い抵抗",
+    "relationships": [
+      {
+        "target": "石作皇子",
+        "dynamic": "試される求婚者の一人",
+        "shift": "条件付きの競争関係"
+      },
+      {
+        "target": "車持皇子",
+        "dynamic": "試される求婚者の一人",
+        "shift": "競争関係"
+      },
+      {
+        "target": "阿倍御主人",
+        "dynamic": "試される求婚者の一人",
+        "shift": "競争関係"
+      },
+      {
+        "target": "大伴御行",
+        "dynamic": "試される求婚者の一人",
+        "shift": "競争関係"
+      },
+      {
+        "target": "石上麻呂",
+        "dynamic": "試される求婚者の一人",
+        "shift": "競争関係"
+      }
+    ],
+    "actions_taken": "『五人の人の中にゆかしき物』を持参するよう条件を定めた",
+    "actions_avoided": "誰か一人を選んで婚約すること",
+    "decision_logic": "志の深さを比較し、簡単には選ばないため",
+    "arc_marker": "恋愛を受け身でなく選別の制度へ変える",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "五人の志を比べる条件を自分で定めた"
+      ],
+      "facts_hidden": [
+        "彼女自身が求婚を避けるために不可能課題を仕掛けたこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

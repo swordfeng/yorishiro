@@ -1,0 +1,37 @@
+[
+  {
+    "character": "赫映姫",
+    "chapter_index": 5,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "赫映姫",
+    "dialogue_samples": [],
+    "language_traits": "直接は語らず、相手の無謀さを見抜く側にいる",
+    "emotional_state": "冷めた観察とやや失望",
+    "inferred_motivation": "無理な求婚者がどこまで本気かを見ること",
+    "internal_conflict": "",
+    "relationships": [
+      {
+        "target": "大伴御行",
+        "dynamic": "無謀な課題を課す相手",
+        "shift": "試験者としての権力が強まる"
+      }
+    ],
+    "actions_taken": "龍の首の玉を要求した",
+    "actions_avoided": "相手の大言をそのまま受け入れること",
+    "decision_logic": "難題を課せば本気度が測れると考えた",
+    "arc_marker": "赫映姫が難題の設定者として定着",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "大伴御行が龍の首の玉を狙った"
+      ],
+      "facts_hidden": [
+        "その試みが海で大難を呼ぶこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

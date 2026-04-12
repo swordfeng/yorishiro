@@ -1,0 +1,37 @@
+{
+  "chapter_index": 0,
+  "chapter_stem": "ch000",
+  "chapter_title": "かぐや姫おひたち",
+  "total_length": 549,
+  "scene_count": 2,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "野山の竹林",
+      "time": "ある日",
+      "characters": [
+        "翁",
+        "讃岐造麿",
+        "子",
+        "嫗"
+      ],
+      "start_offset": 0,
+      "end_offset": 217,
+      "file": "scene_000.txt"
+    },
+    {
+      "scene_index": 1,
+      "location": "翁の家",
+      "time": "三月許の間",
+      "characters": [
+        "翁",
+        "子",
+        "赫映姫",
+        "秋田"
+      ],
+      "start_offset": 217,
+      "end_offset": 549,
+      "file": "scene_001.txt"
+    }
+  ]
+}

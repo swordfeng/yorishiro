@@ -1,0 +1,136 @@
+[
+  {
+    "character": "大伴御行",
+    "chapter_index": 5,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "大納言としての大伴御行",
+    "dialogue_samples": [
+      "龍の首に五色の光ある玉あなり。それを取りて奉りたらむ人には、願はむ事を叶へむ"
+    ],
+    "language_traits": "豪胆で大言壮語が多い",
+    "emotional_state": "高揚と無謀な自信",
+    "inferred_motivation": "赫映姫にふさわしい珍宝を手に入れること",
+    "internal_conflict": "威勢を張る一方で、難事である自覚も少しある",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "龍の玉で勝負する相手",
+        "shift": "挑戦関係"
+      },
+      {
+        "target": "家人",
+        "dynamic": "命令を受ける側",
+        "shift": "無茶を押しつける"
+      }
+    ],
+    "actions_taken": "家中の人を集め、龍の首の玉を取るよう命じた",
+    "actions_avoided": "難しさを認めて撤回すること",
+    "decision_logic": "君命は命懸けで果たすべきだと虚勢を張った",
+    "arc_marker": "大言と現実の乖離が始まる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "龍の首の玉を求めた"
+      ],
+      "facts_hidden": [
+        "その行き先が危険な海であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "龍の玉の想像"
+    ]
+  },
+  {
+    "character": "大伴御行",
+    "chapter_index": 5,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "大納言としての大伴御行",
+    "dialogue_samples": [
+      "我が弓の力は、龍あらば、ふと射殺して首の玉は取りてむ。遲く來る奴原を待たじ",
+      "今より後は毛の末一筋をだに動かし奉らじ"
+    ],
+    "language_traits": "命令形が強く、危機では急に弱気になる",
+    "emotional_state": "虚勢、恐怖、取り乱し",
+    "inferred_motivation": "龍を討ち、面目を保つこと",
+    "internal_conflict": "自信過剰な自分と、命の危機に震える自分",
+    "relationships": [
+      {
+        "target": "楫取",
+        "dynamic": "現実を教える相手",
+        "shift": "助言を聞かされる側へ"
+      }
+    ],
+    "actions_taken": "筑紫へ出て海に乗り、荒天に遭って祈り倒した",
+    "actions_avoided": "早く引き返すこと",
+    "decision_logic": "自分の弓術なら龍を倒せると誤信した",
+    "arc_marker": "豪胆さが恐怖へ反転する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "海で龍ではない自然の脅威に呑まれた"
+      ],
+      "facts_hidden": [
+        "まだ無事に戻れるかどうか不明"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "威勢ある指揮者→恐怖で祈る乗船者"
+    ],
+    "sensory_triggers": [
+      "雷",
+      "荒波"
+    ]
+  },
+  {
+    "character": "大伴御行",
+    "chapter_index": 5,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "大納言としての大伴御行",
+    "dialogue_samples": [
+      "汝等よく持て來ずなりぬ。龍は鳴神の類にてこそありけれ。それが玉を取らむとて、そこらの人々の害せられなむとしけり。まして龍を捕へたらましかば、又事も無く、我は害せられなまし。よく捕へずなりにけり。赫映姫てふ大盜人の奴が、人を殺さむとするなりけり。家の邊だに今は通らじ。男どももな歩きそ"
+    ],
+    "language_traits": "失敗後は責任転嫁と強がりで体裁を守る",
+    "emotional_state": "屈辱、恐怖、自己正当化",
+    "inferred_motivation": "失敗を他人のせいにして面目を維持すること",
+    "internal_conflict": "本当は敗北を認めたいが、それでは終われない",
+    "relationships": [
+      {
+        "target": "本の上",
+        "dynamic": "失敗を見て笑われる夫婦関係",
+        "shift": "距離が広がる"
+      },
+      {
+        "target": "男ども",
+        "dynamic": "使役したが責める",
+        "shift": "責任転嫁"
+      }
+    ],
+    "actions_taken": "人々に失敗を告げ、残り物を配り、赫映姫の家にも近づかぬと宣言した",
+    "actions_avoided": "自分の無謀さを認めること",
+    "decision_logic": "龍が鳴神の類だと位置づけ、恐怖を後付けで合理化した",
+    "arc_marker": "大言壮語が笑いものへ変わる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "自分たちが龍の玉を取れなかった"
+      ],
+      "facts_hidden": [
+        "世間がすでに滑稽談として広めること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [
+      "威勢ある君主→敗北を言い繕う男"
+    ],
+    "sensory_triggers": [
+      "海難の記憶",
+      "李のような目"
+    ]
+  }
+]

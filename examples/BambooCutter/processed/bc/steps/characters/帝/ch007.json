@@ -1,0 +1,131 @@
+[
+  {
+    "character": "帝",
+    "chapter_index": 7,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "帝",
+    "dialogue_samples": [
+      "多くの人の身を徒らになして婚はざなる赫映姫は、いかばかりの女ぞと罷りて見て參れ"
+    ],
+    "language_traits": "宮中語で丁寧だが、権威を背景に命じる",
+    "emotional_state": "興味と、帝としての所有欲",
+    "inferred_motivation": "赫映姫の実像を確かめたい",
+    "internal_conflict": "公的な慎みと、強い好奇心",
+    "relationships": [
+      {
+        "target": "ふさ子",
+        "dynamic": "命を伝える内侍",
+        "shift": "使者として接する"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "遠くから見定めたい相手",
+        "shift": "公式な関心の対象"
+      }
+    ],
+    "actions_taken": "ふさ子に内偵を命じた",
+    "actions_avoided": "すぐに自ら押しかけること",
+    "decision_logic": "まず実見してから次の手を打つべきだと判断した",
+    "arc_marker": "帝が赫映姫を政治の対象として認識し始める",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が多くの求婚者を退けている"
+      ],
+      "facts_hidden": [
+        "彼女が帝の命令にも容易には従わないこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "帝",
+    "chapter_index": 7,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "帝",
+    "dialogue_samples": [
+      "汝が持て侍る赫映姫奉れ。顏貌よしと聞しめして、御使を賜びしかど、詮なく見えずなりにけり。斯くたい％＼しくやは慣らはすべき",
+      "などか翁の手におほし立てたらむものを、心に任せざらむ。この女もし奉りたるものならば、翁に冠をなどか賜ばせざらむ"
+    ],
+    "language_traits": "権威を保ちながらも、欲しいものには執着を滲ませる",
+    "emotional_state": "関心、苛立ち、独占欲",
+    "inferred_motivation": "赫映姫を一度は直接見、可能なら手元に置きたい",
+    "internal_conflict": "天子としての節度と、個人的な執着",
+    "relationships": [
+      {
+        "target": "竹取の翁",
+        "dynamic": "娘を差し出すよう求める相手",
+        "shift": "圧力が強まる"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "命で呼び出す相手",
+        "shift": "直接の対象へ"
+      }
+    ],
+    "actions_taken": "翁を召し、赫映姫を奉れと命じた",
+    "actions_avoided": "ここで引き下がること",
+    "decision_logic": "帝命であれば拒まれまいと考えた",
+    "arc_marker": "帝の欲望が公的命令へ変わる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が帝の御使を拒んだ"
+      ],
+      "facts_hidden": [
+        "赫映姫が帝の命にもなお抵抗すること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "帝",
+    "chapter_index": 7,
+    "scene_index": 2,
+    "source": "novel",
+    "active_persona": "帝",
+    "dialogue_samples": [
+      "歸るさのみゆき物うく思ほえて背きて留まるかぐや姫ゆゑ"
+    ],
+    "language_traits": "和歌で感情を包みつつ、なお所有欲が消えない",
+    "emotional_state": "執着、失意、名残惜しさ",
+    "inferred_motivation": "赫映姫を連れ帰りたい",
+    "internal_conflict": "帝として帰るべきだが、心は留まりたい",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "引き留めたい相手",
+        "shift": "失意の恋慕が強まる"
+      },
+      {
+        "target": "竹取の翁",
+        "dynamic": "迎え入れた家の主",
+        "shift": "歓待される側"
+      }
+    ],
+    "actions_taken": "御狩の名目で訪れ、赫映姫を直接見、歌を残して帰った",
+    "actions_avoided": "強引に連れ去ること",
+    "decision_logic": "露骨な強制ではなく、まずは見て心を通わせようとした",
+    "arc_marker": "帝の恋慕が公的命令から私的感情へ深化",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が目の前で消えるように立ち去った"
+      ],
+      "facts_hidden": [
+        "彼女が本当に人外であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "赫映姫の光る姿"
+    ]
+  }
+]

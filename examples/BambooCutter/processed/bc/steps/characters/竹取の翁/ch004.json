@@ -1,0 +1,46 @@
+[
+  {
+    "character": "竹取の翁",
+    "chapter_index": 4,
+    "scene_index": 1,
+    "source": "novel",
+    "active_persona": "竹取の翁としての取り次ぎ役",
+    "dialogue_samples": [
+      "とまれかくまれ、先づ請じ入れ奉らむ。世の中に見えぬ裘の樣なれば、これを眞と思ひ給ひね。人ないたく侘びさせ奉らせ給ひそ"
+    ],
+    "language_traits": "客を立てる柔和な口ぶり",
+    "emotional_state": "調停役としての落ち着き",
+    "inferred_motivation": "場を穏便に収め、姫の不興を避けること",
+    "internal_conflict": "客に礼を尽くしたい気持ちと、姫の拒否を止められない困難",
+    "relationships": [
+      {
+        "target": "阿倍御主人",
+        "dynamic": "迎え入れる家主",
+        "shift": "礼遇"
+      },
+      {
+        "target": "赫映姫",
+        "dynamic": "気を遣う養父",
+        "shift": "姫の検証を助ける"
+      }
+    ],
+    "actions_taken": "大臣を請じ入れ、赫映姫に取り次いだ",
+    "actions_avoided": "裘の真偽を自分で決めつけること",
+    "decision_logic": "まずは客を立ててから姫の判断に従うべきだと考えた",
+    "arc_marker": "調停者としての温厚さが、結果的に失敗の舞台になる",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "火鼠の裘を客として持ち込まれた"
+      ],
+      "facts_hidden": [
+        "赫映姫が火で試すつもりであること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": [
+      "客の持つ箱"
+    ]
+  }
+]

@@ -1,0 +1,43 @@
+{
+  "chapter_index": 1,
+  "chapter_stem": "ch001",
+  "chapter_title": "つまどひ",
+  "total_length": 1897,
+  "scene_count": 2,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": "竹取の翁の家",
+      "time": "月日を經て（長期間）",
+      "characters": [
+        "赫映姫",
+        "翁",
+        "竹取",
+        "石作皇子",
+        "車持皇子",
+        "右大臣阿倍御主人",
+        "大納言大伴御行",
+        "中納言石上麻呂"
+      ],
+      "start_offset": 0,
+      "end_offset": 1276,
+      "file": "scene_000.txt"
+    },
+    {
+      "scene_index": 1,
+      "location": "竹取の翁の家",
+      "time": "日暮れ時",
+      "characters": [
+        "赫映姫",
+        "翁",
+        "石作皇子",
+        "車持皇子",
+        "大伴大納言",
+        "石上中納言"
+      ],
+      "start_offset": 1276,
+      "end_offset": 1897,
+      "file": "scene_001.txt"
+    }
+  ]
+}

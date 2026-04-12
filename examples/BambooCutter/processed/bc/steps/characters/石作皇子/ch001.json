@@ -1,0 +1,76 @@
+[
+  {
+    "character": "石作皇子",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "求婚者としての石作皇子",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "公達らしい端正さを保ちつつ、執着を沈黙で示す",
+    "emotional_state": "焦燥と執着",
+    "inferred_motivation": "赫映姫を得たいという独占欲",
+    "internal_conflict": "体面を保ちながらも、引き下がれない",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "執拗に求婚する相手",
+        "shift": "条件を受けても執念は弱まらない"
+      }
+    ],
+    "actions_taken": "夜昼通い、文や歌で求愛し続けた",
+    "actions_avoided": "諦めること",
+    "decision_logic": "難しくても粘れば届くと信じた",
+    "arc_marker": "求愛が執念へ固定化する",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が難題を課した"
+      ],
+      "facts_hidden": [
+        "課題が実は極めて不可能であること"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  },
+  {
+    "character": "石作皇子",
+    "chapter_index": 1,
+    "scene_index": 0,
+    "source": "novel",
+    "active_persona": "求婚者としての石作皇子",
+    "dialogue_samples": [
+      "よき事なり"
+    ],
+    "language_traits": "表面上は従順、内面は反発と執着",
+    "emotional_state": "負けじ魂と焦燥",
+    "inferred_motivation": "赫映姫との勝負に勝つこと",
+    "internal_conflict": "高貴な身分ゆえの体面と、露骨な欲望",
+    "relationships": [
+      {
+        "target": "赫映姫",
+        "dynamic": "条件を課される相手",
+        "shift": "挑戦関係"
+      }
+    ],
+    "actions_taken": "条件を了承し、通い続ける姿勢を見せた",
+    "actions_avoided": "退くこと",
+    "decision_logic": "難題でも粘れば道があると考えた",
+    "arc_marker": "以後の虚構と敗北の伏線",
+    "knowledge_scope": {
+      "facts_revealed": [
+        "赫映姫が志の深さを求めた"
+      ],
+      "facts_hidden": [
+        "彼の最初の課題が真贋判定を伴うこと"
+      ]
+    },
+    "comfort_mechanisms": [],
+    "repeated_expressions": [],
+    "persona_shifts": [],
+    "sensory_triggers": []
+  }
+]

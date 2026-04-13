@@ -65,60 +65,78 @@ def expand_step_prefix(prefix: str) -> list[str]:
     return matched
 
 
-def _build_step(step_id: str, source_id: str, project: Project, registry: ModelRegistry) -> Step:
+def _build_step(
+    step_id: str, source_id: str, project: Project, registry: ModelRegistry
+) -> Step:
     """Construct the Step implementation for a given step_id."""
     # Novel steps
     if step_id == "novel.chapters":
         from yorishiro.tasks.novel.chapters import NovelChaptersStep
+
         return NovelChaptersStep(project, source_id, registry)
     if step_id == "novel.scenes":
         from yorishiro.tasks.novel.scenes import NovelScenesStep
+
         return NovelScenesStep(project, source_id, registry)
     if step_id == "novel.aliases":
         from yorishiro.tasks.novel.aliases import NovelAliasesStep
+
         return NovelAliasesStep(project, source_id, registry)
     if step_id == "novel.characters":
         from yorishiro.tasks.novel.characters import NovelCharactersStep
+
         return NovelCharactersStep(project, source_id, registry)
 
     # Film steps
     if step_id == "film.shots":
         from yorishiro.tasks.film.shots import FilmShotsStep
+
         return FilmShotsStep(project, source_id, registry)
     if step_id == "film.frames":
         from yorishiro.tasks.film.frames import FilmFramesStep
+
         return FilmFramesStep(project, source_id, registry)
     if step_id == "film.audio.separate":
         from yorishiro.tasks.film.audio import FilmAudioSeparateStep
+
         return FilmAudioSeparateStep(project, source_id, registry)
     if step_id == "film.audio.vad":
         from yorishiro.tasks.film.audio import FilmAudioVADStep
+
         return FilmAudioVADStep(project, source_id, registry)
     if step_id == "film.audio.stt":
         from yorishiro.tasks.film.audio import FilmAudioSTTStep
+
         return FilmAudioSTTStep(project, source_id, registry)
     if step_id == "film.audio.speakers":
         from yorishiro.tasks.film.audio import FilmAudioSpeakersStep
+
         return FilmAudioSpeakersStep(project, source_id, registry)
     if step_id == "film.audio.emotion":
         from yorishiro.tasks.film.audio import FilmAudioEmotionStep
+
         return FilmAudioEmotionStep(project, source_id, registry)
     if step_id == "film.audio.sound_events":
         from yorishiro.tasks.film.audio import FilmAudioSoundEventsStep
+
         return FilmAudioSoundEventsStep(project, source_id, registry)
     if step_id == "film.audio.music":
         from yorishiro.tasks.film.audio import FilmAudioMusicStep
+
         return FilmAudioMusicStep(project, source_id, registry)
     if step_id == "film.shot_groups":
         from yorishiro.tasks.film.shot_groups import FilmShotGroupsStep
+
         return FilmShotGroupsStep(project, source_id, registry)
     if step_id == "film.scenes":
         from yorishiro.tasks.film.scenes import FilmScenesStep
+
         return FilmScenesStep(project, source_id, registry)
 
     # Cross steps
     if step_id == "cross.synthesize":
         from yorishiro.tasks.cross.synthesize import CrossSynthesizeStep
+
         return CrossSynthesizeStep(project, source_id, registry)
 
     raise ValueError(f"Unknown step_id: {step_id!r}")
@@ -139,21 +157,26 @@ class Orchestrator:
         force: bool = False,
         task_key: str | None = None,
         backup_after: bool = True,
-    ) -> None:
+    ) -> bool:
         """Run the given steps for a specific source.
 
         Each entry in step_ids may be a leaf step ID or a prefix that expands
         to multiple leaf steps (e.g. "film.audio" or "film").
+
+        Returns True if any task actually executed, False if all were skipped.
         """
         leaf_ids: list[str] = []
         for sid in step_ids:
             leaf_ids.extend(expand_step_prefix(sid))
+        any_ran = False
         for step_id in leaf_ids:
             step = _build_step(step_id, source_id, self._project, self._registry)
-            step.run(force=force, task_key=task_key)
-        if backup_after:
+            if step.run(force=force, task_key=task_key):
+                any_ran = True
+        if backup_after and any_ran:
             label = f"{'+'.join(step_ids)}-{source_id}"
             self._backup.snapshot(label)
+        return any_ran
 
     def run_group(self, group_name: str, source_id: str, force: bool = False) -> None:
         """Run a named step group for a specific source."""
@@ -164,14 +187,19 @@ class Orchestrator:
 
     def run_all(self, force: bool = False) -> None:
         """Run all steps for all sources, then cross-source steps."""
+        any_ran = False
         for source in self._project.sources:
             if source.type == "novel":
-                self.run(NOVEL_STEPS, source.id, force=force, backup_after=False)
+                if self.run(NOVEL_STEPS, source.id, force=force, backup_after=False):
+                    any_ran = True
             elif source.type == "film":
-                self.run(FILM_STEPS, source.id, force=force, backup_after=False)
+                if self.run(FILM_STEPS, source.id, force=force, backup_after=False):
+                    any_ran = True
 
-        self.run(CROSS_STEPS, CROSS_SOURCE_ID, force=force, backup_after=False)
-        self._backup.snapshot("all")
+        if self.run(CROSS_STEPS, CROSS_SOURCE_ID, force=force, backup_after=False):
+            any_ran = True
+        if any_ran:
+            self._backup.snapshot("all")
 
     def status(self) -> None:
         """Print completion status for all steps across all sources."""

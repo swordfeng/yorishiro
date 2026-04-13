@@ -50,15 +50,25 @@ class Task(ABC):
         if not marker.exists():
             return True
         t = marker.stat().st_mtime
-        return any(src.exists() and src.stat().st_mtime > t for src in self.input_paths())
+        return any(
+            src.exists() and src.stat().st_mtime > t for src in self.input_paths()
+        )
 
-    def run(self, force: bool = False) -> None:
-        """Execute this task if stale (or if force=True)."""
+    def run(self, force: bool = False) -> bool:
+        """Execute this task if stale (or if force=True).
+
+        Returns True if the task executed, False if skipped.
+        """
         if not force and not self.is_stale():
-            label = f"{self.__class__.__name__}[{self.key}]" if self.key else self.__class__.__name__
+            label = (
+                f"{self.__class__.__name__}[{self.key}]"
+                if self.key
+                else self.__class__.__name__
+            )
             print(f"  [skip] {label} — up to date")
-            return
+            return False
         self._run()
+        return True
 
     @abstractmethod
     def _run(self) -> None:
@@ -85,8 +95,10 @@ class Step(ABC):
         """Return all tasks in execution order."""
         ...
 
-    def run(self, force: bool = False, task_key: str | None = None) -> None:
+    def run(self, force: bool = False, task_key: str | None = None) -> bool:
         """Run all tasks, or just the one matching task_key.
+
+        Returns True if any task actually executed, False if all were skipped.
 
         Args:
             force: Re-run even if the task is not stale.
@@ -96,9 +108,14 @@ class Step(ABC):
         if task_key is not None:
             all_tasks = [t for t in all_tasks if t.key == task_key]
             if not all_tasks:
-                raise ValueError(f"No task with key={task_key!r} in step {self.step_id!r}")
+                raise ValueError(
+                    f"No task with key={task_key!r} in step {self.step_id!r}"
+                )
+        ran = False
         for task in all_tasks:
-            task.run(force=force)
+            if task.run(force=force):
+                ran = True
+        return ran
 
     def is_complete(self) -> bool:
         """True when all tasks are up to date."""

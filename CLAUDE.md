@@ -109,6 +109,32 @@ When code changes affect behavior, parsing, heuristics, serialization, prompts, 
 - If fixing a bug, add a regression test that would have caught it
 - If a change is difficult to test directly, explain the gap explicitly
 
+### Reasoning Discipline
+
+Keep reasoning efficient, decision-oriented, and grounded in current repo context.
+
+- Do not dump long internal monologues or chain-of-thought to the user
+- Do not repeatedly restate the same idea with minor variations
+- Do not loop on "actually", "wait", "let me reconsider", or similar self-interruptions unless new evidence was found
+- When a reasonable implementation path exists, pick it and validate it in code instead of prolonging speculative analysis
+- When context is missing, inspect the relevant code, tests, or docs first; do not fill gaps with extended guessing
+- If uncertainty is non-blocking, state the working assumption in one sentence and continue
+- If uncertainty is blocking, ask one concise question or present 1-2 concrete options with tradeoffs
+- Prefer short decision memos over exploratory essays: answer, key assumption, next step
+- During implementation, defer irreversible design conclusions until you have inspected the exact call sites, types, and data flow
+- Do not broaden scope mid-reasoning. Solve the user's stated problem first, then mention adjacent improvements separately if useful
+
+**Bad pattern**:
+- Repeatedly re-deriving the same conclusion
+- Revisiting the same branch without new information
+- Producing a long speculative plan instead of checking the code
+
+**Expected pattern**:
+1. Summarize the decision in 1-3 sentences
+2. Note the main assumption or open question if one exists
+3. Inspect or implement
+4. Adjust only if new evidence appears
+
 ---
 
 ## Learnings (Documented Decisions)

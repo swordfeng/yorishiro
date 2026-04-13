@@ -26,9 +26,11 @@ from yorishiro.audio.speaker_attribution import (
     SweepCandidateRow,
 )
 from yorishiro.audio.transcription import (
+    _AlignedToken,
     GroupResult,
     SpeechSpan,
     SpeechGroup,
+    split_with_aligned_tokens,
     Transcriber,
     TranscriberConfig,
 )
@@ -622,7 +624,9 @@ class TranscriberTests(unittest.TestCase):
                     ),
                 ],
             )
-            payload = json.loads((checkpoint_dir / "groups_0000.json").read_text(encoding="utf-8"))
+            payload = json.loads(
+                (checkpoint_dir / "groups_0000.json").read_text(encoding="utf-8")
+            )
             self.assertEqual(
                 [item["group_id"] for item in payload["groups"]],
                 ["g_000000_000000", "g_000001_000001"],
@@ -642,6 +646,105 @@ class TranscriberTests(unittest.TestCase):
         self.assertEqual(entries[0].start, 0.0)
         self.assertGreater(entries[1].start, entries[0].start)
         self.assertEqual(entries[-1].end, 2.0)
+
+    def test_split_with_aligned_tokens_splits_on_strong_pause(self) -> None:
+        segments = split_with_aligned_tokens(
+            "Hello there",
+            [
+                _AlignedToken(text="Hello", start=0.0, end=0.2, confidence=0.9),
+                _AlignedToken(text="there", start=0.9, end=1.2, confidence=0.9),
+            ],
+            0.0,
+            1.2,
+            "en",
+        )
+
+        self.assertEqual(segments, [("Hello", 0.0, 0.2), ("there", 0.9, 1.2)])
+
+    def test_split_with_aligned_tokens_keeps_short_soft_pause_together(self) -> None:
+        segments = split_with_aligned_tokens(
+            "Ahh well",
+            [
+                _AlignedToken(text="Ahh", start=0.0, end=0.2, confidence=0.9),
+                _AlignedToken(text="well", start=0.6, end=0.9, confidence=0.9),
+            ],
+            0.0,
+            0.9,
+            "en",
+        )
+
+        self.assertEqual(segments, [("Ahh well", 0.0, 0.9)])
+
+    def test_split_with_aligned_tokens_respects_sentence_boundary_without_pause(
+        self,
+    ) -> None:
+        segments = split_with_aligned_tokens(
+            "Mr. Ben had this issue. She replied.",
+            [
+                _AlignedToken(text="Mr.", start=0.0, end=0.1, confidence=0.9),
+                _AlignedToken(text="Ben", start=0.1, end=0.3, confidence=0.9),
+                _AlignedToken(text="had", start=0.3, end=0.45, confidence=0.9),
+                _AlignedToken(text="this", start=0.45, end=0.6, confidence=0.9),
+                _AlignedToken(text="issue.", start=0.6, end=0.9, confidence=0.9),
+                _AlignedToken(text="She", start=0.92, end=1.05, confidence=0.9),
+                _AlignedToken(text="replied.", start=1.05, end=1.35, confidence=0.9),
+            ],
+            0.0,
+            1.35,
+            "en",
+        )
+
+        self.assertEqual(
+            segments,
+            [
+                ("Mr. Ben had this issue.", 0.0, 0.9),
+                ("She replied.", 0.92, 1.35),
+            ],
+        )
+
+    def test_split_with_aligned_tokens_maps_punctuation_stripped_alignment_space(
+        self,
+    ) -> None:
+        segments = split_with_aligned_tokens(
+            "Hello, world! How are you?",
+            [
+                _AlignedToken(text="Hello", start=0.0, end=0.2, confidence=0.9),
+                _AlignedToken(text="world", start=0.2, end=0.5, confidence=0.9),
+                _AlignedToken(text="How", start=0.55, end=0.7, confidence=0.9),
+                _AlignedToken(text="are", start=0.7, end=0.85, confidence=0.9),
+                _AlignedToken(text="you", start=0.85, end=1.0, confidence=0.9),
+            ],
+            0.0,
+            1.0,
+            "en",
+        )
+
+        self.assertEqual(
+            segments,
+            [
+                ("Hello, world!", 0.0, 0.5),
+                ("How are you?", 0.55, 1.0),
+            ],
+        )
+
+    def test_segment_to_entries_prefers_word_timestamps_for_pause_split(self) -> None:
+        transcriber = Transcriber()
+        segment = SimpleNamespace(
+            text="Hello there",
+            start=0.0,
+            end=1.2,
+            avg_logprob=-0.1,
+            words=[
+                SimpleNamespace(start=0.0, end=0.2, word="Hello"),
+                SimpleNamespace(start=0.9, end=1.2, word="there"),
+            ],
+        )
+
+        entries = transcriber._segment_to_entries(segment, 0.0, 1.2, "en")
+
+        self.assertEqual([entry.text for entry in entries], ["Hello", "there"])
+        self.assertEqual((entries[0].start, entries[0].end), (0.0, 0.2))
+        self.assertEqual((entries[1].start, entries[1].end), (0.9, 1.2))
 
     def test_segment_to_entries_filters_low_confidence(self) -> None:
         transcriber = Transcriber(TranscriberConfig(stt_min_confidence=-0.5))
@@ -729,9 +832,7 @@ class TranscriberTests(unittest.TestCase):
             {"text": "", "timestamp": (1.0, 2.0)},
             {"text": "  ", "timestamp": (2.0, 3.0)},
         ]
-        segments = Transcriber._transformers_chunks_to_segments(
-            chunks, 0.0, 5.0, "en"
-        )
+        segments = Transcriber._transformers_chunks_to_segments(chunks, 0.0, 5.0, "en")
         self.assertEqual(len(segments), 1)
         self.assertEqual(segments[0].text, "hello")
 
@@ -739,9 +840,7 @@ class TranscriberTests(unittest.TestCase):
         chunks = [
             {"text": "no timestamps"},
         ]
-        segments = Transcriber._transformers_chunks_to_segments(
-            chunks, 0.0, 5.0, "en"
-        )
+        segments = Transcriber._transformers_chunks_to_segments(chunks, 0.0, 5.0, "en")
         self.assertEqual(len(segments), 1)
         self.assertEqual(segments[0].start, 0.0)
         self.assertEqual(segments[0].end, 0.0)
@@ -846,10 +945,12 @@ class TranscriberTests(unittest.TestCase):
     def test_transformers_group_confidence_averages_segment_scores(self) -> None:
         transcriber = Transcriber()
         generated = {
-            "segments": [[
-                {"result": {"sequences_scores": torch.tensor([-0.2])}},
-                {"result": {"sequences_scores": torch.tensor([-0.6])}},
-            ]]
+            "segments": [
+                [
+                    {"result": {"sequences_scores": torch.tensor([-0.2])}},
+                    {"result": {"sequences_scores": torch.tensor([-0.6])}},
+                ]
+            ]
         }
         confidence = transcriber._transformers_group_confidence([generated])
         self.assertIsNotNone(confidence)
@@ -892,6 +993,50 @@ class FunASRLanguageMappingTests(unittest.TestCase):
         self.assertEqual(funasr_language("en-US"), "英文")
 
 
+class SmartSplitHeuristicTests(unittest.TestCase):
+    def test_keeps_number_commas_intact(self) -> None:
+        from yorishiro.audio._speech_support import split_text_heuristically
+
+        self.assertEqual(
+            split_text_heuristically("合計で13,243円です。", "ja"),
+            ["合計で13,243円です。"],
+        )
+
+    def test_handles_english_abbreviations(self) -> None:
+        from yorishiro.audio._speech_support import split_text_heuristically
+
+        self.assertEqual(
+            split_text_heuristically("Mr. Ben had this issue. She replied.", "en"),
+            ["Mr. Ben had this issue.", "She replied."],
+        )
+
+    def test_splits_english_clause_boundary_but_not_list_comma(self) -> None:
+        from yorishiro.audio._speech_support import split_text_heuristically
+
+        self.assertEqual(
+            split_text_heuristically("I think aaaa bbbb, because it is ccc dddd", "en"),
+            ["I think aaaa bbbb,", "because it is ccc dddd"],
+        )
+        self.assertEqual(
+            split_text_heuristically("I need to buy egg, milk and noodles", "en"),
+            ["I need to buy egg, milk and noodles"],
+        )
+
+    def test_splits_cjk_clause_boundaries_without_isolating_short_prefix(self) -> None:
+        from yorishiro.audio._speech_support import split_text_heuristically
+
+        self.assertEqual(
+            split_text_heuristically("我觉得这个很好，因为它很有用。", "zh"),
+            ["我觉得这个很好，", "因为它很有用。"],
+        )
+        self.assertEqual(
+            split_text_heuristically(
+                "是的，我觉得不太好，但是我明天会好起来的。", "zh"
+            ),
+            ["是的，我觉得不太好，", "但是我明天会好起来的。"],
+        )
+
+
 class FunASRBackendTests(unittest.TestCase):
     def test_funasr_config_instantiates_correctly(self) -> None:
         config = TranscriberConfig(
@@ -930,9 +1075,24 @@ class FunASRBackendTests(unittest.TestCase):
                         "text": "これはテストです。",
                         "text_tn": "これはテストです",
                         "timestamps": [
-                            {"token": "こ", "start_time": 5.0, "end_time": 5.2, "score": 0.95},
-                            {"token": "れ", "start_time": 5.2, "end_time": 5.4, "score": 0.90},
-                            {"token": "は", "start_time": 5.4, "end_time": 5.6, "score": 0.88},
+                            {
+                                "token": "こ",
+                                "start_time": 5.0,
+                                "end_time": 5.2,
+                                "score": 0.95,
+                            },
+                            {
+                                "token": "れ",
+                                "start_time": 5.2,
+                                "end_time": 5.4,
+                                "score": 0.90,
+                            },
+                            {
+                                "token": "は",
+                                "start_time": 5.4,
+                                "end_time": 5.6,
+                                "score": 0.88,
+                            },
                         ],
                     }
                 ]
@@ -967,7 +1127,9 @@ class FunASRBackendTests(unittest.TestCase):
         self.assertEqual(results[0].group_id, "g_000000_000000")
         self.assertGreater(len(results[0].entries), 0)
         self.assertEqual(results[0].entries[0]["text"], "これはテストです。")
-        self.assertAlmostEqual(results[0].entries[0]["confidence"], (0.95 + 0.90 + 0.88) / 3, places=4)
+        self.assertAlmostEqual(
+            results[0].entries[0]["confidence"], (0.95 + 0.90 + 0.88) / 3, places=4
+        )
         self.assertEqual(results[0].detected_language, "ja")
         self.assertEqual(results[0].raw_text, "これはテストです。")
         self.assertEqual(results[0].raw_alignment_text, "これはテストです")
@@ -1132,17 +1294,24 @@ class StripPunctuationTests(unittest.TestCase):
     def test_strips_japanese_punctuation(self) -> None:
         from yorishiro.audio.transcription import strip_punctuation_for_alignment
 
-        self.assertEqual(strip_punctuation_for_alignment("こんにちは。世界！"), "こんにちは世界")
+        self.assertEqual(
+            strip_punctuation_for_alignment("こんにちは。世界！"), "こんにちは世界"
+        )
 
     def test_strips_english_punctuation(self) -> None:
         from yorishiro.audio.transcription import strip_punctuation_for_alignment
 
-        self.assertEqual(strip_punctuation_for_alignment("Hello, world! How are you?"), "Hello world How are you")
+        self.assertEqual(
+            strip_punctuation_for_alignment("Hello, world! How are you?"),
+            "Hello world How are you",
+        )
 
     def test_preserves_cjk_chars(self) -> None:
         from yorishiro.audio.transcription import strip_punctuation_for_alignment
 
-        self.assertEqual(strip_punctuation_for_alignment("これはテストです"), "これはテストです")
+        self.assertEqual(
+            strip_punctuation_for_alignment("これはテストです"), "これはテストです"
+        )
 
     def test_empty_string(self) -> None:
         from yorishiro.audio.transcription import strip_punctuation_for_alignment
@@ -1294,14 +1463,22 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                 captured_audio.append(audio)
                 self.text = text
                 self.language = language
-                return [[
-                    SimpleNamespace(text="Hello", start_time=0.2, end_time=0.8),
-                    SimpleNamespace(text="world", start_time=0.9, end_time=1.5),
-                ]]
+                return [
+                    [
+                        SimpleNamespace(text="Hello", start_time=0.2, end_time=0.8),
+                        SimpleNamespace(text="world", start_time=0.9, end_time=1.5),
+                    ]
+                ]
 
         with (
-            patch("yorishiro.audio.transcription.get_qwen3_forced_aligner", return_value=FakeAligner()),
-            patch("yorishiro.audio.transcription.sf.read", return_value=(np.zeros(48000, dtype=np.float32), 16000)),
+            patch(
+                "yorishiro.audio.transcription.get_qwen3_forced_aligner",
+                return_value=FakeAligner(),
+            ),
+            patch(
+                "yorishiro.audio.transcription.sf.read",
+                return_value=(np.zeros(48000, dtype=np.float32), 16000),
+            ),
             patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
         ):
             aligned = transcriber._align_group_result(
@@ -1309,15 +1486,16 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                 audio_path=Path("/tmp/test.wav"),
                 file_sample_rate=16000,
                 language="en",
-                resample_module=types.SimpleNamespace(resample=lambda audio, **_kw: audio),
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
             )
 
         self.assertTrue(aligned.alignment_applied)
-        self.assertEqual(len(aligned.entries), 2)
+        self.assertEqual(len(aligned.entries), 1)
+        self.assertEqual(aligned.entries[0]["text"], "Hello, world!")
         self.assertAlmostEqual(aligned.entries[0]["start"], 5.2, places=3)
-        self.assertAlmostEqual(aligned.entries[0]["end"], 5.8, places=3)
-        self.assertAlmostEqual(aligned.entries[1]["start"], 5.9, places=3)
-        self.assertAlmostEqual(aligned.entries[1]["end"], 6.5, places=3)
+        self.assertAlmostEqual(aligned.entries[0]["end"], 6.5, places=3)
         assert isinstance(captured_audio[0], tuple)
         self.assertEqual(captured_audio[0][1], 16000)
 
@@ -1351,15 +1529,25 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
             def align(self, audio, text, language, **kwargs):
                 del audio, language, kwargs
                 self.seen_text = text
-                return [[
-                    SimpleNamespace(text="こんにちは", start_time=0.0, end_time=0.9),
-                    SimpleNamespace(text="世界", start_time=1.0, end_time=1.8),
-                ]]
+                return [
+                    [
+                        SimpleNamespace(
+                            text="こんにちは", start_time=0.0, end_time=0.9
+                        ),
+                        SimpleNamespace(text="世界", start_time=1.0, end_time=1.8),
+                    ]
+                ]
 
         fake_aligner = FakeAligner()
         with (
-            patch("yorishiro.audio.transcription.get_qwen3_forced_aligner", return_value=fake_aligner),
-            patch("yorishiro.audio.transcription.sf.read", return_value=(np.zeros(32000, dtype=np.float32), 16000)),
+            patch(
+                "yorishiro.audio.transcription.get_qwen3_forced_aligner",
+                return_value=fake_aligner,
+            ),
+            patch(
+                "yorishiro.audio.transcription.sf.read",
+                return_value=(np.zeros(32000, dtype=np.float32), 16000),
+            ),
             patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
         ):
             aligned = transcriber._align_group_result(
@@ -1367,11 +1555,77 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                 audio_path=Path("/tmp/test.wav"),
                 file_sample_rate=16000,
                 language="ja",
-                resample_module=types.SimpleNamespace(resample=lambda audio, **_kw: audio),
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
             )
 
         self.assertEqual(fake_aligner.seen_text, "こんにちは世界")
         self.assertEqual(aligned.raw_text, "こんにちは。世界！")
+
+    def test_align_group_result_splits_on_alignment_pause_without_punctuation(
+        self,
+    ) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                forced_aligner_enabled=True,
+                forced_aligner_model="Qwen/Qwen3-ForcedAligner-0.6B",
+            )
+        )
+        result = GroupResult(
+            group_id="g_000000_000000",
+            span_start_idx=0,
+            span_end_idx=0,
+            start=2.0,
+            end=4.0,
+            entries=[
+                {"text": "Hello there", "start": 2.0, "end": 4.0, "confidence": 0.7},
+            ],
+            detected_language="en",
+            source_mtime=1.0,
+            raw_text="Hello there",
+            raw_alignment_text="Hello there",
+        )
+
+        class FakeAligner:
+            def align(self, audio, text, language, **kwargs):
+                del audio, text, language, kwargs
+                return [
+                    [
+                        SimpleNamespace(text="Hello", start_time=0.0, end_time=0.2),
+                        SimpleNamespace(text="there", start_time=0.95, end_time=1.2),
+                    ]
+                ]
+
+        with (
+            patch(
+                "yorishiro.audio.transcription.get_qwen3_forced_aligner",
+                return_value=FakeAligner(),
+            ),
+            patch(
+                "yorishiro.audio.transcription.sf.read",
+                return_value=(np.zeros(32000, dtype=np.float32), 16000),
+            ),
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
+        ):
+            aligned = transcriber._align_group_result(
+                result,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="en",
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+            )
+
+        self.assertTrue(aligned.alignment_applied)
+        self.assertEqual(
+            [entry["text"] for entry in aligned.entries], ["Hello", "there"]
+        )
+        self.assertAlmostEqual(aligned.entries[0]["start"], 2.0)
+        self.assertAlmostEqual(aligned.entries[0]["end"], 2.2)
+        self.assertAlmostEqual(aligned.entries[1]["start"], 2.95)
+        self.assertAlmostEqual(aligned.entries[1]["end"], 3.2)
 
     def test_run_transcription_aligns_when_resuming_from_checkpoints(self) -> None:
         transcriber = Transcriber(TranscriberConfig(forced_aligner_enabled=True))
@@ -1398,16 +1652,38 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
         with (
             patch("yorishiro.audio.transcription.sf.SoundFile") as FakeSoundFile,
             patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
-            patch.object(transcriber, "_speech_spans", return_value=[SpeechSpan(index=0, start=0.0, end=1.0)]),
+            patch.object(
+                transcriber,
+                "_speech_spans",
+                return_value=[SpeechSpan(index=0, start=0.0, end=1.0)],
+            ),
             patch.object(transcriber, "_build_speech_groups", return_value=[group]),
-            patch.object(transcriber, "_prepare_checkpoint_dir", return_value=Path("/tmp/.stt_checkpoints")),
+            patch.object(
+                transcriber,
+                "_prepare_checkpoint_dir",
+                return_value=Path("/tmp/.stt_checkpoints"),
+            ),
             patch.object(transcriber, "_load_group_results", return_value=completed),
-            patch.object(transcriber, "_maybe_align_results", wraps=transcriber._maybe_align_results) as maybe_align,
-            patch.object(transcriber, "_assemble_transcript", return_value=STTTranscript(language="en", entries=[])),
+            patch.object(
+                transcriber,
+                "_maybe_align_results",
+                wraps=transcriber._maybe_align_results,
+            ) as maybe_align,
+            patch.object(
+                transcriber,
+                "_assemble_transcript",
+                return_value=STTTranscript(language="en", entries=[]),
+            ),
         ):
-            FakeSoundFile.return_value.__enter__ = lambda s: SimpleNamespace(samplerate=16000, frames=16000)
+            FakeSoundFile.return_value.__enter__ = lambda s: SimpleNamespace(
+                samplerate=16000, frames=16000
+            )
             FakeSoundFile.return_value.__exit__ = lambda s, *a: None
-            with patch.object(transcriber, "_align_group_result", side_effect=lambda result, **kwargs: result):
+            with patch.object(
+                transcriber,
+                "_align_group_result",
+                side_effect=lambda result, **kwargs: result,
+            ):
                 transcriber._run_transcription(
                     Path("/tmp/test.wav"),
                     [{"start": 0.0, "end": 1.0}],

@@ -74,6 +74,10 @@ class _AlignedToken:
 _PUNCTUATION_RE = re.compile(
     r"[。！？!?、，,.；;：:…—–\-「」『』（）()【】\[\]《》〈〉\"\']"
 )
+_SENTENCE_END_RE = re.compile(r"[。！？!?]$")
+_SOFT_PAUSE_SPLIT_SECONDS = 0.35
+_HARD_PAUSE_SPLIT_SECONDS = 0.6
+_MIN_SOFT_SPLIT_CHARS = 6
 
 
 def strip_punctuation_for_alignment(text: str) -> str:
@@ -220,6 +224,102 @@ def split_at_punctuation_aligned(
     return merged_segments
 
 
+def split_with_aligned_tokens(
+    display_text: str,
+    aligned_tokens: list[_AlignedToken],
+    group_start: float,
+    group_end: float,
+    language: str | None,
+) -> list[tuple[str, float, float]]:
+    if not display_text:
+        return []
+    pieces = split_text_heuristically(display_text, language)
+    if not aligned_tokens:
+        return [(display_text, group_start, group_end)]
+
+    # Aligned tokens live in the punctuation-stripped alignment space, so make the
+    # display->alignment mapping explicit instead of relying on the helper to
+    # compact the display text implicitly.
+    align_text = strip_punctuation_for_alignment(display_text)
+    pos_map = build_display_to_align_map(display_text, align_text)
+    token_ranges = _token_display_ranges(aligned_tokens, align_text, pos_map)
+    if not token_ranges:
+        return [(display_text, group_start, group_end)]
+
+    boundary_flags: dict[int, bool] = {}
+    cursor = 0
+    for piece in pieces[:-1]:
+        piece_start = display_text.find(piece, cursor)
+        if piece_start < 0:
+            boundary_flags.clear()
+            break
+        piece_end = piece_start + len(piece)
+        cursor = piece_end
+        if piece_end <= 0 or piece_end >= len(display_text):
+            continue
+        boundary_flags[piece_end] = boundary_flags.get(piece_end, False) or bool(
+            _SENTENCE_END_RE.match(display_text[piece_end - 1])
+        )
+
+    for (_, prev_end_di, prev_tok), (next_start_di, _, next_tok) in zip(
+        token_ranges, token_ranges[1:]
+    ):
+        del next_start_di
+        boundary = prev_end_di + 1
+        if boundary <= 0 or boundary >= len(display_text):
+            continue
+        gap = next_tok.start - prev_tok.end
+        if gap >= _HARD_PAUSE_SPLIT_SECONDS:
+            boundary_flags[boundary] = True
+        elif gap >= _SOFT_PAUSE_SPLIT_SECONDS:
+            boundary_flags.setdefault(boundary, False)
+
+    boundaries = [0]
+    for boundary in sorted(boundary_flags):
+        if boundary <= boundaries[-1] or boundary >= len(display_text):
+            continue
+        if boundary_flags[boundary]:
+            boundaries.append(boundary)
+            continue
+        left_len = len(compact_alignment_text(display_text[boundaries[-1] : boundary]))
+        right_len = len(compact_alignment_text(display_text[boundary:]))
+        if left_len >= _MIN_SOFT_SPLIT_CHARS and right_len >= _MIN_SOFT_SPLIT_CHARS:
+            boundaries.append(boundary)
+    if boundaries[-1] < len(display_text):
+        boundaries.append(len(display_text))
+
+    segments: list[tuple[str, float, float]] = []
+    for piece_start, piece_end in zip(boundaries, boundaries[1:]):
+        piece = display_text[piece_start:piece_end].strip()
+        if not piece:
+            continue
+
+        seg_start_time: float | None = None
+        seg_end_time: float | None = None
+        for tok_start_di, tok_end_di, tok in token_ranges:
+            if tok_end_di < piece_start or tok_start_di >= piece_end:
+                continue
+            if seg_start_time is None or tok.start < seg_start_time:
+                seg_start_time = tok.start
+            if seg_end_time is None or tok.end > seg_end_time:
+                seg_end_time = tok.end
+
+        if seg_start_time is None:
+            seg_start_time = segments[-1][2] if segments else group_start
+        if seg_end_time is None:
+            seg_end_time = group_end
+
+        segments.append(
+            (
+                piece,
+                max(seg_start_time, group_start),
+                min(seg_end_time, group_end),
+            )
+        )
+
+    return segments or [(display_text, group_start, group_end)]
+
+
 @dataclass(frozen=True)
 class SpeechSpan:
     index: int
@@ -322,7 +422,9 @@ class Transcriber:
             file_sample_rate = audio_file.samplerate
             total_duration = audio_file.frames / file_sample_rate
 
-        spans = self._speech_spans(cast(list[dict[str, float]], speech_segments), total_duration)
+        spans = self._speech_spans(
+            cast(list[dict[str, float]], speech_segments), total_duration
+        )
         groups = self._build_speech_groups(spans)
         if not groups:
             return STTTranscript(language=language or "unknown", entries=[])
@@ -365,6 +467,7 @@ class Transcriber:
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
             initial=completed_spans,
         ) as progress:
+
             def update_progress(delta: int) -> None:
                 with progress_lock:
                     progress.update(delta)
@@ -510,7 +613,9 @@ class Transcriber:
                 save_result=save_result,
             )
 
-        whisper_model = get_whisper_model(worker_config, instance_key=f"worker-{worker_idx}")
+        whisper_model = get_whisper_model(
+            worker_config, instance_key=f"worker-{worker_idx}"
+        )
         transcribe_kwargs: TranscribeKwargs = {
             "language": language or None,
             "task": "transcribe",
@@ -528,7 +633,9 @@ class Transcriber:
         for group in groups:
             start_frame = int(group.start * file_sample_rate)
             end_frame = int(group.end * file_sample_rate)
-            chunk_audio, _ = sf.read(str(audio_path), start=start_frame, stop=end_frame, dtype="float32")
+            chunk_audio, _ = sf.read(
+                str(audio_path), start=start_frame, stop=end_frame, dtype="float32"
+            )
             if getattr(chunk_audio, "ndim", 1) > 1:
                 chunk_audio = chunk_audio.mean(axis=1)
             if file_sample_rate != 16000:
@@ -579,7 +686,9 @@ class Transcriber:
         update_progress: Any,
         save_result: Any,
     ) -> list[GroupResult]:
-        pipe = get_transformers_pipeline(worker_config, instance_key=f"worker-{worker_idx}")
+        pipe = get_transformers_pipeline(
+            worker_config, instance_key=f"worker-{worker_idx}"
+        )
         generate_kwargs: dict[str, Any] = {}
         if language:
             generate_kwargs["language"] = language
@@ -590,7 +699,9 @@ class Transcriber:
         for group in groups:
             start_frame = int(group.start * file_sample_rate)
             end_frame = int(group.end * file_sample_rate)
-            chunk_audio, _ = sf.read(str(audio_path), start=start_frame, stop=end_frame, dtype="float32")
+            chunk_audio, _ = sf.read(
+                str(audio_path), start=start_frame, stop=end_frame, dtype="float32"
+            )
             if getattr(chunk_audio, "ndim", 1) > 1:
                 chunk_audio = chunk_audio.mean(axis=1)
             if file_sample_rate != 16000:
@@ -622,7 +733,9 @@ class Transcriber:
                         output = pipe(
                             chunk_audio,
                             return_timestamps=True,
-                            generate_kwargs=generate_kwargs if generate_kwargs else None,
+                            generate_kwargs=generate_kwargs
+                            if generate_kwargs
+                            else None,
                         )
                 except Exception:
                     output = pipe(
@@ -693,7 +806,9 @@ class Transcriber:
         for group in groups:
             start_frame = int(group.start * file_sample_rate)
             end_frame = int(group.end * file_sample_rate)
-            chunk_audio, _ = sf.read(str(audio_path), start=start_frame, stop=end_frame, dtype="float32")
+            chunk_audio, _ = sf.read(
+                str(audio_path), start=start_frame, stop=end_frame, dtype="float32"
+            )
             if getattr(chunk_audio, "ndim", 1) > 1:
                 chunk_audio = chunk_audio.mean(axis=1)
             if file_sample_rate != 16000:
@@ -767,7 +882,11 @@ class Transcriber:
             if not text:
                 continue
             timestamp = chunk.get("timestamp")
-            if timestamp and isinstance(timestamp, (list, tuple)) and len(timestamp) >= 2:
+            if (
+                timestamp
+                and isinstance(timestamp, (list, tuple))
+                and len(timestamp) >= 2
+            ):
                 start = float(timestamp[0]) if timestamp[0] is not None else 0.0
                 end = float(timestamp[1]) if timestamp[1] is not None else 0.0
             else:
@@ -805,7 +924,9 @@ class Transcriber:
             return sequences
         return None
 
-    def _transformers_group_confidence(self, generate_outputs: list[Any]) -> float | None:
+    def _transformers_group_confidence(
+        self, generate_outputs: list[Any]
+    ) -> float | None:
         scores: list[float] = []
         for generated in generate_outputs:
             segments = self._extract_generate_segments(generated)
@@ -820,7 +941,9 @@ class Transcriber:
                 scores.extend(float(value.item()) for value in seq_scores.flatten())
             elif isinstance(seq_scores, (list, tuple)):
                 scores.extend(
-                    score for item in seq_scores if (score := self._as_float(item)) is not None
+                    score
+                    for item in seq_scores
+                    if (score := self._as_float(item)) is not None
                 )
             elif (score := self._as_float(seq_scores)) is not None:
                 scores.append(score)
@@ -884,7 +1007,9 @@ class Transcriber:
             return None
 
         gen_steps = len(scores)
-        seq_len = int(sequence.shape[0]) if hasattr(sequence, "shape") else len(sequence)
+        seq_len = (
+            int(sequence.shape[0]) if hasattr(sequence, "shape") else len(sequence)
+        )
         if gen_steps <= 0 or seq_len <= 0:
             return None
 
@@ -940,7 +1065,11 @@ class Transcriber:
         for index, segment in enumerate(speech_segments):
             start = max(0.0, float(segment["start"]))
             raw_end = segment["end"]
-            end = total_duration if raw_end == float("inf") else min(total_duration, float(raw_end))
+            end = (
+                total_duration
+                if raw_end == float("inf")
+                else min(total_duration, float(raw_end))
+            )
             if end <= start:
                 continue
             if (end - start) < min_dur:
@@ -1248,13 +1377,16 @@ class Transcriber:
                 stt_confidences.append(conf)
 
         display_text = result.raw_text.strip() or "".join(stt_text_parts).strip()
-        align_text = result.raw_alignment_text.strip() or strip_punctuation_for_alignment(
-            display_text
+        align_text = (
+            result.raw_alignment_text.strip()
+            or strip_punctuation_for_alignment(display_text)
         )
         if not align_text.strip():
             return result
 
-        stt_confidence = sum(stt_confidences) / len(stt_confidences) if stt_confidences else 0.0
+        stt_confidence = (
+            sum(stt_confidences) / len(stt_confidences) if stt_confidences else 0.0
+        )
 
         aligner = get_qwen3_forced_aligner(
             self.config.forced_aligner_model,
@@ -1264,7 +1396,9 @@ class Transcriber:
 
         start_frame = int(result.start * file_sample_rate)
         end_frame = int(result.end * file_sample_rate)
-        chunk_audio, _ = sf.read(str(audio_path), start=start_frame, stop=end_frame, dtype="float32")
+        chunk_audio, _ = sf.read(
+            str(audio_path), start=start_frame, stop=end_frame, dtype="float32"
+        )
         if getattr(chunk_audio, "ndim", 1) > 1:
             chunk_audio = chunk_audio.mean(axis=1)
         if file_sample_rate != 16000:
@@ -1279,7 +1413,9 @@ class Transcriber:
                 language=align_lang,
             )
         except Exception:
-            print(f"    [STT] Forced alignment failed for group {result.group_id}, using STT-only entries")
+            print(
+                f"    [STT] Forced alignment failed for group {result.group_id}, using STT-only entries"
+            )
             return result
 
         if not align_results or not align_results[0]:
@@ -1294,7 +1430,8 @@ class Transcriber:
                 _AlignedToken(
                     text=token_text,
                     start=result.start + float(getattr(item, "start_time", 0.0)),
-                    end=result.start + float(getattr(item, "end_time", result.end - result.start)),
+                    end=result.start
+                    + float(getattr(item, "end_time", result.end - result.start)),
                     confidence=getattr(item, "confidence", 0.0),
                 )
             )
@@ -1303,23 +1440,19 @@ class Transcriber:
             return result
 
         compact_align_text = compact_alignment_text(align_text)
-        coverage = sum(len(compact_alignment_text(token.text)) for token in aligned_tokens) / max(
-            len(compact_align_text), 1
-        )
+        coverage = sum(
+            len(compact_alignment_text(token.text)) for token in aligned_tokens
+        ) / max(len(compact_align_text), 1)
         coverage = min(max(coverage, 0.0), 1.0)
         if coverage < self.config.forced_aligner_min_confidence:
             return result
 
-        pos_map = build_display_to_align_map(display_text, align_text)
-        segments = split_at_punctuation_aligned(
+        segments = split_with_aligned_tokens(
             display_text,
             aligned_tokens,
-            align_text,
-            pos_map,
             result.start,
             result.end,
-            self.config.stt_min_segment_seconds,
-            self.config.forced_aligner_merge_gap_seconds,
+            language or result.detected_language,
         )
 
         scored_tokens = [t.confidence for t in aligned_tokens if t.confidence > 0]
@@ -1402,15 +1535,20 @@ class Transcriber:
             return []
         if chars_per_second > self.config.stt_max_chars_per_second:
             return []
-        return [
-            STTEntry(
-                entry_id="",
-                start=clamped_start,
-                end=clamped_end,
-                text=text,
-                confidence=confidence,
-            )
-        ]
+        timed_entries = self._split_segment_from_words(
+            segment,
+            chunk_start,
+            confidence,
+            language,
+            segment_text=text,
+            segment_start=clamped_start,
+            segment_end=clamped_end,
+        )
+        if timed_entries:
+            return timed_entries
+        return self._split_entry_text(
+            clamped_start, clamped_end, text, confidence, language
+        )
 
     def _split_segment_from_words(
         self,
@@ -1418,52 +1556,55 @@ class Transcriber:
         chunk_start: float,
         confidence: float,
         language: str | None,
+        *,
+        segment_text: str,
+        segment_start: float,
+        segment_end: float,
     ) -> list[STTEntry]:
         words = getattr(segment, "words", None) or []
-        timed_words: list[tuple[float, float, str]] = []
+        aligned_tokens: list[_AlignedToken] = []
         for word in words:
             start = getattr(word, "start", None)
             end = getattr(word, "end", None)
             token = getattr(word, "word", "")
             if start is None or end is None:
                 continue
-            token = token.strip()
-            if not token:
+            token_text = str(token)
+            if not token_text.strip():
                 continue
-            timed_words.append((float(start), float(end), token))
+            aligned_tokens.append(
+                _AlignedToken(
+                    text=token_text,
+                    start=chunk_start + float(start),
+                    end=chunk_start + float(end),
+                    confidence=confidence,
+                )
+            )
 
-        if len(timed_words) <= 1:
+        if len(aligned_tokens) <= 1:
             return []
 
-        groups: list[list[tuple[float, float, str]]] = []
-        current = [timed_words[0]]
-        for prev, cur in zip(timed_words, timed_words[1:]):
-            prev_end = prev[1]
-            cur_start, _, _ = cur
-            pause = cur_start - prev_end
-            should_split = pause >= 0.35
-            if not should_split:
-                prev_token = prev[2]
-                should_split = prev_token.endswith(("。", "！", "？", "!", "?", "、", ","))
-
-            if should_split:
-                groups.append(current)
-                current = [cur]
-            else:
-                current.append(cur)
-        groups.append(current)
-
-        if len(groups) == 1:
+        segments = split_with_aligned_tokens(
+            segment_text,
+            aligned_tokens,
+            segment_start,
+            segment_end,
+            language,
+        )
+        if len(segments) <= 1:
             return []
 
         entries: list[STTEntry] = []
-        for group in groups:
-            group_text = "".join(token for _, _, token in group).strip()
-            if not group_text:
-                continue
-            abs_start = chunk_start + group[0][0]
-            abs_end = chunk_start + group[-1][1]
-            entries.extend(self._split_entry_text(abs_start, abs_end, group_text, confidence, language))
+        for seg_text, seg_start, seg_end in segments:
+            entries.append(
+                STTEntry(
+                    entry_id="",
+                    start=seg_start,
+                    end=seg_end,
+                    text=seg_text,
+                    confidence=confidence,
+                )
+            )
         return entries
 
     def _split_entry_text(
@@ -1491,8 +1632,12 @@ class Transcriber:
         cursor = start
         entries: list[STTEntry] = []
         for idx, piece in enumerate(pieces):
-            piece_duration = duration * (len(piece) / total_chars) if total_chars else 0.0
-            piece_end = end if idx == len(pieces) - 1 else min(end, cursor + piece_duration)
+            piece_duration = (
+                duration * (len(piece) / total_chars) if total_chars else 0.0
+            )
+            piece_end = (
+                end if idx == len(pieces) - 1 else min(end, cursor + piece_duration)
+            )
             entries.append(
                 STTEntry(
                     entry_id="",

@@ -67,6 +67,9 @@ dev = [
     "ruff>=0.15.7",
     "ty>=0.0.27",
 ]
+film = [
+    "nltk>=3.9.4",
+]
 
 [tool.coverage.run]
 branch = true

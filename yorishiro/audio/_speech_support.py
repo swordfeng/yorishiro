@@ -21,6 +21,7 @@ _DIARIZATION_CHUNK_SECONDS = 1200.0
 _SPEAKER_SIM_THRESHOLD = 0.75
 _STT_WORD_GAP_SPLIT_SECONDS = 0.35
 _STT_TEXT_SPLIT_MIN_CHARS = 24
+_STT_CLAUSE_SPLIT_MIN_CHARS = 6
 _STT_JA_CLAUSE_ENDINGS = (
     "けれども",
     "けども",
@@ -39,7 +40,53 @@ _STT_JA_CLAUSE_ENDINGS = (
     "て",
     "で",
 )
-_STT_PUNCT_SPLIT_RE = re.compile(r"(?<=[。！？!?、,])")
+_STT_CJK_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?])")
+_STT_CJK_CLAUSE_SPLIT_RE = re.compile(r"(?<=[、，])")
+_STT_COMMA_CLAUSE_RE = re.compile(
+    r",\s+(?=(?:because|but|and|or|so|yet|while|although|though|if|when|where|which|who"
+    r"|that|since|as|for|however|therefore|thus|hence|moreover|furthermore"
+    r"|nevertheless|instead|meanwhile|otherwise|rather|also|besides)\b)",
+    re.IGNORECASE,
+)
+_STT_LATIN_ACRONYM_RE = re.compile(r"(?:[A-Z]\.){2,}$")
+_STT_LATIN_ABBREVIATIONS = frozenset(
+    {
+        "mr",
+        "mrs",
+        "ms",
+        "dr",
+        "prof",
+        "sr",
+        "jr",
+        "st",
+        "inc",
+        "ltd",
+        "co",
+        "corp",
+        "vs",
+        "etc",
+        "approx",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "oct",
+        "nov",
+        "dec",
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri",
+        "sat",
+        "sun",
+    }
+)
+_LATIN_SENTENCE_TOKENIZER: Any | None = None
 
 
 class TranscribeKwargs(TypedDict):
@@ -493,15 +540,107 @@ def split_japanese_clause_text(text: str) -> list[str]:
     return pieces or [text]
 
 
-def split_text_heuristically(text: str, language: str | None) -> list[str]:
-    pieces = [part.strip() for part in _STT_PUNCT_SPLIT_RE.split(text) if part.strip()]
-    if len(pieces) > 1:
-        return pieces
-    if len(text) < _STT_TEXT_SPLIT_MIN_CHARS:
+def _merge_short_clause_parts(parts: list[str]) -> list[str]:
+    merged: list[str] = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if not merged:
+            merged.append(part)
+            continue
+        if (
+            len(part) < _STT_CLAUSE_SPLIT_MIN_CHARS
+            or len(merged[-1]) < _STT_CLAUSE_SPLIT_MIN_CHARS
+        ):
+            merged[-1] = merged[-1] + part
+            continue
+        merged.append(part)
+    return merged or parts
+
+
+def _split_cjk_sentences(text: str) -> list[str]:
+    return [
+        part.strip() for part in _STT_CJK_SENTENCE_SPLIT_RE.split(text) if part.strip()
+    ]
+
+
+def _split_cjk_clauses(text: str) -> list[str]:
+    parts = [
+        part.strip() for part in _STT_CJK_CLAUSE_SPLIT_RE.split(text) if part.strip()
+    ]
+    if len(parts) <= 1:
         return [text]
+    merged = _merge_short_clause_parts(parts)
+    return merged if len(merged) > 1 else [text]
+
+
+def _get_latin_sentence_tokenizer() -> Any:
+    global _LATIN_SENTENCE_TOKENIZER
+    if _LATIN_SENTENCE_TOKENIZER is None:
+        from nltk.tokenize.punkt import PunktParameters, PunktSentenceTokenizer
+
+        params = PunktParameters()
+        params.abbrev_types = set(_STT_LATIN_ABBREVIATIONS)
+        _LATIN_SENTENCE_TOKENIZER = PunktSentenceTokenizer(params)
+    return _LATIN_SENTENCE_TOKENIZER
+
+
+def _split_latin_sentences(text: str) -> list[str]:
+    tokenizer = _get_latin_sentence_tokenizer()
+    parts = [part.strip() for part in tokenizer.tokenize(text) if part.strip()]
+    if not parts:
+        return [text]
+
+    merged: list[str] = []
+    for part in parts:
+        if merged and _STT_LATIN_ACRONYM_RE.fullmatch(merged[-1]):
+            merged[-1] = f"{merged[-1]} {part}"
+            continue
+        merged.append(part)
+    return merged
+
+
+def _split_latin_clause(text: str) -> list[str]:
+    match = _STT_COMMA_CLAUSE_RE.search(text)
+    if match is None:
+        return [text]
+
+    left = text[: match.start() + 1].strip()
+    right = text[match.end() :].strip()
+    if (
+        len(left) < _STT_CLAUSE_SPLIT_MIN_CHARS
+        or len(right) < _STT_CLAUSE_SPLIT_MIN_CHARS
+    ):
+        return [text]
+    return [left, right]
+
+
+def split_text_heuristically(text: str, language: str | None) -> list[str]:
+    sentence_parts = _split_cjk_sentences(text)
+    if len(sentence_parts) > 1:
+        return sentence_parts
+
     normalized_language = normalize_language(language)
     if normalized_language == "ja":
-        return split_japanese_clause_text(text)
+        pieces = split_japanese_clause_text(text)
+        if len(pieces) > 1:
+            return pieces
+        return _split_cjk_clauses(text)
+
+    if normalized_language in {"zh", "ko"}:
+        return _split_cjk_clauses(text)
+
+    sentence_parts = _split_latin_sentences(text)
+    if len(sentence_parts) > 1:
+        return sentence_parts
+
+    clause_parts = _split_latin_clause(text)
+    if len(clause_parts) > 1:
+        return clause_parts
+
+    if len(text) < _STT_TEXT_SPLIT_MIN_CHARS:
+        return [text]
     return [text]
 
 

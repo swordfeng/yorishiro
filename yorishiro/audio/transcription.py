@@ -261,11 +261,10 @@ def split_with_aligned_tokens(
             _SENTENCE_END_RE.match(display_text[piece_end - 1])
         )
 
-    for (_, prev_end_di, prev_tok), (next_start_di, _, next_tok) in zip(
+    for (_, _prev_end_di, prev_tok), (next_start_di, _, next_tok) in zip(
         token_ranges, token_ranges[1:]
     ):
-        del next_start_di
-        boundary = prev_end_di + 1
+        boundary = next_start_di
         if boundary <= 0 or boundary >= len(display_text):
             continue
         gap = next_tok.start - prev_tok.end
@@ -1321,31 +1320,42 @@ class Transcriber:
             )
 
         print("    [STT] Running forced alignment pass ...")
+        from tqdm import tqdm
+
         aligned_results: dict[str, GroupResult] = {}
         changed_results: list[GroupResult] = []
-        for group in groups:
-            result = completed.get(group.group_id)
-            if result is None:
-                continue
-            if result.alignment_applied:
-                aligned_results[group.group_id] = result
-                continue
-            try:
-                aligned = self._align_group_result(
-                    result,
-                    audio_path=audio_path,
-                    file_sample_rate=file_sample_rate,
-                    language=language,
-                    resample_module=resample_module,
-                )
-            except Exception:
-                print(
-                    f"    [STT] Alignment failed for group {group.group_id}, keeping STT results"
-                )
-                aligned = result
-            aligned_results[group.group_id] = aligned
-            if aligned is not result:
-                changed_results.append(aligned)
+        with tqdm(
+            total=len(groups),
+            desc="    [STT] Alignment",
+            unit="group",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        ) as progress:
+            for group in groups:
+                result = completed.get(group.group_id)
+                if result is None:
+                    progress.update(1)
+                    continue
+                if result.alignment_applied:
+                    aligned_results[group.group_id] = result
+                    progress.update(1)
+                    continue
+                try:
+                    aligned = self._align_group_result(
+                        result,
+                        audio_path=audio_path,
+                        file_sample_rate=file_sample_rate,
+                        language=language,
+                        resample_module=resample_module,
+                    )
+                except Exception:
+                    print(
+                        f"    [STT] Alignment failed for group {group.group_id}, keeping STT results"
+                    )
+                    aligned = result
+                aligned_results[group.group_id] = aligned
+                if aligned is not result:
+                    changed_results.append(aligned)
+                progress.update(1)
 
         completed.update(aligned_results)
         if checkpoint_dir is not None and changed_results:
@@ -1465,6 +1475,14 @@ class Transcriber:
 
         new_entries: list[dict[str, Any]] = []
         for seg_text, seg_start, seg_end in segments:
+            if not self._entry_passes_filters(
+                seg_text,
+                seg_start,
+                seg_end,
+                stt_confidence,
+                apply_confidence_filter=False,
+            ):
+                continue
             entry_dict: dict[str, Any] = {
                 "text": seg_text,
                 "start": seg_start,
@@ -1475,18 +1493,21 @@ class Transcriber:
             }
             new_entries.append(entry_dict)
 
+        if not new_entries:
+            return result
+
         return GroupResult(
             group_id=result.group_id,
             span_start_idx=result.span_start_idx,
             span_end_idx=result.span_end_idx,
             start=result.start,
             end=result.end,
-            entries=new_entries if new_entries else result.entries,
+            entries=new_entries,
             detected_language=result.detected_language,
             source_mtime=result.source_mtime,
             raw_text=display_text,
             raw_alignment_text=align_text,
-            alignment_applied=bool(new_entries),
+            alignment_applied=True,
         )
 
     def _assemble_transcript(
@@ -1527,13 +1548,13 @@ class Transcriber:
         abs_end = chunk_start + float(segment.end)
         clamped_start = max(abs_start, chunk_start)
         clamped_end = min(abs_end, chunk_end)
-        duration = max(clamped_end - clamped_start, 0.0)
-        chars_per_second = (len(text) / duration) if duration > 0 else float("inf")
-        if raw_confidence is not None and confidence < self.config.stt_min_confidence:
-            return []
-        if duration < float(max(self.config.stt_min_segment_seconds, 0.0)):
-            return []
-        if chars_per_second > self.config.stt_max_chars_per_second:
+        if not self._entry_passes_filters(
+            text,
+            clamped_start,
+            clamped_end,
+            confidence,
+            apply_confidence_filter=raw_confidence is not None,
+        ):
             return []
         timed_entries = self._split_segment_from_words(
             segment,
@@ -1549,6 +1570,25 @@ class Transcriber:
         return self._split_entry_text(
             clamped_start, clamped_end, text, confidence, language
         )
+
+    def _entry_passes_filters(
+        self,
+        text: str,
+        start: float,
+        end: float,
+        confidence: float,
+        *,
+        apply_confidence_filter: bool,
+    ) -> bool:
+        duration = max(end - start, 0.0)
+        chars_per_second = (len(text) / duration) if duration > 0 else float("inf")
+        if apply_confidence_filter and confidence < self.config.stt_min_confidence:
+            return False
+        if duration < float(max(self.config.stt_min_segment_seconds, 0.0)):
+            return False
+        if chars_per_second > self.config.stt_max_chars_per_second:
+            return False
+        return True
 
     def _split_segment_from_words(
         self,

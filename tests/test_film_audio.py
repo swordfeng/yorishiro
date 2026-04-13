@@ -727,6 +727,33 @@ class TranscriberTests(unittest.TestCase):
             ],
         )
 
+    def test_split_with_aligned_tokens_does_not_create_punctuation_only_segment(
+        self,
+    ) -> None:
+        segments = split_with_aligned_tokens(
+            "これかぐや姫絶対不幸じゃん! 次どうする?",
+            [
+                _AlignedToken(
+                    text="これかぐや姫絶対不幸じゃん",
+                    start=0.0,
+                    end=1.6,
+                    confidence=0.9,
+                ),
+                _AlignedToken(text="次どうする", start=2.4, end=3.0, confidence=0.9),
+            ],
+            0.0,
+            3.2,
+            "ja",
+        )
+
+        self.assertEqual(
+            segments,
+            [
+                ("これかぐや姫絶対不幸じゃん!", 0.0, 1.6),
+                ("次どうする?", 2.4, 3.0),
+            ],
+        )
+
     def test_segment_to_entries_prefers_word_timestamps_for_pause_split(self) -> None:
         transcriber = Transcriber()
         segment = SimpleNamespace(
@@ -1504,6 +1531,7 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
             TranscriberConfig(
                 forced_aligner_enabled=True,
                 forced_aligner_model="Qwen/Qwen3-ForcedAligner-0.6B",
+                stt_min_segment_seconds=0.05,
             )
         )
         result = GroupResult(
@@ -1570,6 +1598,7 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
             TranscriberConfig(
                 forced_aligner_enabled=True,
                 forced_aligner_model="Qwen/Qwen3-ForcedAligner-0.6B",
+                stt_min_segment_seconds=0.05,
             )
         )
         result = GroupResult(
@@ -1626,6 +1655,68 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
         self.assertAlmostEqual(aligned.entries[0]["end"], 2.2)
         self.assertAlmostEqual(aligned.entries[1]["start"], 2.95)
         self.assertAlmostEqual(aligned.entries[1]["end"], 3.2)
+
+    def test_align_group_result_rejects_zero_duration_aligned_entries(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                forced_aligner_enabled=True,
+                forced_aligner_model="Qwen/Qwen3-ForcedAligner-0.6B",
+            )
+        )
+        result = GroupResult(
+            group_id="g_000000_000000",
+            span_start_idx=0,
+            span_end_idx=0,
+            start=10.0,
+            end=12.0,
+            entries=[
+                {
+                    "text": "あっ、あっ、あっ",
+                    "start": 10.0,
+                    "end": 12.0,
+                    "confidence": 0.0,
+                },
+            ],
+            detected_language="ja",
+            source_mtime=1.0,
+            raw_text="あっ、あっ、あっ",
+            raw_alignment_text="あっあっあっ",
+        )
+
+        class FakeAligner:
+            def align(self, audio, text, language, **kwargs):
+                del audio, text, language, kwargs
+                return [
+                    [
+                        SimpleNamespace(
+                            text="あっあっあっ", start_time=0.0, end_time=0.0
+                        ),
+                    ]
+                ]
+
+        with (
+            patch(
+                "yorishiro.audio.transcription.get_qwen3_forced_aligner",
+                return_value=FakeAligner(),
+            ),
+            patch(
+                "yorishiro.audio.transcription.sf.read",
+                return_value=(np.zeros(32000, dtype=np.float32), 16000),
+            ),
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
+        ):
+            aligned = transcriber._align_group_result(
+                result,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="ja",
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+            )
+
+        self.assertFalse(aligned.alignment_applied)
+        self.assertEqual(aligned.entries, result.entries)
 
     def test_run_transcription_aligns_when_resuming_from_checkpoints(self) -> None:
         transcriber = Transcriber(TranscriberConfig(forced_aligner_enabled=True))

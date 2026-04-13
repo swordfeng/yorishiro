@@ -701,12 +701,14 @@ class Transcriber:
                     chunk_audio, orig_sr=file_sample_rate, target_sr=16000
                 )
 
+            chunk_tensor = torch.from_numpy(chunk_audio).float()
             res = model.generate(
-                input=[chunk_audio],
+                input=[chunk_tensor],
                 cache={},
                 batch_size=1,
                 language=funasr_lang,
                 itn=True,
+                disable_pbar=True,
             )
 
             text = ""

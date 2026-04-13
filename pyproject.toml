@@ -80,4 +80,3 @@ skip_covered = false
 directory = "htmlcov"
 
 [tool.uv.sources]
-funasr = { git = "https://github.com/modelscope/FunASR.git", rev = "b842ff8107e1da950947ada0d11ae3c008baeb54" }

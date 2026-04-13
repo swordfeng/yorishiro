@@ -92,7 +92,13 @@ class FunASRModelLike(Protocol):
 
 
 class ForcedAlignerLike(Protocol):
-    def align(self, audio: Any, text: str | list[str], language: str | list[str], **kwargs: Any) -> Any: ...
+    def align(
+        self,
+        audio: Any,
+        text: str | list[str],
+        language: str | list[str],
+        **kwargs: Any,
+    ) -> Any: ...
 
 
 _QWEN3_LANGUAGE_MAP: dict[str, str] = {
@@ -194,7 +200,9 @@ def get_diarization_pipeline(config: DiarizerConfigLike) -> DiarizationPipelineL
     return cast(DiarizationPipelineLike, pipeline)
 
 
-def get_whisper_model(config: TranscriberConfigLike, *, instance_key: str = "default") -> WhisperModelLike:
+def get_whisper_model(
+    config: TranscriberConfigLike, *, instance_key: str = "default"
+) -> WhisperModelLike:
     from faster_whisper import WhisperModel
 
     cpu_threads = config.stt_cpu_threads or os.cpu_count() or 4
@@ -211,7 +219,9 @@ def get_whisper_model(config: TranscriberConfigLike, *, instance_key: str = "def
         cpu_threads=cpu_threads,
         num_workers=num_workers,
     )
-    print(f"    [STT] Loaded {config.stt_model} on {device} ({cpu_threads} threads x {num_workers} workers)")
+    print(
+        f"    [STT] Loaded {config.stt_model} on {device} ({cpu_threads} threads x {num_workers} workers)"
+    )
     _WHISPER_MODELS[key] = cast(WhisperModelLike, model)
     return cast(WhisperModelLike, model)
 
@@ -252,7 +262,37 @@ def get_transformers_pipeline(
     return cast(TransformersPipelineLike, pipe)
 
 
-def get_funasr_model(config: TranscriberConfigLike, *, instance_key: str = "default") -> FunASRModelLike:
+def _funasr_checkpoint_has_ctc_weights(model_path: str | None) -> bool | None:
+    if not model_path:
+        return None
+
+    checkpoint_path = Path(model_path) / "model.pt"
+    if not checkpoint_path.is_file():
+        return None
+
+    from torch._subclasses.fake_tensor import FakeTensorMode
+
+    with FakeTensorMode():
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+
+    state: Any = checkpoint
+    if isinstance(state, dict):
+        state = state.get("state_dict", state)
+    if isinstance(state, dict):
+        state = state.get("model_state_dict", state)
+    if isinstance(state, dict):
+        state = state.get("model", state)
+    if not isinstance(state, dict):
+        return None
+
+    return any(
+        key.startswith("ctc_decoder.") or key.startswith("ctc.") for key in state
+    )
+
+
+def get_funasr_model(
+    config: TranscriberConfigLike, *, instance_key: str = "default"
+) -> FunASRModelLike:
     from funasr import AutoModel
 
     device = get_device()
@@ -270,6 +310,19 @@ def get_funasr_model(config: TranscriberConfigLike, *, instance_key: str = "defa
         disable_update=True,
         device=device,
     )
+
+    inner = getattr(model, "model", model)
+    has_ctc_weights = _funasr_checkpoint_has_ctc_weights(
+        getattr(model, "model_path", None)
+    )
+    if (
+        has_ctc_weights is False
+        and hasattr(inner, "ctc_decoder")
+        and inner.ctc_decoder is not None
+    ):
+        inner.ctc_decoder = None  # ty: ignore[invalid-assignment]
+        print("    [STT] No CTC weights in checkpoint, disabled CTC decoder")
+
     print(f"    [STT] Loaded FunASR model {model_name} on {device}")
     _FUNASR_MODELS[key] = cast(FunASRModelLike, model)
     return cast(FunASRModelLike, model)
@@ -336,14 +389,18 @@ def vad_chunk_boundaries(
         if vad_segments[0]["start"] > 0:
             gap_mids.append(vad_segments[0]["start"] / 2)
         for idx in range(len(vad_segments) - 1):
-            gap_mids.append((vad_segments[idx]["end"] + vad_segments[idx + 1]["start"]) / 2)
+            gap_mids.append(
+                (vad_segments[idx]["end"] + vad_segments[idx + 1]["start"]) / 2
+            )
         if vad_segments[-1]["end"] < total_duration:
             gap_mids.append((vad_segments[-1]["end"] + total_duration) / 2)
 
     boundaries: list[float] = [0.0]
     for idx in range(1, num_chunks):
         target = idx * (total_duration / num_chunks)
-        boundaries.append(min(gap_mids, key=lambda mid: abs(mid - target)) if gap_mids else target)
+        boundaries.append(
+            min(gap_mids, key=lambda mid: abs(mid - target)) if gap_mids else target
+        )
     boundaries.append(total_duration)
 
     seen: set[float] = set()
@@ -448,7 +505,9 @@ def split_text_heuristically(text: str, language: str | None) -> list[str]:
     return [text]
 
 
-def merge_chunk_speakers(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, np.ndarray]]:
+def merge_chunk_speakers(
+    chunks: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, np.ndarray]]:
     """Merge per-chunk speaker labels into global IDs via clustering."""
     all_embeddings: list[np.ndarray] = []
     metadata: list[tuple[int, str]] = []
@@ -465,7 +524,9 @@ def merge_chunk_speakers(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
         all_turns: list[dict[str, Any]] = []
         for chunk_idx, chunk in enumerate(chunks):
             for turn in cast(list[dict[str, Any]], chunk["turns"]):
-                all_turns.append({**turn, "speaker": f"SPEAKER_{chunk_idx:02d}_{turn['speaker']}"})
+                all_turns.append(
+                    {**turn, "speaker": f"SPEAKER_{chunk_idx:02d}_{turn['speaker']}"}
+                )
         all_turns.sort(key=lambda turn: cast(float, turn["start"]))
         return all_turns, {}
 
@@ -475,7 +536,9 @@ def merge_chunk_speakers(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
     threshold = 1.0 - _SPEAKER_SIM_THRESHOLD
     cluster_labels = fcluster(Z, t=threshold, criterion="distance")
     unique_clusters = np.unique(cluster_labels)
-    cluster_to_speaker = {cluster: f"SPEAKER_{idx:02d}" for idx, cluster in enumerate(unique_clusters)}
+    cluster_to_speaker = {
+        cluster: f"SPEAKER_{idx:02d}" for idx, cluster in enumerate(unique_clusters)
+    }
 
     local_to_global: dict[tuple[int, str], str] = {}
     for (chunk_idx, local_id), cluster_label in zip(metadata, cluster_labels):
@@ -497,7 +560,9 @@ def merge_chunk_speakers(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
     all_turns: list[dict[str, Any]] = []
     for chunk_idx, chunk in enumerate(chunks):
         for turn in cast(list[dict[str, Any]], chunk["turns"]):
-            global_speaker = local_to_global.get((chunk_idx, cast(str, turn["speaker"])), cast(str, turn["speaker"]))
+            global_speaker = local_to_global.get(
+                (chunk_idx, cast(str, turn["speaker"])), cast(str, turn["speaker"])
+            )
             all_turns.append({**turn, "speaker": global_speaker})
 
     all_turns.sort(key=lambda turn: cast(float, turn["start"]))
@@ -528,7 +593,9 @@ def save_speaker_bank(
     print(f"    [Diarization] Speaker bank saved with {len(speakers)} speaker(s)")
 
 
-def prosody_segment_worker(args: tuple[dict[str, int | float], str, int, int]) -> tuple[int, str | None, str | None, str | None, None, str | None]:
+def prosody_segment_worker(
+    args: tuple[dict[str, int | float], str, int, int],
+) -> tuple[int, str | None, str | None, str | None, None, str | None]:
     """Worker for multiprocessing prosody analysis."""
     idx_info, audio_path_str, sr, _max_samples = args
 
@@ -542,7 +609,9 @@ def prosody_segment_worker(args: tuple[dict[str, int | float], str, int, int]) -
     import librosa
 
     try:
-        chunk, _ = sf.read(audio_path_str, start=start_sample, stop=end_sample, dtype="float32")
+        chunk, _ = sf.read(
+            audio_path_str, start=start_sample, stop=end_sample, dtype="float32"
+        )
         if chunk.ndim > 1:
             chunk = chunk.mean(axis=1)
 
@@ -556,7 +625,9 @@ def prosody_segment_worker(args: tuple[dict[str, int | float], str, int, int]) -
 
         duration = float(idx_info["duration"])
         if duration >= 0.3:
-            onsets = librosa.onset.onset_detect(y=chunk, sr=sr, units="time", normalize=True)
+            onsets = librosa.onset.onset_detect(
+                y=chunk, sr=sr, units="time", normalize=True
+            )
             rate = len(onsets) / duration
             speech_rate = "slow" if rate < 2.0 else ("fast" if rate > 4.0 else "normal")
 
@@ -570,7 +641,9 @@ def prosody_segment_worker(args: tuple[dict[str, int | float], str, int, int]) -
         if len(voiced_f0) >= 4:
             mean_f0 = float(np.mean(voiced_f0))
             rel_std = float(np.std(voiced_f0)) / mean_f0
-            norm_slope = float(np.polyfit(np.arange(len(voiced_f0)), voiced_f0, 1)[0]) / mean_f0
+            norm_slope = (
+                float(np.polyfit(np.arange(len(voiced_f0)), voiced_f0, 1)[0]) / mean_f0
+            )
             if rel_std > 0.25:
                 pitch_trend = "variable"
             elif norm_slope > 0.003:
@@ -592,8 +665,12 @@ def dummy_transcript_from_diarization(
     entries = [
         TranscriptEntry(
             speaker_global=cast(str, seg["speaker"]),
-            start=0.0 if cast(float, seg["start"]) == float("inf") else cast(float, seg["start"]),
-            end=0.0 if cast(float, seg["end"]) == float("inf") else cast(float, seg["end"]),
+            start=0.0
+            if cast(float, seg["start"]) == float("inf")
+            else cast(float, seg["start"]),
+            end=0.0
+            if cast(float, seg["end"]) == float("inf")
+            else cast(float, seg["end"]),
             text="[Transcription unavailable]",
             confidence=0.0,
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast
 
@@ -411,6 +412,149 @@ def get_qwen3_forced_aligner(
     print(f"    [STT] Loaded forced aligner {model_name} on {device}")
     _FORCED_ALIGNERS[key] = cast(ForcedAlignerLike, aligner)
     return cast(ForcedAlignerLike, aligner)
+
+
+@dataclass
+class _CapturedLogits:
+    sequences_scores: torch.Tensor | None = None
+    sequences: torch.Tensor | None = None
+
+
+def compute_avg_logprob_from_captured_logits(captured: _CapturedLogits) -> float | None:
+    if captured.sequences_scores is None or captured.sequences is None:
+        return None
+    scores = captured.sequences_scores
+    seqs = captured.sequences
+    if not isinstance(scores, torch.Tensor) or scores.numel() == 0:
+        return None
+    if not isinstance(seqs, torch.Tensor) or seqs.numel() == 0:
+        return None
+    num_generated = seqs.shape[1]
+    if num_generated == 0:
+        return None
+    return float(scores[0].item()) / num_generated
+
+
+class FunASRConfidenceHook:
+    _captured: _CapturedLogits
+
+    def __init__(self, model: Any) -> None:
+        self._model = model
+        self._original_generate: Any = None
+
+    def __enter__(self) -> _CapturedLogits:
+        inner = cast(Any, getattr(self._model, "model", self._model))
+        llm = getattr(inner, "llm", None)
+        if llm is None or not hasattr(llm, "generate"):
+            self._captured = _CapturedLogits()
+            return self._captured
+
+        self._original_generate = llm.generate
+        self._captured = _CapturedLogits()
+
+        def _capturing_generate(*args: Any, **kwargs: Any) -> Any:
+            kwargs["output_scores"] = True
+            kwargs["return_dict_in_generate"] = True
+            try:
+                result = self._original_generate(*args, **kwargs)
+            except Exception:
+                del kwargs["output_scores"]
+                del kwargs["return_dict_in_generate"]
+                result = self._original_generate(*args, **kwargs)
+                return result
+
+            self._captured.sequences_scores = getattr(result, "sequences_scores", None)
+            self._captured.sequences = getattr(result, "sequences", None)
+
+            return result.sequences if hasattr(result, "sequences") else result
+
+        llm.generate = _capturing_generate
+        return self._captured
+
+    def __exit__(self, *args: object) -> None:
+        if self._original_generate is not None:
+            inner = cast(Any, getattr(self._model, "model", self._model))
+            llm = getattr(inner, "llm", None)
+            if llm is not None:
+                llm.generate = self._original_generate
+
+
+@dataclass
+class _Qwen3AlignerCapture:
+    confidence_per_item: list[float] = field(default_factory=list)
+
+
+class Qwen3AlignerConfidenceHook:
+    _capture: _Qwen3AlignerCapture
+
+    def __init__(self, aligner: Any) -> None:
+        self._aligner = aligner
+        self._original_thinker: Any = None
+
+    def __enter__(self) -> _Qwen3AlignerCapture:
+        model = getattr(self._aligner, "model", None)
+        if model is None:
+            self._capture = _Qwen3AlignerCapture()
+            return self._capture
+
+        thinker = getattr(model, "thinker", None)
+        if thinker is None or not hasattr(thinker, "forward"):
+            self._capture = _Qwen3AlignerCapture()
+            return self._capture
+
+        self._original_thinker = thinker.forward
+        self._capture = _Qwen3AlignerCapture()
+        capture = self._capture
+        aligner = self._aligner
+        original_thinker = self._original_thinker
+
+        def _capturing_thinker(*args: Any, **kwargs: Any) -> Any:
+            result = original_thinker(*args, **kwargs)
+            try:
+                logits = getattr(result, "logits", None)
+                if logits is None or not isinstance(logits, torch.Tensor):
+                    return result
+
+                timestamp_token_id = getattr(aligner, "timestamp_token_id", None)
+                if timestamp_token_id is None:
+                    return result
+
+                input_ids = kwargs.get("input_ids")
+                if input_ids is None and args:
+                    input_ids = args[0] if len(args) > 0 else None
+
+                if input_ids is None:
+                    return result
+
+                probs = torch.softmax(logits.float(), dim=-1)
+
+                for batch_idx in range(logits.shape[0]):
+                    batch_input_ids = (
+                        input_ids[batch_idx] if input_ids.ndim > 1 else input_ids
+                    )
+                    batch_probs = probs[batch_idx] if probs.ndim > 1 else probs
+
+                    timestamp_mask = batch_input_ids == timestamp_token_id
+                    timestamp_probs = batch_probs[timestamp_mask]
+
+                    for prob_val in timestamp_probs:
+                        max_prob = float(prob_val.max().item())
+                        capture.confidence_per_item.append(max_prob)
+
+                return result
+            except Exception:
+                return result
+
+        thinker.forward = _capturing_thinker
+        return self._capture
+
+    def __exit__(self, *args: object) -> None:
+        if self._original_thinker is not None:
+            model = getattr(self._aligner, "model", None)
+            if model is not None:
+                thinker = getattr(model, "thinker", None)
+                if thinker is not None:
+                    thinker.forward = self._original_thinker
 
 
 def get_emotion_model(config: EmotionAnalyzerConfigLike) -> EmotionModelLike:

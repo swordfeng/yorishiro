@@ -24,7 +24,10 @@ import torch
 
 from yorishiro.audio import resample as audio_resample
 from yorishiro.audio._speech_support import (
+    FunASRConfidenceHook,
+    Qwen3AlignerConfidenceHook,
     TranscribeKwargs,
+    compute_avg_logprob_from_captured_logits,
     funasr_language,
     get_funasr_model,
     get_qwen3_forced_aligner,
@@ -816,18 +819,21 @@ class Transcriber:
                 )
 
             chunk_tensor = torch.from_numpy(chunk_audio).float()
-            res = model.generate(
-                input=[chunk_tensor],
-                cache={},
-                batch_size=1,
-                language=funasr_lang,
-                itn=True,
-                disable_pbar=True,
-            )
+
+            with FunASRConfidenceHook(model) as captured:
+                res = model.generate(
+                    input=[chunk_tensor],
+                    cache={},
+                    batch_size=1,
+                    language=funasr_lang,
+                    itn=True,
+                    disable_pbar=True,
+                )
 
             text = ""
             text_tn = ""
-            confidence = 0.0
+            confidence: float = 0.0
+            raw_confidence: float | None = None
             if res and len(res) > 0:
                 text = res[0].get("text", "").strip()
                 text_tn = res[0].get("text_tn", "").strip()
@@ -838,14 +844,31 @@ class Transcriber:
                         for ts in timestamps
                     ]
                     confidence = sum(scores) / len(scores) if scores else 0.0
+                    raw_confidence = confidence
+                else:
+                    llm_conf = compute_avg_logprob_from_captured_logits(captured)
+                    if llm_conf is not None:
+                        confidence = llm_conf
+                        raw_confidence = llm_conf
 
             chunk_language = language
             entries: list[dict[str, Any]] = []
             if text:
-                for entry in self._split_entry_text(
-                    group.start, group.end, text, confidence, chunk_language
+                if (
+                    raw_confidence is not None
+                    and raw_confidence < self.config.stt_min_confidence
                 ):
-                    entries.append(entry.model_dump())
+                    pass
+                else:
+                    for entry in self._split_entry_text(
+                        group.start,
+                        group.end,
+                        text,
+                        confidence,
+                        chunk_language,
+                        stt_confidence=raw_confidence,
+                    ):
+                        entries.append(entry.model_dump())
 
             results.append(
                 GroupResult(
@@ -1417,11 +1440,12 @@ class Transcriber:
             )
 
         try:
-            align_results = aligner.align(
-                audio=(chunk_audio, 16000),
-                text=align_text,
-                language=align_lang,
-            )
+            with Qwen3AlignerConfidenceHook(aligner) as capture:
+                align_results = aligner.align(
+                    audio=(chunk_audio, 16000),
+                    text=align_text,
+                    language=align_lang,
+                )
         except Exception:
             print(
                 f"    [STT] Forced alignment failed for group {result.group_id}, using STT-only entries"
@@ -1431,18 +1455,29 @@ class Transcriber:
         if not align_results or not align_results[0]:
             return result
 
+        confidence_per_item = capture.confidence_per_item
+        confidence_iter = iter(confidence_per_item)
+        has_capture = len(confidence_per_item) > 0
+
         aligned_tokens: list[_AlignedToken] = []
         for item in align_results[0]:
             token_text = strip_punctuation_for_alignment(getattr(item, "text", ""))
             if not token_text:
                 continue
+            if has_capture:
+                try:
+                    item_conf = next(confidence_iter)
+                except StopIteration:
+                    item_conf = getattr(item, "confidence", 0.0)
+            else:
+                item_conf = getattr(item, "confidence", 0.0)
             aligned_tokens.append(
                 _AlignedToken(
                     text=token_text,
                     start=result.start + float(getattr(item, "start_time", 0.0)),
                     end=result.start
                     + float(getattr(item, "end_time", result.end - result.start)),
-                    confidence=getattr(item, "confidence", 0.0),
+                    confidence=item_conf,
                 )
             )
 
@@ -1542,7 +1577,6 @@ class Transcriber:
             return []
 
         raw_confidence = getattr(segment, "avg_logprob", None)
-        raw_confidence = getattr(segment, "avg_logprob", None)
         confidence = raw_confidence if raw_confidence is not None else 0.0
         abs_start = chunk_start + float(segment.start)
         abs_end = chunk_start + float(segment.end)
@@ -1556,6 +1590,7 @@ class Transcriber:
             apply_confidence_filter=raw_confidence is not None,
         ):
             return []
+        stt_confidence = confidence if raw_confidence is not None else None
         timed_entries = self._split_segment_from_words(
             segment,
             chunk_start,
@@ -1564,11 +1599,17 @@ class Transcriber:
             segment_text=text,
             segment_start=clamped_start,
             segment_end=clamped_end,
+            stt_confidence=stt_confidence,
         )
         if timed_entries:
             return timed_entries
         return self._split_entry_text(
-            clamped_start, clamped_end, text, confidence, language
+            clamped_start,
+            clamped_end,
+            text,
+            confidence,
+            language,
+            stt_confidence=stt_confidence,
         )
 
     def _entry_passes_filters(
@@ -1600,6 +1641,7 @@ class Transcriber:
         segment_text: str,
         segment_start: float,
         segment_end: float,
+        stt_confidence: float | None = None,
     ) -> list[STTEntry]:
         words = getattr(segment, "words", None) or []
         aligned_tokens: list[_AlignedToken] = []
@@ -1643,6 +1685,7 @@ class Transcriber:
                     end=seg_end,
                     text=seg_text,
                     confidence=confidence,
+                    stt_confidence=stt_confidence,
                 )
             )
         return entries
@@ -1654,6 +1697,8 @@ class Transcriber:
         text: str,
         confidence: float,
         language: str | None,
+        *,
+        stt_confidence: float | None = None,
     ) -> list[STTEntry]:
         pieces = split_text_heuristically(text, language)
         if len(pieces) <= 1:
@@ -1664,6 +1709,7 @@ class Transcriber:
                     end=end,
                     text=text,
                     confidence=confidence,
+                    stt_confidence=stt_confidence,
                 )
             ]
 
@@ -1685,6 +1731,7 @@ class Transcriber:
                     end=piece_end,
                     text=piece,
                     confidence=confidence,
+                    stt_confidence=stt_confidence,
                 )
             )
             cursor = piece_end

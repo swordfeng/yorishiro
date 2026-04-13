@@ -34,6 +34,11 @@ from yorishiro.audio.transcription import (
     Transcriber,
     TranscriberConfig,
 )
+from yorishiro.audio._speech_support import (
+    compute_avg_logprob_from_captured_logits,
+    FunASRConfidenceHook,
+    Qwen3AlignerConfidenceHook,
+)
 from yorishiro.audio.vad import VadConfig, VadRunner
 from yorishiro.models.film_models import (
     STTEntry,
@@ -1064,6 +1069,71 @@ class SmartSplitHeuristicTests(unittest.TestCase):
         )
 
 
+class ConfidenceExtractionTests(unittest.TestCase):
+    def test_compute_avg_logprob_returns_none_when_empty(self) -> None:
+        from yorishiro.audio._speech_support import _CapturedLogits
+
+        captured = _CapturedLogits()
+        result = compute_avg_logprob_from_captured_logits(captured)
+        self.assertIsNone(result)
+
+    def test_compute_avg_logprob_returns_none_when_no_sequences(self) -> None:
+        from yorishiro.audio._speech_support import _CapturedLogits
+
+        captured = _CapturedLogits(
+            sequences_scores=torch.tensor([-3.0]),
+        )
+        result = compute_avg_logprob_from_captured_logits(captured)
+        self.assertIsNone(result)
+
+    def test_compute_avg_logprob_normalizes_by_token_count(self) -> None:
+        from yorishiro.audio._speech_support import _CapturedLogits
+
+        captured = _CapturedLogits(
+            sequences_scores=torch.tensor([-3.0]),
+            sequences=torch.tensor([[1, 2, 3]], dtype=torch.long),
+        )
+        result = compute_avg_logprob_from_captured_logits(captured)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertAlmostEqual(result, -1.0)
+
+    def test_compute_avg_logprob_handles_zero_length(self) -> None:
+        from yorishiro.audio._speech_support import _CapturedLogits
+
+        captured = _CapturedLogits(
+            sequences_scores=torch.tensor([-3.0]),
+            sequences=torch.zeros(1, 0, dtype=torch.long),
+        )
+        result = compute_avg_logprob_from_captured_logits(captured)
+        self.assertIsNone(result)
+
+    def test_funasr_confidence_hook_fallback_when_no_llm(self) -> None:
+        class FakeModel:
+            pass
+
+        model = FakeModel()
+        captured = None
+        with FunASRConfidenceHook(model) as cap:
+            captured = cap
+
+        self.assertIsNotNone(captured)
+        self.assertIsNone(captured.sequences_scores)
+        self.assertIsNone(captured.sequences)
+
+    def test_qwen3_aligner_confidence_hook_fallback_when_no_thinker(self) -> None:
+        class FakeAligner:
+            pass
+
+        aligner = FakeAligner()
+        captured = None
+        with Qwen3AlignerConfidenceHook(aligner) as cap:
+            captured = cap
+
+        self.assertIsNotNone(captured)
+        self.assertEqual(len(captured.confidence_per_item), 0)
+
+
 class FunASRBackendTests(unittest.TestCase):
     def test_funasr_config_instantiates_correctly(self) -> None:
         config = TranscriberConfig(
@@ -1294,6 +1364,113 @@ class FunASRBackendTests(unittest.TestCase):
                 save_result=lambda _r: None,
             )
         mock_funasr.assert_called_once()
+
+    def test_funasr_worker_groups_uses_llm_confidence_when_no_ctc(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                stt_backend="funasr",
+                stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+            )
+        )
+        groups = [
+            SpeechGroup(
+                group_id="g_000000_000000",
+                span_start_idx=0,
+                span_end_idx=0,
+                start=0.0,
+                end=2.0,
+            ),
+        ]
+
+        class FakeFunASRModel:
+            def __init__(self) -> None:
+                self.model = SimpleNamespace(llm=None)
+
+            def generate(self, input: Any, **kwargs: Any) -> list[dict[str, Any]]:
+                return [{"key": "utt_0", "text": "Hi", "text_tn": "Hi"}]
+
+        fake_model = FakeFunASRModel()
+
+        with (
+            patch("yorishiro.audio.transcription.sf.read") as mock_read,
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
+            patch(
+                "yorishiro.audio.transcription.get_funasr_model",
+                return_value=fake_model,
+            ),
+        ):
+            mock_read.return_value = (np.zeros(32000, dtype=np.float32), 16000)
+            results = transcriber._run_worker_groups_funasr(
+                groups,
+                worker_idx=0,
+                worker_config=transcriber.config,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="en",
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+                update_progress=lambda _delta: None,
+                save_result=lambda _r: None,
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(results[0].entries), 1)
+        self.assertEqual(results[0].entries[0]["text"], "Hi")
+        self.assertAlmostEqual(results[0].entries[0]["confidence"], 0.0)
+
+    def test_funasr_low_confidence_filters_output(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                stt_backend="funasr",
+                stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+                stt_min_confidence=-0.001,
+            )
+        )
+        groups = [
+            SpeechGroup(
+                group_id="g_000000_000000",
+                span_start_idx=0,
+                span_end_idx=0,
+                start=0.0,
+                end=2.0,
+            ),
+        ]
+
+        class FakeFunASRModel:
+            def __init__(self) -> None:
+                self.model = SimpleNamespace(llm=None)
+
+            def generate(self, input: Any, **kwargs: Any) -> list[dict[str, Any]]:
+                return [{"key": "utt_0", "text": "Hello", "text_tn": "Hello"}]
+
+        fake_model = FakeFunASRModel()
+
+        with (
+            patch("yorishiro.audio.transcription.sf.read") as mock_read,
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
+            patch(
+                "yorishiro.audio.transcription.get_funasr_model",
+                return_value=fake_model,
+            ),
+        ):
+            mock_read.return_value = (np.zeros(32000, dtype=np.float32), 16000)
+            results = transcriber._run_worker_groups_funasr(
+                groups,
+                worker_idx=0,
+                worker_config=transcriber.config,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="en",
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+                update_progress=lambda _delta: None,
+                save_result=lambda _r: None,
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(results[0].entries), 1)
 
 
 class ForcedAlignerConfigTests(unittest.TestCase):

@@ -89,6 +89,11 @@ After making any code changes, always run checks before considering the task com
 
 Fix all errors before reporting completion.
 
+For non-trivial changes (complex logic, new features, significant refactors), also run:
+- `uv run basedpyright` - full type checking
+
+This is run last because it is slow. Skip it for simple changes (a few lines, trivial edits unlikely to affect typing).
+
 ### Dependency Management
 
 Use `uv add ...` to add dependencies and `uv run ...` to execute tools/scripts.

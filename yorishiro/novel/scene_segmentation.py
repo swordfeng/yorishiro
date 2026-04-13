@@ -120,10 +120,12 @@ class SceneSegment(BaseModel):
 
     location: str = Field(description="Scene location in source material language")
     time: str = Field(description="Time of day in source material language")
-    characters: list[str] = Field(description="Character names exactly as they appear in this scene")
+    characters: list[str] = Field(
+        description="Character names exactly as they appear in this scene"
+    )
     boundary_type: str = Field(
         description="Type of boundary that ends this scene",
-        json_schema_extra={"enum": BOUNDARY_TYPES},
+        json_schema_extra={"enum": BOUNDARY_TYPES},  # pyright: ignore[reportArgumentType]
     )
     end_text: str = Field(
         description=(
@@ -178,12 +180,16 @@ class SceneSegmentationConfig:
     max_chunk_size: int = MAX_CHUNK_SIZE
 
     @classmethod
-    def from_step_config(cls, step_config: dict[str, Any] | None) -> SceneSegmentationConfig:
+    def from_step_config(
+        cls, step_config: dict[str, Any] | None
+    ) -> SceneSegmentationConfig:
         cfg = step_config or {}
         initial_chunk_size = int(cfg.get("initial_chunk_size", INITIAL_CHUNK_SIZE))
         max_chunk_size = int(cfg.get("max_chunk_size", MAX_CHUNK_SIZE))
         if initial_chunk_size <= 0:
-            raise ValueError(f"initial_chunk_size must be > 0, got {initial_chunk_size}")
+            raise ValueError(
+                f"initial_chunk_size must be > 0, got {initial_chunk_size}"
+            )
         if max_chunk_size < initial_chunk_size:
             raise ValueError(
                 f"max_chunk_size must be >= initial_chunk_size, got {max_chunk_size} < {initial_chunk_size}"
@@ -202,22 +208,31 @@ class SegmentationState:
     last_scenes: list[SceneData] = field(default_factory=list)
 
     @classmethod
-    def create(cls, total_length: int, config: SceneSegmentationConfig) -> SegmentationState:
+    def create(
+        cls, total_length: int, config: SceneSegmentationConfig
+    ) -> SegmentationState:
         return cls(total_length=total_length, chunk_size=config.initial_chunk_size)
 
     def current_chunk(self, chapter_text: str) -> str:
-        return chapter_text[self.cursor:self.cursor + self.chunk_size]
+        return chapter_text[self.cursor : self.cursor + self.chunk_size]
 
     def previous_chunk(self, chapter_text: str) -> str:
-        return "\n".join(chapter_text[scene.start_offset:scene.end_offset] for scene in self.last_scenes)
+        return "\n".join(
+            chapter_text[scene.start_offset : scene.end_offset]
+            for scene in self.last_scenes
+        )
 
-    def reset_after_progress(self, next_cursor: int, config: SceneSegmentationConfig) -> None:
+    def reset_after_progress(
+        self, next_cursor: int, config: SceneSegmentationConfig
+    ) -> None:
         self.cursor = next_cursor
         self.chunk_size = config.initial_chunk_size
         self.failed_end_text = ""
         self.retry_count = 0
 
-    def grow_chunk_or_raise(self, config: SceneSegmentationConfig, message: str) -> None:
+    def grow_chunk_or_raise(
+        self, config: SceneSegmentationConfig, message: str
+    ) -> None:
         self.retry_count += 1
         if self.retry_count >= MAX_RETRIES:
             raise RuntimeError(message)
@@ -252,8 +267,14 @@ def find_end_offset(
 ) -> int:
     """Find position right after end_text in chapter_text, searching from search_from."""
     end_clean = "".join(end_text.split())
-    end = (search_from + search_limit) if search_limit is not None else len(chapter_text)
-    pairs = [(search_from + i, c) for i, c in enumerate(chapter_text[search_from:end]) if not c.isspace()]
+    end = (
+        (search_from + search_limit) if search_limit is not None else len(chapter_text)
+    )
+    pairs = [
+        (search_from + i, c)
+        for i, c in enumerate(chapter_text[search_from:end])
+        if not c.isspace()
+    ]
     norm_str = "".join(c for _, c in pairs)
 
     pat = re.escape(end_clean)
@@ -267,12 +288,14 @@ def find_end_offset(
         raise ValueError(
             f"Could not locate end_text in chapter (searching from offset {search_from}).\n"
             f"  end_text = {end_clean!r}\n"
-            f"  context  = {chapter_text[search_from:search_from + 200]!r}"
+            f"  context  = {chapter_text[search_from : search_from + 200]!r}"
         )
 
     max_errors = len(end_clean) // 10
     body, tail = end_clean[:-2], end_clean[-2:]
-    pat = _regex.compile(rf"(?:{_regex.escape(body)}){{e<={max_errors}}}{_regex.escape(tail)}")
+    pat = _regex.compile(
+        rf"(?:{_regex.escape(body)}){{e<={max_errors}}}{_regex.escape(tail)}"
+    )
     fm = pat.search(norm_str)
     if fm is not None:
         return pairs[fm.end() - 1][0] + 1
@@ -280,7 +303,7 @@ def find_end_offset(
     raise ValueError(
         f"Could not locate end_text in chapter (searching from offset {search_from}).\n"
         f"  end_text = {end_clean!r}\n"
-        f"  context  = {chapter_text[search_from:search_from + 200]!r}"
+        f"  context  = {chapter_text[search_from : search_from + 200]!r}"
     )
 
 
@@ -294,11 +317,15 @@ def build_user_prompt(
 ) -> str:
     parts = []
     if not summary and not previous_chunk:
-        parts.append("[This is at START of the chapter — there is NO text before the cursor]")
+        parts.append(
+            "[This is at START of the chapter — there is NO text before the cursor]"
+        )
     if summary:
         parts.append(f"[Previously processed — summary of the story so far]\n{summary}")
     if previous_chunk:
-        parts.append(f"[Previously processed — last few scenes BEFORE cursor]\n{previous_chunk}")
+        parts.append(
+            f"[Previously processed — last few scenes BEFORE cursor]\n{previous_chunk}"
+        )
     if failed_end_text:
         parts.append(
             f"[Previous attempt failed]\n"
@@ -331,7 +358,9 @@ def append_scene(
     seg: SceneSegment,
 ) -> SceneData:
     if end_offset <= start_offset:
-        raise ValueError(f"Empty/inverted scene: start={start_offset}, end={end_offset}")
+        raise ValueError(
+            f"Empty/inverted scene: start={start_offset}, end={end_offset}"
+        )
     if scenes and scenes[-1].end_offset != start_offset:
         raise ValueError(
             f"Continuity gap: previous scene ends at {scenes[-1].end_offset}, "
@@ -430,7 +459,9 @@ async def segment_chapter(
             data = result.output
             print(f"  Result: scene len = {len(data.scenes)}, summary = {data.summary}")
         except Exception as e:
-            print(f"  Warning: LLM error at offset {state.cursor}: {e}", file=sys.stderr)
+            print(
+                f"  Warning: LLM error at offset {state.cursor}: {e}", file=sys.stderr
+            )
             grow_chunk_or_raise(state, config, "LLM kept failing")
             continue
 
@@ -478,10 +509,17 @@ def verify_coverage(scenes: list[SceneData], total_length: int) -> None:
                 f"and scene {i + 1} (start={scenes[i + 1].start_offset})"
             )
     if scenes[-1].end_offset != total_length:
-        raise ValueError(f"Last scene ends at {scenes[-1].end_offset}, expected {total_length}")
+        raise ValueError(
+            f"Last scene ends at {scenes[-1].end_offset}, expected {total_length}"
+        )
 
 
-def write_manifest(output_dir: Path, chapter_meta: dict, scenes: list[SceneData], chapter_stem: str = "") -> Path:
+def write_manifest(
+    output_dir: Path,
+    chapter_meta: dict,
+    scenes: list[SceneData],
+    chapter_stem: str = "",
+) -> Path:
     manifest = {
         "chapter_index": chapter_meta.get("index", 0),
         "chapter_stem": chapter_stem,
@@ -502,14 +540,20 @@ def write_manifest(output_dir: Path, chapter_meta: dict, scenes: list[SceneData]
         ],
     }
     path = output_dir / "scenes_manifest.json"
-    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return path
 
 
-def write_scene_files(output_dir: Path, chapter_text: str, scenes: list[SceneData]) -> None:
+def write_scene_files(
+    output_dir: Path, chapter_text: str, scenes: list[SceneData]
+) -> None:
     for s in scenes:
-        content = chapter_text[s.start_offset:s.end_offset]
-        (output_dir / f"scene_{s.scene_index:03d}.txt").write_text(content, encoding="utf-8")
+        content = chapter_text[s.start_offset : s.end_offset]
+        (output_dir / f"scene_{s.scene_index:03d}.txt").write_text(
+            content, encoding="utf-8"
+        )
 
 
 def process_chapter(
@@ -559,5 +603,7 @@ def process_chapter(
     print("Done.")
     for s in scenes:
         chars_label = f"[{s.start_offset}:{s.end_offset}]"
-        print(f"  scene_{s.scene_index:03d}.txt  {chars_label:20s}  {s.location} / {s.time}")
+        print(
+            f"  scene_{s.scene_index:03d}.txt  {chars_label:20s}  {s.location} / {s.time}"
+        )
     return True

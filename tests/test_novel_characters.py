@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 from yorishiro.novel.character_extraction import (
     SoulDocAppend,
@@ -42,7 +43,14 @@ class AliasLoadingTests(unittest.TestCase):
                 json.dumps(
                     {
                         "Alice": [{"chapter": "ch001", "scene": 0, "alias": "Ally"}],
-                        "UNRESOLVED": [{"chapter": "ch001", "scene": 1, "alias": "Girl", "reason": "unknown"}],
+                        "UNRESOLVED": [
+                            {
+                                "chapter": "ch001",
+                                "scene": 1,
+                                "alias": "Girl",
+                                "reason": "unknown",
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -83,17 +91,29 @@ class SceneLoadingTests(unittest.TestCase):
             scenes = load_all_scenes(base, aliases, ["Alice"])
 
             self.assertEqual(len(scenes), 1)
-            self.assertEqual([(c.alias, c.canonical) for c in scenes[0].characters], [("Ally", "Alice"), ("Bob", "Bob")])
-            self.assertEqual([(c.alias, c.canonical) for c in scenes[0].target_characters], [("Ally", "Alice")])
+            self.assertEqual(
+                [(c.alias, c.canonical) for c in scenes[0].characters],
+                [("Ally", "Alice"), ("Bob", "Bob")],
+            )
+            self.assertEqual(
+                [(c.alias, c.canonical) for c in scenes[0].target_characters],
+                [("Ally", "Alice")],
+            )
 
 
 class ModelAndBatchTests(unittest.TestCase):
     def test_make_extraction_models_constrains_character_field(self) -> None:
-        CharacterSceneNoteModel, BatchExtractionResultModel = make_extraction_models(["Alice", "Bob"])
+        CharacterSceneNoteModel, BatchExtractionResultModel = make_extraction_models(
+            ["Alice", "Bob"]
+        )
 
-        enum_values = CharacterSceneNoteModel.model_json_schema()["properties"]["character"]["enum"]
+        enum_values = CharacterSceneNoteModel.model_json_schema()["properties"][
+            "character"
+        ]["enum"]
         self.assertEqual(enum_values, ["Alice", "Bob"])
-        self.assertIn("notes", BatchExtractionResultModel.model_json_schema()["properties"])
+        self.assertIn(
+            "notes", BatchExtractionResultModel.model_json_schema()["properties"]
+        )
 
     def test_build_batches_keeps_large_scene_intact(self) -> None:
         aliases = {"Alice": [{"chapter": "ch001", "scene": 0, "alias": "Ally"}]}
@@ -104,7 +124,12 @@ class ModelAndBatchTests(unittest.TestCase):
                 chapter_dir.mkdir()
                 (chapter_dir / "scene_000.txt").write_text(text, encoding="utf-8")
                 (chapter_dir / "scenes_manifest.json").write_text(
-                    json.dumps({"chapter_index": idx, "scenes": [{"scene_index": 0, "characters": ["Ally"]}]}),
+                    json.dumps(
+                        {
+                            "chapter_index": idx,
+                            "scenes": [{"scene_index": 0, "characters": ["Ally"]}],
+                        }
+                    ),
                     encoding="utf-8",
                 )
             scenes = load_all_scenes(base, aliases, ["Alice"])
@@ -161,17 +186,28 @@ class ProcessAllBatchesTests(unittest.IsolatedAsyncioTestCase):
             characters_dir = root / "characters"
             characters_dir.mkdir()
             (characters_dir / "Alice").mkdir()
-            (characters_dir / "Alice" / "insights.md").write_text("Existing insight", encoding="utf-8")
+            (characters_dir / "Alice" / "insights.md").write_text(
+                "Existing insight", encoding="utf-8"
+            )
 
             aliases = {"Alice": [{"chapter": "ch001", "scene": 0, "alias": "Ally"}]}
             scene_dir = root / "scenes" / "ch001"
             scene_dir.mkdir(parents=True)
-            (scene_dir / "scene_000.txt").write_text("Ally said hello.", encoding="utf-8")
+            (scene_dir / "scene_000.txt").write_text(
+                "Ally said hello.", encoding="utf-8"
+            )
             (scene_dir / "scenes_manifest.json").write_text(
                 json.dumps(
                     {
                         "chapter_index": 1,
-                        "scenes": [{"scene_index": 0, "location": "Room", "time": "Night", "characters": ["Ally"]}],
+                        "scenes": [
+                            {
+                                "scene_index": 0,
+                                "location": "Room",
+                                "time": "Night",
+                                "characters": ["Ally"],
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -196,7 +232,10 @@ class ProcessAllBatchesTests(unittest.IsolatedAsyncioTestCase):
                             "actions_avoided": "深入りしなかった",
                             "decision_logic": "慎重だった",
                             "arc_marker": "導入",
-                            "knowledge_scope": {"facts_revealed": ["相手がいる"], "facts_hidden": []},
+                            "knowledge_scope": {
+                                "facts_revealed": ["相手がいる"],
+                                "facts_hidden": [],
+                            },
                             "comfort_mechanisms": [],
                             "repeated_expressions": [],
                             "persona_shifts": [],
@@ -214,14 +253,18 @@ class ProcessAllBatchesTests(unittest.IsolatedAsyncioTestCase):
             )
             agent = FakeAgent([extraction])
 
-            await process_all_batches([scenes], ["Alice"], characters_dir, characters_dir, agent)
+            await process_all_batches(
+                [scenes], ["Alice"], characters_dir, characters_dir, cast(Any, agent)
+            )
 
             notes_path = characters_dir / "Alice" / "ch001.json"
             self.assertTrue(notes_path.exists())
             notes = json.loads(notes_path.read_text(encoding="utf-8"))
             self.assertEqual(notes[0]["character"], "Alice")
 
-            insights = (characters_dir / "Alice" / "insights.md").read_text(encoding="utf-8")
+            insights = (characters_dir / "Alice" / "insights.md").read_text(
+                encoding="utf-8"
+            )
             self.assertIn("### Behavioral Patterns", insights)
             self.assertIn("慎重に距離を測る", insights)
             self.assertEqual(len(agent.prompts), 1)
@@ -254,7 +297,9 @@ steps:
             )
 
             project = Project.load(root)
-            task = NovelCharactersStep(project, "novel-src", registry=ModelRegistry(project)).tasks()[0]
+            task = NovelCharactersStep(
+                project, "novel-src", registry=ModelRegistry(project)
+            ).tasks()[0]
 
             self.assertIsInstance(task, NovelCharactersTask)
             assert isinstance(task, NovelCharactersTask)

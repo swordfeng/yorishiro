@@ -28,8 +28,12 @@ class KnowledgeScope(BaseModel):
 class ComfortMechanism(BaseModel):
     """A self-soothing or comfort-seeking behavior."""
 
-    trigger: str = Field(description="What triggers this behavior (situation, emotion, stressor).")
-    action: str = Field(description="What the character does to comfort/soothe themselves.")
+    trigger: str = Field(
+        description="What triggers this behavior (situation, emotion, stressor)."
+    )
+    action: str = Field(
+        description="What the character does to comfort/soothe themselves."
+    )
     sensory_details: list[str] = Field(
         default_factory=list,
         description="Sensory elements involved (scents, sounds, textures, visuals).",
@@ -40,14 +44,20 @@ class RepeatedExpression(BaseModel):
     """A phrase or expression the character uses repeatedly."""
 
     phrase: str = Field(description="The exact phrase or expression.")
-    context: str = Field(description="When/why this phrase is used (deflection, excitement, dismissive, etc.).")
-    frequency: str = Field(description="How often: 'always', 'frequently', 'occasionally', or 'rarely'.")
+    context: str = Field(
+        description="When/why this phrase is used (deflection, excitement, dismissive, etc.)."
+    )
+    frequency: str = Field(
+        description="How often: 'always', 'frequently', 'occasionally', or 'rarely'."
+    )
 
 
 class CharacterSceneNote(BaseModel):
     """Structured extraction of one character's information in one scene."""
 
-    character: str = Field(description="Canonical name of the character (must match a target character).")
+    character: str = Field(
+        description="Canonical name of the character (must match a target character)."
+    )
     chapter_index: int
     scene_index: int
     source: str = "novel"
@@ -72,7 +82,9 @@ class CharacterSceneNote(BaseModel):
 class SoulDocAppend(BaseModel):
     """Per-character synthesized insights from a batch, for soul doc accumulation."""
 
-    canonical_name: str = Field(description="Canonical name of the character (must match a target character).")
+    canonical_name: str = Field(
+        description="Canonical name of the character (must match a target character)."
+    )
     negative_constraints: list[str] = Field(default_factory=list)
     behavioral_patterns: list[str] = Field(default_factory=list)
     simulation_directives: list[str] = Field(default_factory=list)
@@ -81,11 +93,13 @@ class SoulDocAppend(BaseModel):
     arc_notes: str = Field(default="")
 
 
-def make_extraction_models(canonical_names: list[str]) -> tuple[type[BaseModel], type[BaseModel]]:
+def make_extraction_models(
+    canonical_names: list[str],
+) -> tuple[type[BaseModel], type[BaseModel]]:
     """Create constrained CharacterSceneNote and BatchExtractionResult models."""
     character_field = Field(
         description="Canonical name of the character (must match a target character).",
-        json_schema_extra={"enum": canonical_names},
+        json_schema_extra={"enum": canonical_names},  # pyright: ignore[reportArgumentType]
     )
 
     dynamic_character_scene_note = create_model(
@@ -112,25 +126,33 @@ def make_extraction_models(canonical_names: list[str]) -> tuple[type[BaseModel],
         sensory_triggers=(list[str], Field(default_factory=list)),
         __base__=BaseModel,
     )
-    dynamic_character_scene_note.__doc__ = "Structured extraction of one character's information in one scene."
+    dynamic_character_scene_note.__doc__ = (
+        "Structured extraction of one character's information in one scene."
+    )
 
     dynamic_batch_extraction_result = create_model(
         "BatchExtractionResult",
-        notes=(list[dynamic_character_scene_note], Field(  # type: ignore
-            description=(
-                "One CharacterSceneNote per (target character × scene) where the character "
-                "actually appears. Identified by character + chapter_index + scene_index. "
-                "Omit entirely for characters not present in a scene."
-            )
-        )),
-        soul_doc_appends=(list[SoulDocAppend], Field(
-            default_factory=list,
-            description=(
-                "One SoulDocAppend per target character with genuinely new insights from "
-                "this batch. Only include characters with something new to add. "
-                "Do NOT repeat content already in the character's soul doc or insights."
+        notes=(
+            list[dynamic_character_scene_note],  # ty: ignore[invalid-type-form]
+            Field(
+                description=(
+                    "One CharacterSceneNote per (target character × scene) where the character "
+                    "actually appears. Identified by character + chapter_index + scene_index. "
+                    "Omit entirely for characters not present in a scene."
+                )
             ),
-        )),
+        ),
+        soul_doc_appends=(
+            list[SoulDocAppend],
+            Field(
+                default_factory=list,
+                description=(
+                    "One SoulDocAppend per target character with genuinely new insights from "
+                    "this batch. Only include characters with something new to add. "
+                    "Do NOT repeat content already in the character's soul doc or insights."
+                ),
+            ),
+        ),
         __base__=BaseModel,
     )
     dynamic_batch_extraction_result.__doc__ = "LLM output for one scene batch."
@@ -240,7 +262,9 @@ class CharacterExtractionAgent(Protocol):
     async def run(self, prompt: str) -> AgentRunResult: ...
 
 
-async def agent_run_with_retry(agent: CharacterExtractionAgent, prompt: str, max_attempts: int = 3) -> AgentRunResult:
+async def agent_run_with_retry(
+    agent: CharacterExtractionAgent, prompt: str, max_attempts: int = 3
+) -> AgentRunResult:
     """Run agent, retrying on output validation errors."""
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
@@ -256,7 +280,9 @@ async def agent_run_with_retry(agent: CharacterExtractionAgent, prompt: str, max
     raise last_exc
 
 
-def build_batches(scenes: list[SceneRecord], batch_tokens: int) -> list[list[SceneRecord]]:
+def build_batches(
+    scenes: list[SceneRecord], batch_tokens: int
+) -> list[list[SceneRecord]]:
     """Group scenes into batches not exceeding batch_tokens estimated tokens."""
     batches: list[list[SceneRecord]] = []
     current_batch: list[SceneRecord] = []
@@ -287,7 +313,9 @@ def build_alias_canonical_lookup(
     lookup: dict[tuple[str, int, str], str] = {}
     for canonical, occurrences in aliases.items():
         for occurrence in occurrences:
-            lookup[(occurrence["chapter"], occurrence["scene"], occurrence["alias"])] = canonical
+            lookup[
+                (occurrence["chapter"], occurrence["scene"], occurrence["alias"])
+            ] = canonical
     return lookup
 
 
@@ -314,10 +342,18 @@ def load_all_scenes(
                 continue
 
             characters = [
-                CharacterInScene(alias=alias, canonical=alias_lookup.get((chapter, scene_index, alias), alias) or alias)
+                CharacterInScene(
+                    alias=alias,
+                    canonical=alias_lookup.get((chapter, scene_index, alias), alias)
+                    or alias,
+                )
                 for alias in scene.get("characters", [])
             ]
-            target_in_scene = [character for character in characters if character.canonical in target_set]
+            target_in_scene = [
+                character
+                for character in characters
+                if character.canonical in target_set
+            ]
 
             scenes.append(
                 SceneRecord(
@@ -339,7 +375,9 @@ def load_insight_context(canonical_name: str, characters_dir: Path) -> str:
     """Return accumulated insights text for a character."""
     insights_path = characters_dir / canonical_name / "insights.md"
     if insights_path.exists():
-        return f"### Accumulated Insights\n\n{insights_path.read_text(encoding='utf-8')}"
+        return (
+            f"### Accumulated Insights\n\n{insights_path.read_text(encoding='utf-8')}"
+        )
     return "(no background available yet)"
 
 
@@ -360,7 +398,9 @@ def format_batch_prompt(
 
     for scene in batch:
         annotations = [
-            f"「{character.alias}」→ {character.canonical}" if character.alias != character.canonical else f"「{character.alias}」"
+            f"「{character.alias}」→ {character.canonical}"
+            if character.alias != character.canonical
+            else f"「{character.alias}」"
             for character in scene.characters
         ]
         char_str = ",  ".join(annotations) if annotations else "(none)"
@@ -376,15 +416,24 @@ def format_batch_prompt(
     return "\n".join(parts)
 
 
-def write_chapter_notes(output_dir: Path, canonical_name: str, chapter_stem: str, notes: list[dict[str, Any]]) -> Path:
+def write_chapter_notes(
+    output_dir: Path,
+    canonical_name: str,
+    chapter_stem: str,
+    notes: list[dict[str, Any]],
+) -> Path:
     out_path = output_dir / canonical_name / f"{chapter_stem}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     notes_sorted = sorted(notes, key=lambda note: int(note.get("scene_index", 0)))
-    out_path.write_text(json.dumps(notes_sorted, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(notes_sorted, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return out_path
 
 
-def append_insights(output_dir: Path, append: SoulDocAppend, batch_num: int, total: int) -> None:
+def append_insights(
+    output_dir: Path, append: SoulDocAppend, batch_num: int, total: int
+) -> None:
     """Append batch insights to characters/{name}/insights.md."""
     insights_path = output_dir / append.canonical_name / "insights.md"
     insights_path.parent.mkdir(parents=True, exist_ok=True)
@@ -428,15 +477,20 @@ async def process_all_batches(
 ) -> None:
     total = len(batches)
     chapter_index_to_stem = {
-        scene.chapter_index: scene.chapter
-        for batch in batches
-        for scene in batch
+        scene.chapter_index: scene.chapter for batch in batches for scene in batch
     }
     all_notes: dict[tuple[str, int], list[dict[str, Any]]] = {}
 
     for batch_num, batch in enumerate(batches, 1):
-        print(f"Processing batch {batch_num}/{total}  ({len(batch)} scenes) ...", file=sys.stderr)
-        chars_in_batch = {character.canonical for scene in batch for character in scene.target_characters}
+        print(
+            f"Processing batch {batch_num}/{total}  ({len(batch)} scenes) ...",
+            file=sys.stderr,
+        )
+        chars_in_batch = {
+            character.canonical
+            for scene in batch
+            for character in scene.target_characters
+        }
         insight_contexts = {
             name: load_insight_context(name, characters_dir)
             for name in target_characters
@@ -456,23 +510,32 @@ async def process_all_batches(
         soul_doc_appends = getattr(extraction, "soul_doc_appends")
 
         for note in notes:
-            all_notes.setdefault((note.character, note.chapter_index), []).append(note.model_dump())
+            all_notes.setdefault((note.character, note.chapter_index), []).append(
+                note.model_dump()
+            )
 
         for app in soul_doc_appends:
-            if any([
-                app.negative_constraints,
-                app.behavioral_patterns,
-                app.simulation_directives,
-                app.relationship_insights,
-                app.personality_synthesis,
-                app.arc_notes,
-            ]):
+            if any(
+                [
+                    app.negative_constraints,
+                    app.behavioral_patterns,
+                    app.simulation_directives,
+                    app.relationship_insights,
+                    app.personality_synthesis,
+                    app.arc_notes,
+                ]
+            ):
                 append_insights(output_dir, app, batch_num, total)
 
-        print(f"  → {len(notes)} notes, {len(soul_doc_appends)} soul doc appends", file=sys.stderr)
+        print(
+            f"  → {len(notes)} notes, {len(soul_doc_appends)} soul doc appends",
+            file=sys.stderr,
+        )
 
     print("\nWriting character notes ...", file=sys.stderr)
     for (canonical_name, chapter_index), notes in sorted(all_notes.items()):
-        chapter_stem = chapter_index_to_stem.get(chapter_index, f"ch{chapter_index:03d}")
+        chapter_stem = chapter_index_to_stem.get(
+            chapter_index, f"ch{chapter_index:03d}"
+        )
         write_chapter_notes(output_dir, canonical_name, chapter_stem, notes)
         print(f"  {canonical_name} / {chapter_stem}: {len(notes)} notes")

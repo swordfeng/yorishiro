@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 from yorishiro.novel.alias_resolution import (
     AliasAssignment,
@@ -64,18 +65,32 @@ def make_character(
 
 
 class LoadAllScenesTests(unittest.TestCase):
-    def test_load_all_scenes_sorts_by_chapter_and_scene_and_skips_missing_files(self) -> None:
+    def test_load_all_scenes_sorts_by_chapter_and_scene_and_skips_missing_files(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
             ch2 = base / "ch002"
             ch2.mkdir()
-            (ch2 / "scene_000.txt").write_text("Later chapter first scene", encoding="utf-8")
+            (ch2 / "scene_000.txt").write_text(
+                "Later chapter first scene", encoding="utf-8"
+            )
             (ch2 / "scenes_manifest.json").write_text(
                 json.dumps(
                     {
                         "scenes": [
-                            {"scene_index": 1, "characters": ["B"], "location": "Room", "time": "Night"},
-                            {"scene_index": 0, "characters": ["A"], "location": "Hall", "time": "Day"},
+                            {
+                                "scene_index": 1,
+                                "characters": ["B"],
+                                "location": "Room",
+                                "time": "Night",
+                            },
+                            {
+                                "scene_index": 0,
+                                "characters": ["A"],
+                                "location": "Hall",
+                                "time": "Day",
+                            },
                         ]
                     }
                 ),
@@ -84,23 +99,53 @@ class LoadAllScenesTests(unittest.TestCase):
 
             ch1 = base / "ch001"
             ch1.mkdir()
-            (ch1 / "scene_000.txt").write_text("Earlier chapter scene", encoding="utf-8")
+            (ch1 / "scene_000.txt").write_text(
+                "Earlier chapter scene", encoding="utf-8"
+            )
             (ch1 / "scenes_manifest.json").write_text(
-                json.dumps({"scenes": [{"scene_index": 0, "characters": ["C"], "location": "Park", "time": "Noon"}]}),
+                json.dumps(
+                    {
+                        "scenes": [
+                            {
+                                "scene_index": 0,
+                                "characters": ["C"],
+                                "location": "Park",
+                                "time": "Noon",
+                            }
+                        ]
+                    }
+                ),
                 encoding="utf-8",
             )
 
             scenes = load_all_scenes(base)
 
-            self.assertEqual([(scene.chapter, scene.scene_index) for scene in scenes], [("ch001", 0), ("ch002", 0)])
+            self.assertEqual(
+                [(scene.chapter, scene.scene_index) for scene in scenes],
+                [("ch001", 0), ("ch002", 0)],
+            )
             self.assertEqual(scenes[1].text, "Later chapter first scene")
 
 
 class BuildBatchesTests(unittest.TestCase):
     def test_build_batches_keeps_large_scene_intact(self) -> None:
         scenes = [
-            SceneRecord(chapter="ch000", scene_index=0, characters=["A"], location="", time="", text="a" * 600),
-            SceneRecord(chapter="ch000", scene_index=1, characters=["B"], location="", time="", text="b" * 600),
+            SceneRecord(
+                chapter="ch000",
+                scene_index=0,
+                characters=["A"],
+                location="",
+                time="",
+                text="a" * 600,
+            ),
+            SceneRecord(
+                chapter="ch000",
+                scene_index=1,
+                characters=["B"],
+                location="",
+                time="",
+                text="b" * 600,
+            ),
         ]
 
         batches = build_batches(scenes, batch_tokens=10)
@@ -122,9 +167,15 @@ class ApplyResultTests(unittest.TestCase):
         )
         result = BatchUpdateResult(
             updated_characters=[make_character("Alice", aliases=["Alice", "Ally"])],
-            alias_assignments=[AliasAssignment(chapter="ch001", scene_index=0, alias="Ally", canonical_name="Alice")],
+            alias_assignments=[
+                AliasAssignment(
+                    chapter="ch001", scene_index=0, alias="Ally", canonical_name="Alice"
+                )
+            ],
             unresolved_aliases=[],
-            merges=[MergeInstruction(keep="Alice", absorb="Alicia", reason="same person")],
+            merges=[
+                MergeInstruction(keep="Alice", absorb="Alicia", reason="same person")
+            ],
             knowledge_summary="Summary",
             batch_notes="",
         )
@@ -143,7 +194,14 @@ class ApplyResultTests(unittest.TestCase):
 class MissedAliasTests(unittest.TestCase):
     def test_find_missed_only_returns_aliases_not_assigned_or_unresolved(self) -> None:
         batch = [
-            SceneRecord(chapter="ch001", scene_index=0, characters=["A", "B", "C"], location="", time="", text="scene"),
+            SceneRecord(
+                chapter="ch001",
+                scene_index=0,
+                characters=["A", "B", "C"],
+                location="",
+                time="",
+                text="scene",
+            ),
         ]
         state = GlobalState(
             occurrence_map={("ch001", 0, "A"): "Alice"},
@@ -163,7 +221,14 @@ class MissedAliasTests(unittest.TestCase):
         self.assertEqual(missed, [("ch001", 0, "C")])
 
     def test_format_retry_prompt_includes_scene_context_once(self) -> None:
-        scene = SceneRecord(chapter="ch001", scene_index=2, characters=["A", "B"], location="Cafe", time="Morning", text="Context text")
+        scene = SceneRecord(
+            chapter="ch001",
+            scene_index=2,
+            characters=["A", "B"],
+            location="Cafe",
+            time="Morning",
+            text="Context text",
+        )
         prompt = format_retry_prompt(
             [("ch001", 2, "A"), ("ch001", 2, "B")],
             {("ch001", 2): scene},
@@ -178,11 +243,24 @@ class MissedAliasTests(unittest.TestCase):
 
 class ProcessAllBatchesTests(unittest.IsolatedAsyncioTestCase):
     async def test_process_all_batches_retries_missed_aliases(self) -> None:
-        batch = [[SceneRecord(chapter="ch001", scene_index=0, characters=["Ally"], location="Room", time="Night", text="Ally spoke.")]]
+        batch = [
+            [
+                SceneRecord(
+                    chapter="ch001",
+                    scene_index=0,
+                    characters=["Ally"],
+                    location="Room",
+                    time="Night",
+                    text="Ally spoke.",
+                )
+            ]
+        ]
         batch_agent = FakeAgent(
             [
                 BatchUpdateResult(
-                    updated_characters=[make_character("Alice", aliases=["Alice", "Ally"])],
+                    updated_characters=[
+                        make_character("Alice", aliases=["Alice", "Ally"])
+                    ],
                     alias_assignments=[],
                     unresolved_aliases=[],
                     merges=[],
@@ -194,13 +272,22 @@ class ProcessAllBatchesTests(unittest.IsolatedAsyncioTestCase):
         retry_agent = FakeAgent(
             [
                 MissedAliasResolution(
-                    alias_assignments=[AliasAssignment(chapter="ch001", scene_index=0, alias="Ally", canonical_name="Alice")],
+                    alias_assignments=[
+                        AliasAssignment(
+                            chapter="ch001",
+                            scene_index=0,
+                            alias="Ally",
+                            canonical_name="Alice",
+                        )
+                    ],
                     unresolved_aliases=[],
                 )
             ]
         )
 
-        state = await process_all_batches(batch, GlobalState(), batch_agent, retry_agent)
+        state = await process_all_batches(
+            batch, GlobalState(), cast(Any, batch_agent), cast(Any, retry_agent)
+        )
 
         self.assertEqual(state.occurrence_map[("ch001", 0, "Ally")], "Alice")
         self.assertEqual(state.knowledge_summary, "Story so far")
@@ -215,14 +302,22 @@ class SeedAndWriteTests(unittest.IsolatedAsyncioTestCase):
             char_dir = base / "Alice"
             char_dir.mkdir()
             (char_dir / "insights.md").write_text("# Alice\n\nFact", encoding="utf-8")
-            agent = FakeAgent([SeedFromSoulDocsResult(characters=[make_character("Alice", facts=["Fact"])])])
+            agent = FakeAgent(
+                [
+                    SeedFromSoulDocsResult(
+                        characters=[make_character("Alice", facts=["Fact"])]
+                    )
+                ]
+            )
 
-            state = await seed_from_insight_drafts(base, agent)
+            state = await seed_from_insight_drafts(base, cast(Any, agent))
 
             self.assertEqual(list(state.characters.keys()), ["Alice"])
             self.assertEqual(state.characters["Alice"].known_facts, ["Fact"])
 
-    def test_write_character_aliases_and_insight_drafts_emit_expected_files(self) -> None:
+    def test_write_character_aliases_and_insight_drafts_emit_expected_files(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
             state = GlobalState(
@@ -247,12 +342,18 @@ class SeedAndWriteTests(unittest.IsolatedAsyncioTestCase):
             aliases_path = base / "character_aliases.json"
             write_character_aliases(state, aliases_path)
             data = json.loads(aliases_path.read_text(encoding="utf-8"))
-            self.assertEqual(data["Alice"][0], {"chapter": "ch001", "scene": 0, "alias": "Alice"})
-            self.assertEqual(data["Alice"][1], {"chapter": "ch002", "scene": 1, "alias": "Ally"})
+            self.assertEqual(
+                data["Alice"][0], {"chapter": "ch001", "scene": 0, "alias": "Alice"}
+            )
+            self.assertEqual(
+                data["Alice"][1], {"chapter": "ch002", "scene": 1, "alias": "Ally"}
+            )
             self.assertEqual(data["UNRESOLVED"][0]["reason"], "too vague")
 
             write_insight_drafts(state, base / "characters")
-            draft = (base / "characters" / "Alice" / "insights.md").read_text(encoding="utf-8")
+            draft = (base / "characters" / "Alice" / "insights.md").read_text(
+                encoding="utf-8"
+            )
             self.assertIn("## Aliases", draft)
             self.assertIn("## Known Facts", draft)
             self.assertIn("## Current State", draft)
@@ -266,7 +367,9 @@ class NovelAliasesStepTests(unittest.TestCase):
             root = Path(tmp_dir)
             scenes_dir = root / "processed" / "novel-src" / "steps" / "scenes" / "ch000"
             scenes_dir.mkdir(parents=True)
-            (scenes_dir / "scenes_manifest.json").write_text(json.dumps({"scenes": []}), encoding="utf-8")
+            (scenes_dir / "scenes_manifest.json").write_text(
+                json.dumps({"scenes": []}), encoding="utf-8"
+            )
             (root / "project.yaml").write_text(
                 """project:
   name: Demo
@@ -289,7 +392,9 @@ steps:
             )
 
             project = Project.load(root)
-            task = NovelAliasesStep(project, "novel-src", registry=ModelRegistry(project)).tasks()[0]
+            task = NovelAliasesStep(
+                project, "novel-src", registry=ModelRegistry(project)
+            ).tasks()[0]
 
             self.assertIsInstance(task, NovelAliasesTask)
             assert isinstance(task, NovelAliasesTask)

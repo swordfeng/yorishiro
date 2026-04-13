@@ -86,7 +86,7 @@ _STT_LATIN_ABBREVIATIONS = frozenset(
         "sun",
     }
 )
-_LATIN_SENTENCE_TOKENIZER: Any | None = None
+_latin_sentence_tokenizer: Any | None = None
 
 
 class TranscribeKwargs(TypedDict):
@@ -99,23 +99,34 @@ class TranscribeKwargs(TypedDict):
 
 
 class DiarizerConfigLike(Protocol):
-    diarization_model: str
-    diarization_batch_size: int
-    hf_token_env: str
+    @property
+    def diarization_model(self) -> str: ...
+    @property
+    def diarization_batch_size(self) -> int: ...
+    @property
+    def hf_token_env(self) -> str: ...
 
 
 class TranscriberConfigLike(Protocol):
-    stt_model: str
-    stt_cpu_threads: int
-    stt_num_workers: int
-    stt_word_timestamps: bool
-    stt_vad_filter: bool
-    stt_vad_min_silence_duration_ms: int
-    stt_extra_args: dict[str, Any]
+    @property
+    def stt_model(self) -> str: ...
+    @property
+    def stt_cpu_threads(self) -> int: ...
+    @property
+    def stt_num_workers(self) -> int: ...
+    @property
+    def stt_word_timestamps(self) -> bool: ...
+    @property
+    def stt_vad_filter(self) -> bool: ...
+    @property
+    def stt_vad_min_silence_duration_ms(self) -> int: ...
+    @property
+    def stt_extra_args(self) -> dict[str, Any]: ...
 
 
 class EmotionAnalyzerConfigLike(Protocol):
-    emotion_model: str
+    @property
+    def emotion_model(self) -> str: ...
 
 
 class DiarizationPipelineLike(Protocol):
@@ -238,7 +249,7 @@ def get_diarization_pipeline(config: DiarizerConfigLike) -> DiarizationPipelineL
 
     pipeline = Pipeline.from_pretrained(config.diarization_model, token=hf_token)
     device = torch.device(get_device())
-    pipeline = pipeline.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+    pipeline = cast(Any, pipeline).to(device)
     if hasattr(pipeline, "_segmentation"):
         pipeline._segmentation.batch_size = config.diarization_batch_size
     if hasattr(pipeline, "embedding_batch_size"):
@@ -358,7 +369,7 @@ def get_funasr_model(
         device=device,
     )
 
-    inner = getattr(model, "model", model)
+    inner = cast(Any, getattr(model, "model", model))
     has_ctc_weights = _funasr_checkpoint_has_ctc_weights(
         getattr(model, "model_path", None)
     )
@@ -367,7 +378,7 @@ def get_funasr_model(
         and hasattr(inner, "ctc_decoder")
         and inner.ctc_decoder is not None
     ):
-        inner.ctc_decoder = None  # ty: ignore[invalid-assignment]
+        inner.ctc_decoder = None
         print("    [STT] No CTC weights in checkpoint, disabled CTC decoder")
 
     print(f"    [STT] Loaded FunASR model {model_name} on {device}")
@@ -576,14 +587,14 @@ def _split_cjk_clauses(text: str) -> list[str]:
 
 
 def _get_latin_sentence_tokenizer() -> Any:
-    global _LATIN_SENTENCE_TOKENIZER
-    if _LATIN_SENTENCE_TOKENIZER is None:
+    global _latin_sentence_tokenizer
+    if _latin_sentence_tokenizer is None:
         from nltk.tokenize.punkt import PunktParameters, PunktSentenceTokenizer
 
         params = PunktParameters()
         params.abbrev_types = set(_STT_LATIN_ABBREVIATIONS)
-        _LATIN_SENTENCE_TOKENIZER = PunktSentenceTokenizer(params)
-    return _LATIN_SENTENCE_TOKENIZER
+        _latin_sentence_tokenizer = PunktSentenceTokenizer(params)
+    return _latin_sentence_tokenizer
 
 
 def _split_latin_sentences(text: str) -> list[str]:
@@ -660,14 +671,14 @@ def merge_chunk_speakers(
                 metadata.append((chunk_idx, local_id))
 
     if len(all_embeddings) == 0:
-        all_turns: list[dict[str, Any]] = []
+        fallback_turns: list[dict[str, Any]] = []
         for chunk_idx, chunk in enumerate(chunks):
             for turn in cast(list[dict[str, Any]], chunk["turns"]):
-                all_turns.append(
+                fallback_turns.append(
                     {**turn, "speaker": f"SPEAKER_{chunk_idx:02d}_{turn['speaker']}"}
                 )
-        all_turns.sort(key=lambda turn: cast(float, turn["start"]))
-        return all_turns, {}
+        fallback_turns.sort(key=lambda turn: cast(float, turn["start"]))
+        return fallback_turns, {}
 
     X = np.stack(all_embeddings)
     distances = pdist(X, metric="cosine")

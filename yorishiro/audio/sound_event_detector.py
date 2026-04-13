@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from typing import Any, cast
 
 import librosa
 import numpy as np
@@ -82,7 +83,9 @@ class SoundEventDetector:
         raise TypeError(f"Unsupported CLAP output type: {type(output)!r}")
 
     @staticmethod
-    def _merge_adjacent_events(events: list[SoundEvent], gap_tolerance: float = 0.6) -> list[SoundEvent]:
+    def _merge_adjacent_events(
+        events: list[SoundEvent], gap_tolerance: float = 0.6
+    ) -> list[SoundEvent]:
         if not events:
             return []
 
@@ -105,7 +108,9 @@ class SoundEventDetector:
         return 20.0 * math.log10(rms + 1e-9)
 
     @staticmethod
-    def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    def _merge_intervals(
+        intervals: list[tuple[float, float]],
+    ) -> list[tuple[float, float]]:
         if not intervals:
             return []
         intervals = sorted(intervals)
@@ -119,7 +124,9 @@ class SoundEventDetector:
         return merged
 
     @staticmethod
-    def _interval_overlap_fraction(start: float, end: float, intervals: list[tuple[float, float]]) -> float:
+    def _interval_overlap_fraction(
+        start: float, end: float, intervals: list[tuple[float, float]]
+    ) -> float:
         duration = max(end - start, 1e-6)
         overlap = 0.0
         for i_start, i_end in intervals:
@@ -138,22 +145,35 @@ class SoundEventDetector:
             entries = data.get("entries", [])
             padding = self.config.speech_padding_seconds
             intervals = [
-                (max(0.0, float(entry.get("start", 0.0)) - padding), float(entry.get("end", 0.0)) + padding)
+                (
+                    max(0.0, float(entry.get("start", 0.0)) - padding),
+                    float(entry.get("end", 0.0)) + padding,
+                )
                 for entry in entries
             ]
             return self._merge_intervals(intervals)
         except Exception:
             return []
 
-    def _filter_candidates(self, candidates: list[dict], *, require_support: bool) -> list[SoundEvent]:
+    def _filter_candidates(
+        self, candidates: list[dict], *, require_support: bool
+    ) -> list[SoundEvent]:
         if not candidates:
             return []
 
         filtered: list[dict] = []
         n = len(candidates)
         for i, cand in enumerate(candidates):
-            prev_same = i > 0 and candidates[i - 1]["description"] == cand["description"] and candidates[i - 1]["end"] >= cand["start"] - 0.6
-            next_same = i + 1 < n and candidates[i + 1]["description"] == cand["description"] and candidates[i + 1]["start"] <= cand["end"] + 0.6
+            prev_same = (
+                i > 0
+                and candidates[i - 1]["description"] == cand["description"]
+                and candidates[i - 1]["end"] >= cand["start"] - 0.6
+            )
+            next_same = (
+                i + 1 < n
+                and candidates[i + 1]["description"] == cand["description"]
+                and candidates[i + 1]["start"] <= cand["end"] + 0.6
+            )
             if not require_support or prev_same or next_same:
                 filtered.append(cand)
 
@@ -190,22 +210,35 @@ class SoundEventDetector:
             except Exception:
                 pass
 
-        speech_intervals = self._speech_intervals(transcript_path) if transcript_path is not None else []
+        speech_intervals = (
+            self._speech_intervals(transcript_path)
+            if transcript_path is not None
+            else []
+        )
 
-        print(f"  [SoundEventDetector] Processing {voice_path.name} for vocal events ...")
+        print(
+            f"  [SoundEventDetector] Processing {voice_path.name} for vocal events ..."
+        )
         voice_events = self._detect_vocal_events(
             voice_path,
             speech_intervals,
         )
-        print(f"  [SoundEventDetector] Processing {nonvoice_path.name} for ambience ...")
+        print(
+            f"  [SoundEventDetector] Processing {nonvoice_path.name} for ambience ..."
+        )
         nonvoice_events = self._detect_ambience_events(
             nonvoice_path,
         )
-        events = sorted(voice_events + nonvoice_events, key=lambda e: (e.start, e.end, e.description))
+        events = sorted(
+            voice_events + nonvoice_events,
+            key=lambda e: (e.start, e.end, e.description),
+        )
         events = self._merge_adjacent_events(events)
 
         result = {"events": [e.model_dump() for e in events]}
-        cache_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        cache_file.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         print(f"  [SoundEventDetector] Detected {len(events)} sound events")
         return events
@@ -218,7 +251,7 @@ class SoundEventDetector:
 
         assert self._clap_processor is not None
         assert self._clap_model is not None
-        text_inputs = self._clap_processor(
+        text_inputs = cast(Any, self._clap_processor)(
             text=prompts,
             return_tensors="pt",
             padding=True,
@@ -226,7 +259,9 @@ class SoundEventDetector:
         )
         text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
         with torch.no_grad():
-            text_features = self._embedding_tensor(self._clap_model.get_text_features(**text_inputs))
+            text_features = self._embedding_tensor(
+                self._clap_model.get_text_features(**text_inputs)
+            )
             text_features = torch.nn.functional.normalize(text_features, dim=-1)
         self._text_features_cache[key] = text_features
         return text_features
@@ -244,7 +279,7 @@ class SoundEventDetector:
         assert self._clap_processor is not None
         device = next(self._clap_model.parameters()).device
 
-        audio_inputs = self._clap_processor(
+        audio_inputs = cast(Any, self._clap_processor)(
             audio=chunk,
             return_tensors="pt",
             sampling_rate=48000,
@@ -252,7 +287,9 @@ class SoundEventDetector:
         audio_inputs = {k: v.to(device) for k, v in audio_inputs.items()}
 
         with torch.no_grad():
-            audio_features = self._embedding_tensor(self._clap_model.get_audio_features(**audio_inputs))
+            audio_features = self._embedding_tensor(
+                self._clap_model.get_audio_features(**audio_inputs)
+            )
             audio_features = torch.nn.functional.normalize(audio_features, dim=-1)
             sim_row = (audio_features @ text_features.T)[0]
             top_k = min(2, sim_row.shape[0])
@@ -307,7 +344,7 @@ class SoundEventDetector:
             if self._clap_model is None:
                 device = torch.device(get_device())
                 self._clap_model = ClapModel.from_pretrained(self.config.model)
-                self._clap_model = self._clap_model.to(device)  # type: ignore
+                self._clap_model = cast(Any, self._clap_model).to(device)
                 self._clap_processor = ClapProcessor.from_pretrained(self.config.model)
 
             device = next(self._clap_model.parameters()).device
@@ -330,9 +367,11 @@ class SoundEventDetector:
                 starts = [0.0]
 
             print(f"  [SoundEventDetector] Scanning {len(starts)} voice window(s) ...")
-            for start in tqdm(starts, desc="  [SoundEventDetector] Voice", unit="window"):
+            for start in tqdm(
+                starts, desc="  [SoundEventDetector] Voice", unit="window"
+            ):
                 end = min(start + window_size, duration)
-                chunk = audio[int(start * sr):int(end * sr)]
+                chunk = audio[int(start * sr) : int(end * sr)]
                 if len(chunk) == 0:
                     continue
                 if self._window_rms_db(chunk) < self.config.voice_min_rms_db:
@@ -350,12 +389,14 @@ class SoundEventDetector:
                 if label is None:
                     continue
 
-                candidates.append({
-                    "start": float(start),
-                    "end": float(end),
-                    "event_type": "non_speech_vocal",
-                    "description": self._normalize_label(label),
-                })
+                candidates.append(
+                    {
+                        "start": float(start),
+                        "end": float(end),
+                        "event_type": "non_speech_vocal",
+                        "description": self._normalize_label(label),
+                    }
+                )
 
             return self._filter_candidates(candidates, require_support=False)
 
@@ -370,7 +411,7 @@ class SoundEventDetector:
             if self._clap_model is None:
                 device = torch.device(get_device())
                 self._clap_model = ClapModel.from_pretrained(self.config.model)
-                self._clap_model = self._clap_model.to(device)  # type: ignore
+                self._clap_model = cast(Any, self._clap_model).to(device)
                 self._clap_processor = ClapProcessor.from_pretrained(self.config.model)
 
             device = next(self._clap_model.parameters()).device
@@ -391,10 +432,14 @@ class SoundEventDetector:
             if not starts:
                 starts = [0.0]
 
-            print(f"  [SoundEventDetector] Scanning {len(starts)} nonvoice window(s) ...")
-            for start in tqdm(starts, desc="  [SoundEventDetector] Nonvoice", unit="window"):
+            print(
+                f"  [SoundEventDetector] Scanning {len(starts)} nonvoice window(s) ..."
+            )
+            for start in tqdm(
+                starts, desc="  [SoundEventDetector] Nonvoice", unit="window"
+            ):
                 end = min(start + window_size, duration)
-                chunk = audio[int(start * sr):int(end * sr)]
+                chunk = audio[int(start * sr) : int(end * sr)]
                 if len(chunk) == 0:
                     continue
                 if self._window_rms_db(chunk) < self.config.ambience_min_rms_db:
@@ -414,12 +459,14 @@ class SoundEventDetector:
                 if label is None:
                     continue
 
-                candidates.append({
-                    "start": float(start),
-                    "end": float(end),
-                    "event_type": "ambient",
-                    "description": self._normalize_label(label),
-                })
+                candidates.append(
+                    {
+                        "start": float(start),
+                        "end": float(end),
+                        "event_type": "ambient",
+                        "description": self._normalize_label(label),
+                    }
+                )
 
             return self._filter_candidates(candidates, require_support=True)
 

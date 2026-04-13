@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import librosa
 import numpy as np
@@ -60,7 +61,9 @@ class MusicAnalyzer:
                 pass
 
         if nonvoice_path is not None:
-            print(f"  [MusicAnalyzer] Using pre-separated non-voice stem: {nonvoice_path.name}")
+            print(
+                f"  [MusicAnalyzer] Using pre-separated non-voice stem: {nonvoice_path.name}"
+            )
             music_path, vocals_path = nonvoice_path, None
         else:
             print(f"  [MusicAnalyzer] Separating music from {video_path.name} ...")
@@ -73,12 +76,16 @@ class MusicAnalyzer:
         segments = self._analyze_features(music_path, segments)
 
         result = {"segments": [s.model_dump() for s in segments]}
-        cache_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        cache_file.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         print(f"  [MusicAnalyzer] Found {len(segments)} music segments")
         return segments
 
-    def _separate_music(self, audio_path: Path, output_dir: Path) -> tuple[Path, Path | None]:
+    def _separate_music(
+        self, audio_path: Path, output_dir: Path
+    ) -> tuple[Path, Path | None]:
         """Separate music track using Demucs Python API.
 
         Returns (music_no_vocals_path, vocals_path). vocals_path is None if separation failed.
@@ -100,7 +107,7 @@ class MusicAnalyzer:
             model.eval()
 
             audio_file = AudioFile(audio_path)
-            audio = audio_file.read(streams=0, samplerate=44100, channels=2)
+            audio = cast(Any, audio_file.read)(streams=0, samplerate=44100, channels=2)
 
             with torch.no_grad():
                 sources = apply_model(model, audio[None].to(device), device=device)
@@ -133,7 +140,9 @@ class MusicAnalyzer:
             hop_length = 512
             frame_length = 2048
 
-            rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+            rms = librosa.feature.rms(
+                y=y, frame_length=frame_length, hop_length=hop_length
+            )[0]
 
             threshold = np.mean(rms) * 1.5
 
@@ -152,23 +161,27 @@ class MusicAnalyzer:
                 elif not music and in_segment:
                     segment_duration = time - segment_start
                     if segment_duration > 3.0:
-                        segments.append(MusicSegment(
-                            start=segment_start,
-                            end=time,
-                            music_type="bgm",
-                            has_lyrics=False,
-                        ))
+                        segments.append(
+                            MusicSegment(
+                                start=segment_start,
+                                end=time,
+                                music_type="bgm",
+                                has_lyrics=False,
+                            )
+                        )
                     in_segment = False
 
             if in_segment:
                 segment_duration = duration - segment_start
                 if segment_duration > 3.0:
-                    segments.append(MusicSegment(
-                        start=segment_start,
-                        end=duration,
-                        music_type="bgm",
-                        has_lyrics=False,
-                    ))
+                    segments.append(
+                        MusicSegment(
+                            start=segment_start,
+                            end=duration,
+                            music_type="bgm",
+                            has_lyrics=False,
+                        )
+                    )
 
             # Classify insert_song vs bgm using vocal energy ratio
             if vocals_path and vocals_path.exists() and segments:
@@ -183,8 +196,8 @@ class MusicAnalyzer:
                         vocal_chunk = y_vocals[v_start:v_end]
                         music_chunk = y[m_start:m_end]
                         if len(vocal_chunk) > 0 and len(music_chunk) > 0:
-                            vocal_rms = float(np.sqrt(np.mean(vocal_chunk ** 2)))
-                            music_rms = float(np.sqrt(np.mean(music_chunk ** 2)))
+                            vocal_rms = float(np.sqrt(np.mean(vocal_chunk**2)))
+                            music_rms = float(np.sqrt(np.mean(music_chunk**2)))
                             if music_rms > 0 and vocal_rms / music_rms > 0.3:
                                 seg.music_type = "insert_song"
                                 seg.has_lyrics = True
@@ -197,7 +210,9 @@ class MusicAnalyzer:
             print(f"    [MusicAnalyzer] Error detecting segments: {e}")
             return []
 
-    def _analyze_features(self, music_path: Path, segments: list[MusicSegment]) -> list[MusicSegment]:
+    def _analyze_features(
+        self, music_path: Path, segments: list[MusicSegment]
+    ) -> list[MusicSegment]:
         """Analyze music features for each segment using Essentia."""
         try:
             if not music_path.exists():
@@ -221,7 +236,20 @@ class MusicAnalyzer:
                     chroma = librosa.feature.chroma(y=chunk, sr=sr_int)  # type: ignore
                     mean_chroma = np.mean(chroma, axis=1)
 
-                    notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+                    notes = [
+                        "C",
+                        "C#",
+                        "D",
+                        "D#",
+                        "E",
+                        "F",
+                        "F#",
+                        "G",
+                        "G#",
+                        "A",
+                        "A#",
+                        "B",
+                    ]
                     key_idx = int(np.argmax(mean_chroma))
                     segment.mood = f"key center: {notes[key_idx]}"
 

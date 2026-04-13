@@ -18,6 +18,7 @@ import os
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from typing import Any, cast
 
 import av
 import numpy as np
@@ -69,7 +70,9 @@ class KeyFrameExtractor:
             try:
                 cached = json.loads(cache_file.read_text(encoding="utf-8"))
                 if cached.get("video_hash") == shot_list.video_hash:
-                    print(f"  [KeyFrameExtractor] Using cached frames: {len(cached['keyframes'])} shots")
+                    print(
+                        f"  [KeyFrameExtractor] Using cached frames: {len(cached['keyframes'])} shots"
+                    )
                     return [KeyFrameSet(**kf) for kf in cached["keyframes"]]
             except Exception:
                 pass
@@ -86,7 +89,9 @@ class KeyFrameExtractor:
             "video_hash": shot_list.video_hash,
             "keyframes": [kf.model_dump() for kf in keyframe_sets],
         }
-        cache_file.write_text(json.dumps(result_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        cache_file.write_text(
+            json.dumps(result_data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         print(f"  [KeyFrameExtractor] Extracted frames for {len(keyframe_sets)} shots")
         return keyframe_sets
@@ -146,19 +151,27 @@ class KeyFrameExtractor:
             except (ValueError, IndexError):
                 frame_num = 0
 
-            frames.append(Frame(
-                frame_path=str(frame_file.relative_to(shot_frames_dir.parent.parent)),
-                timestamp=0.0,  # Will be loaded from embeddings metadata
-                frame_number=frame_num,
-            ))
+            frames.append(
+                Frame(
+                    frame_path=str(
+                        frame_file.relative_to(shot_frames_dir.parent.parent)
+                    ),
+                    timestamp=0.0,  # Will be loaded from embeddings metadata
+                    frame_number=frame_num,
+                )
+            )
 
         return frames
 
-    def _save_embeddings(self, shot_frames_dir: Path, frames: list[Frame], embeddings: np.ndarray) -> None:
+    def _save_embeddings(
+        self, shot_frames_dir: Path, frames: list[Frame], embeddings: np.ndarray
+    ) -> None:
         """Save CLIP embeddings for a shot."""
         embeddings_path = shot_frames_dir / "embeddings.npz"
-        np.savez_compressed(embeddings_path,
-                           **{f.frame_path.split("/")[-1]: emb for f, emb in zip(frames, embeddings)})
+        np.savez_compressed(
+            embeddings_path,
+            **{f.frame_path.split("/")[-1]: emb for f, emb in zip(frames, embeddings)},
+        )
 
     def _extract_all_frames(
         self, shot_list: ShotList, frames_dir: Path, force: bool = False
@@ -222,11 +235,13 @@ class KeyFrameExtractor:
 
         for shot_id in sorted(results, key=lambda sid: shot_order[sid]):
             frames, embeddings = results[shot_id]
-            keyframe_sets.append(KeyFrameSet(
-                shot_id=shot_id,
-                representative_frame=frames[0],
-                extracted_frames=frames,
-            ))
+            keyframe_sets.append(
+                KeyFrameSet(
+                    shot_id=shot_id,
+                    representative_frame=frames[0],
+                    extracted_frames=frames,
+                )
+            )
 
         return keyframe_sets
 
@@ -239,7 +254,9 @@ class KeyFrameExtractor:
         num_candidates = int(duration * self.config.sampling_fps)
         num_candidates = max(self.config.max_frames_per_shot, num_candidates)
 
-        timestamps = np.linspace(shot.start_time, shot.end_time, num_candidates + 2)[1:-1]
+        timestamps = np.linspace(shot.start_time, shot.end_time, num_candidates + 2)[
+            1:-1
+        ]
         if len(timestamps) < 1:
             timestamps = np.array([(shot.start_time + shot.end_time) / 2])
 
@@ -290,9 +307,7 @@ class KeyFrameExtractor:
         target = min(target, len(candidates))
 
         # Layer 4: Semantic selection using precomputed embeddings
-        selected_indices = self._semantic_select_from_embeddings(
-            embeddings, target
-        )
+        selected_indices = self._semantic_select_from_embeddings(embeddings, target)
 
         # Layer 5: Save selected frames
         ext = self.config.output_format
@@ -310,11 +325,13 @@ class KeyFrameExtractor:
                 img.save(output_path, "JPEG", quality=self.config.output_quality)
                 actual_path = output_path
 
-            frames.append(Frame(
-                frame_path=str(actual_path.relative_to(cache_dir)),
-                timestamp=ts,
-                frame_number=int(ts * fps),
-            ))
+            frames.append(
+                Frame(
+                    frame_path=str(actual_path.relative_to(cache_dir)),
+                    timestamp=ts,
+                    frame_number=int(ts * fps),
+                )
+            )
 
         selected_embeddings = embeddings[selected_indices]
 
@@ -353,7 +370,9 @@ class KeyFrameExtractor:
 
         vecs = []
         for img in images:
-            flat = np.array(img.resize((64, 64)).convert("L"), dtype=np.float32).flatten()
+            flat = np.array(
+                img.resize((64, 64)).convert("L"), dtype=np.float32
+            ).flatten()
             norm = np.linalg.norm(flat)
             vecs.append(flat / norm if norm > 0 else flat)
         vecs_array = np.array(vecs)
@@ -378,7 +397,9 @@ class KeyFrameExtractor:
         selected.sort()  # preserve temporal order
         return selected
 
-    def _compute_semantic_target(self, embeddings: np.ndarray, min_frames: int, max_frames: int) -> int:
+    def _compute_semantic_target(
+        self, embeddings: np.ndarray, min_frames: int, max_frames: int
+    ) -> int:
         """Compute target frame count based on semantic diversity.
 
         Uses pairwise cosine similarity to determine how diverse the frames are.
@@ -409,13 +430,15 @@ class KeyFrameExtractor:
         avg_sim = sim_matrix.sum() / (n * (n - 1))
 
         # Semantic diversity: 0.0 (identical) → 1.0 (completely different)
-        semantic_diversity = 1.0 - avg_sim ** 2.2
+        semantic_diversity = 1.0 - avg_sim**2.2
 
         # Map to target range
         target = min_frames + round((max_frames - min_frames) * semantic_diversity)
         return max(min_frames, min(max_frames, target))
 
-    def _semantic_select_from_embeddings(self, embeddings: np.ndarray, target: int) -> list[int]:
+    def _semantic_select_from_embeddings(
+        self, embeddings: np.ndarray, target: int
+    ) -> list[int]:
         """Select frames using precomputed CLIP embeddings.
 
         Always includes first and last frame as temporal anchors.
@@ -478,7 +501,9 @@ class KeyFrameExtractor:
 
         return result[:target]
 
-    def _semantic_select(self, images: list, target: int) -> tuple[list[int], np.ndarray]:
+    def _semantic_select(
+        self, images: list, target: int
+    ) -> tuple[list[int], np.ndarray]:
         """Select frames using CLIP semantic diversity (Layer 3).
 
         Always includes first and last frame as temporal anchors.
@@ -489,7 +514,9 @@ class KeyFrameExtractor:
         """
         if len(images) <= 2:
             # Return all frames with all embeddings
-            embeddings = self._compute_embeddings_batch(images) if images else np.array([])
+            embeddings = (
+                self._compute_embeddings_batch(images) if images else np.array([])
+            )
             return list(range(len(images))), embeddings
 
         # Always include first and last
@@ -531,7 +558,8 @@ class KeyFrameExtractor:
         saved_path = output_path
 
         try:
-            import pillow_avif  # noqa: F401,ty:ignore[unresolved-import] - registers AVIF plugin  # ty:ignore[unresolved-import]
+            import pillow_avif  # noqa: F401  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
+
             img.save(output_path, "AVIF", quality=self.config.output_quality)
             return saved_path
         except ImportError:
@@ -592,7 +620,9 @@ class KeyFrameExtractor:
             else:
                 device = torch.device("cpu")
 
-            model_name = self.config.model.replace("ViT-L/14", "openai/clip-vit-large-patch14")
+            model_name = self.config.model.replace(
+                "ViT-L/14", "openai/clip-vit-large-patch14"
+            )
             model_name = model_name.replace("ViT-B/32", "openai/clip-vit-base-patch32")
 
             try:
@@ -600,9 +630,11 @@ class KeyFrameExtractor:
                 processor = CLIPProcessor.from_pretrained(model_name)
             except Exception:
                 model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-                processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+                processor = CLIPProcessor.from_pretrained(
+                    "openai/clip-vit-base-patch32"
+                )
 
-            self._clip_model = model.to(device)  # type: ignore[union-attr]  # ty:ignore[invalid-argument-type]
+            self._clip_model = cast(Any, model).to(device)
             self._processor = processor
             self._device = device
 
@@ -612,7 +644,7 @@ class KeyFrameExtractor:
         if self._processor is None:
             raise RuntimeError("CLIP processor not initialized")
 
-        inputs = self._processor(images=images, return_tensors="pt")
+        inputs = cast(Any, self._processor)(images=images, return_tensors="pt")
         if self._device is not None:
             inputs = {k: v.to(self._device) for k, v in inputs.items()}
         return inputs["pixel_values"]

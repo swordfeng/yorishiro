@@ -56,7 +56,9 @@ def extract_chapters(
     elif suffix in TEXT_SOURCE_SUFFIXES:
         chapters = list(parse_text_source(source_path, source_config=source_config))
     else:
-        raise ValueError(f"Unsupported chapter source format: {source_path.suffix or '<no suffix>'}")
+        raise ValueError(
+            f"Unsupported chapter source format: {source_path.suffix or '<no suffix>'}"
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     digits = max(3, len(str(len(chapters))))
@@ -86,12 +88,16 @@ def parse_epub(source_path: Path, remove_furigana: bool = True) -> Iterator[Chap
             continue
 
         title = extract_title_from_html(html_content) or f"Chapter {chapter_count + 1}"
-        item_path = getattr(item, "href", None) or getattr(item, "file_name", str(item.get_name()))
+        item_path = getattr(item, "href", None) or getattr(
+            item, "file_name", str(item.get_name())
+        )
         yield Chapter(index=chapter_count, title=title, content=text, path=item_path)
         chapter_count += 1
 
 
-def parse_text_source(source_path: Path, source_config: dict[str, Any] | None = None) -> Iterator[Chapter]:
+def parse_text_source(
+    source_path: Path, source_config: dict[str, Any] | None = None
+) -> Iterator[Chapter]:
     """Parse a plain text or Markdown source into one or more chapters."""
     text = source_path.read_text(encoding="utf-8").replace("\ufeff", "")
     split_cfg = normalize_chapter_split_config(source_config)
@@ -110,7 +116,9 @@ def parse_text_source(source_path: Path, source_config: dict[str, Any] | None = 
         yield Chapter(index=index, title=title, content=chapter["content"], path=path)
 
 
-def normalize_chapter_split_config(source_config: dict[str, Any] | None) -> dict[str, Any]:
+def normalize_chapter_split_config(
+    source_config: dict[str, Any] | None,
+) -> dict[str, Any]:
     """Normalize per-source chapter split config."""
     cfg = dict((source_config or {}).get("chapter_split", {}))
     markdown_cfg = dict(cfg.get("markdown", {}))
@@ -120,7 +128,9 @@ def normalize_chapter_split_config(source_config: dict[str, Any] | None) -> dict
         "markdown_levels": [int(level) for level in markdown_cfg.get("levels", [])],
         "markdown_matcher": markdown_cfg.get("matcher"),
         "markdown_exclude_matcher": markdown_cfg.get("exclude_matcher"),
-        "markdown_title_levels": [int(level) for level in markdown_cfg.get("title_levels", [1])],
+        "markdown_title_levels": [
+            int(level) for level in markdown_cfg.get("title_levels", [1])
+        ],
         "text_matcher": text_cfg.get("matcher"),
     }
 
@@ -132,11 +142,13 @@ def strip_markdown_frontmatter(text: str) -> str:
 
     match = re.match(r"\A---\n.*?\n---\n?", text, flags=re.DOTALL)
     if match:
-        return text[match.end():]
+        return text[match.end() :]
     return text
 
 
-def split_markdown_source(text: str, split_config: dict[str, Any] | None = None) -> list[dict[str, str]]:
+def split_markdown_source(
+    text: str, split_config: dict[str, Any] | None = None
+) -> list[dict[str, str]]:
     """Split a Markdown source using heading structure and optional fallbacks."""
     cfg = split_config or normalize_chapter_split_config(None)
     mode = cfg["mode"]
@@ -156,13 +168,25 @@ def split_markdown_source(text: str, split_config: dict[str, Any] | None = None)
             return chapters
         if mode == "markdown_headers":
             normalized = normalize_text(text)
-            return [{"title": infer_title_from_text(normalized.split("\n")), "content": normalized, "path": ""}]
+            return [
+                {
+                    "title": infer_title_from_text(normalized.split("\n")),
+                    "content": normalized,
+                    "path": "",
+                }
+            ]
 
     if mode in {"auto", "text_markers"}:
         return split_text_chapters(text, matcher=cfg["text_matcher"])
 
     normalized = normalize_text(text)
-    return [{"title": infer_title_from_text(normalized.split("\n")), "content": normalized, "path": ""}]
+    return [
+        {
+            "title": infer_title_from_text(normalized.split("\n")),
+            "content": normalized,
+            "path": "",
+        }
+    ]
 
 
 def parse_markdown_headings(lines: list[str]) -> list[MarkdownHeading]:
@@ -171,7 +195,13 @@ def parse_markdown_headings(lines: list[str]) -> list[MarkdownHeading]:
     for idx, line in enumerate(lines):
         match = re.match(r"^(#{1,6})\s+(.*\S)\s*$", line.strip())
         if match:
-            headings.append(MarkdownHeading(level=len(match.group(1)), text=match.group(2).strip(), line_index=idx))
+            headings.append(
+                MarkdownHeading(
+                    level=len(match.group(1)),
+                    text=match.group(2).strip(),
+                    line_index=idx,
+                )
+            )
     return headings
 
 
@@ -216,8 +246,12 @@ def split_markdown_chapters(
     chapters: list[dict[str, str]] = []
     total_lines = len(lines)
     for index, heading in enumerate(chosen):
-        end_line = chosen[index + 1].line_index if index + 1 < len(chosen) else total_lines
-        title, content = build_text_chapter(lines, heading.line_index, end_line, heading.text)
+        end_line = (
+            chosen[index + 1].line_index if index + 1 < len(chosen) else total_lines
+        )
+        title, content = build_text_chapter(
+            lines, heading.line_index, end_line, heading.text
+        )
         if not content.strip():
             continue
         chapters.append(
@@ -231,7 +265,9 @@ def split_markdown_chapters(
     return chapters
 
 
-def choose_markdown_chapter_level(headings: list[MarkdownHeading], title_levels: set[int]) -> int:
+def choose_markdown_chapter_level(
+    headings: list[MarkdownHeading], title_levels: set[int]
+) -> int:
     """Choose the heading level most likely to represent chapter boundaries."""
     counts: dict[int, int] = {}
     for heading in headings:
@@ -243,7 +279,11 @@ def choose_markdown_chapter_level(headings: list[MarkdownHeading], title_levels:
 
     if len(headings) >= 2:
         first_level = headings[0].level
-        later_levels = [heading.level for heading in headings[1:] if heading.level not in title_levels or first_level == heading.level]
+        later_levels = [
+            heading.level
+            for heading in headings[1:]
+            if heading.level not in title_levels or first_level == heading.level
+        ]
         if later_levels:
             later_counts: dict[int, int] = {}
             for level in later_levels:
@@ -273,15 +313,17 @@ def split_text_chapters(text: str, matcher: str | None = None) -> list[dict[str,
             boundaries.append((idx, heading))
 
     if not boundaries:
-        return [{"title": infer_title_from_text(lines), "content": normalized, "path": ""}]
+        return [
+            {"title": infer_title_from_text(lines), "content": normalized, "path": ""}
+        ]
 
     chapters: list[dict[str, str]] = []
     if boundaries[0][0] > 0:
-        preamble = "\n".join(lines[:boundaries[0][0]]).strip()
+        preamble = "\n".join(lines[: boundaries[0][0]]).strip()
         if preamble:
             chapters.append(
                 {
-                    "title": infer_title_from_text(lines[:boundaries[0][0]]),
+                    "title": infer_title_from_text(lines[: boundaries[0][0]]),
                     "content": preamble,
                     "path": "line:1",
                 }
@@ -289,7 +331,11 @@ def split_text_chapters(text: str, matcher: str | None = None) -> list[dict[str,
 
     total_lines = len(lines)
     for boundary_index, (start_line, heading) in enumerate(boundaries):
-        end_line = boundaries[boundary_index + 1][0] if boundary_index + 1 < len(boundaries) else total_lines
+        end_line = (
+            boundaries[boundary_index + 1][0]
+            if boundary_index + 1 < len(boundaries)
+            else total_lines
+        )
         title, content = build_text_chapter(lines, start_line, end_line, heading)
         if not content.strip():
             continue
@@ -307,7 +353,9 @@ def split_text_chapters(text: str, matcher: str | None = None) -> list[dict[str,
     return [{"title": infer_title_from_text(lines), "content": normalized, "path": ""}]
 
 
-def detect_chapter_heading(line: str, line_index: int, matcher: str | None = None) -> str | None:
+def detect_chapter_heading(
+    line: str, line_index: int, matcher: str | None = None
+) -> str | None:
     """Return a normalized chapter title if the line looks like a chapter heading."""
     stripped = line.strip()
     if not stripped:
@@ -341,7 +389,9 @@ def looks_like_chapter_title(text: str, matcher: str | None = None) -> bool:
     return bool(CHAPTER_MARKER_RE.match(candidate))
 
 
-def build_text_chapter(lines: list[str], start_line: int, end_line: int, heading: str) -> tuple[str, str]:
+def build_text_chapter(
+    lines: list[str], start_line: int, end_line: int, heading: str
+) -> tuple[str, str]:
     """Build a single chapter body from a heading-delimited line range."""
     content_lines = lines[start_line:end_line]
     if content_lines:
@@ -364,7 +414,9 @@ def infer_title_from_text(lines: list[str]) -> str:
     return "Chapter 1"
 
 
-def save_chapter(chapter: Chapter, output_dir: Path, source_file: str, digits: int) -> Path:
+def save_chapter(
+    chapter: Chapter, output_dir: Path, source_file: str, digits: int
+) -> Path:
     """Write one chapter file with YAML frontmatter."""
     output_path = output_dir / f"ch{chapter.index:0{digits}d}.txt"
     frontmatter = {
@@ -386,7 +438,8 @@ def save_chapter(chapter: Chapter, output_dir: Path, source_file: str, digits: i
 
 def extract_text_from_html(html: str, remove_furigana: bool = True) -> str:
     """Extract plain text from HTML, optionally stripping ruby annotations."""
-    from bs4 import BeautifulSoup, NavigableString
+    from bs4 import BeautifulSoup
+    from bs4.element import NavigableString
 
     soup = BeautifulSoup(html, "html.parser")
 

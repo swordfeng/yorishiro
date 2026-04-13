@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 from yorishiro.novel.scene_segmentation import (
     SceneData,
@@ -54,7 +55,9 @@ class ParseChapterFileTests(unittest.TestCase):
     def test_parse_chapter_file_extracts_frontmatter_and_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "chapter.txt"
-            path.write_text("---\nindex: 7\ntitle: Reunion\n---\nBody text.\n", encoding="utf-8")
+            path.write_text(
+                "---\nindex: 7\ntitle: Reunion\n---\nBody text.\n", encoding="utf-8"
+            )
 
             metadata, content = parse_chapter_file(path)
 
@@ -62,7 +65,9 @@ class ParseChapterFileTests(unittest.TestCase):
             self.assertEqual(metadata["title"], "Reunion")
             self.assertEqual(content, "Body text.\n")
 
-    def test_parse_chapter_file_falls_back_to_plain_text_without_frontmatter(self) -> None:
+    def test_parse_chapter_file_falls_back_to_plain_text_without_frontmatter(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "chapter.txt"
             path.write_text("Plain body only.", encoding="utf-8")
@@ -140,7 +145,11 @@ class AppendSceneTests(unittest.TestCase):
         self.assertEqual(second.scene_index, 1)
 
     def test_append_scene_rejects_gaps(self) -> None:
-        scenes = [SceneData(scene_index=0, start_offset=0, end_offset=5, location="A", time="T")]
+        scenes = [
+            SceneData(
+                scene_index=0, start_offset=0, end_offset=5, location="A", time="T"
+            )
+        ]
 
         with self.assertRaisesRegex(ValueError, "Continuity gap"):
             append_scene(scenes, 6, 10, build_scene(end_text="dummy"))
@@ -188,14 +197,26 @@ class SegmentChapterTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        scenes = await segment_chapter(chapter_text, agent, SceneSegmentationConfig(initial_chunk_size=24, max_chunk_size=48))
+        scenes = await segment_chapter(
+            chapter_text,
+            cast(Any, agent),
+            SceneSegmentationConfig(initial_chunk_size=24, max_chunk_size=48),
+        )
 
         self.assertEqual(len(scenes), 2)
-        self.assertEqual(chapter_text[scenes[0].start_offset:scenes[0].end_offset], "Alpha scene ends here.")
-        self.assertEqual(chapter_text[scenes[1].start_offset:scenes[1].end_offset], "\n\nBeta scene closes the chapter.")
+        self.assertEqual(
+            chapter_text[scenes[0].start_offset : scenes[0].end_offset],
+            "Alpha scene ends here.",
+        )
+        self.assertEqual(
+            chapter_text[scenes[1].start_offset : scenes[1].end_offset],
+            "\n\nBeta scene closes the chapter.",
+        )
         verify_coverage(scenes, len(chapter_text))
         self.assertEqual(len(agent.prompts), 2)
-        self.assertIn("[Previously processed — last few scenes BEFORE cursor]", agent.prompts[1])
+        self.assertIn(
+            "[Previously processed — last few scenes BEFORE cursor]", agent.prompts[1]
+        )
         self.assertIn("Alpha scene ends here.", agent.prompts[1])
 
     async def test_segment_chapter_retries_after_empty_scene_batch(self) -> None:
@@ -211,14 +232,20 @@ class SegmentChapterTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        scenes = await segment_chapter(chapter_text, agent, SceneSegmentationConfig(initial_chunk_size=8, max_chunk_size=32))
+        scenes = await segment_chapter(
+            chapter_text,
+            cast(Any, agent),
+            SceneSegmentationConfig(initial_chunk_size=8, max_chunk_size=32),
+        )
 
         self.assertEqual(len(scenes), 1)
         self.assertEqual(scenes[0].start_offset, 0)
         self.assertEqual(scenes[0].end_offset, len(chapter_text))
         self.assertEqual(len(agent.prompts), 2)
 
-    async def test_segment_chapter_reports_actual_failed_end_text_on_retry(self) -> None:
+    async def test_segment_chapter_reports_actual_failed_end_text_on_retry(
+        self,
+    ) -> None:
         chapter_text = "First scene ends here. Second scene ends here."
         bad_first_end_text = "THIS TEXT IS NOT PRESENT"
         later_end_text = "Second scene ends here."
@@ -240,7 +267,11 @@ class SegmentChapterTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        await segment_chapter(chapter_text, agent, SceneSegmentationConfig(initial_chunk_size=16, max_chunk_size=64))
+        await segment_chapter(
+            chapter_text,
+            cast(Any, agent),
+            SceneSegmentationConfig(initial_chunk_size=16, max_chunk_size=64),
+        )
 
         self.assertIn(bad_first_end_text, agent.prompts[1])
 
@@ -251,7 +282,9 @@ class NovelScenesStepTests(unittest.TestCase):
             root = Path(tmp_dir)
             chapter_dir = root / "processed" / "novel-src" / "steps" / "chapters"
             chapter_dir.mkdir(parents=True)
-            (chapter_dir / "ch000.txt").write_text("---\nindex: 0\ntitle: One\n---\nAlpha", encoding="utf-8")
+            (chapter_dir / "ch000.txt").write_text(
+                "---\nindex: 0\ntitle: One\n---\nAlpha", encoding="utf-8"
+            )
             config_path = root / "project.yaml"
             config_path.write_text(
                 """project:
@@ -276,7 +309,9 @@ steps:
             )
 
             project = Project.load(root)
-            task = NovelScenesStep(project, "novel-src", registry=ModelRegistry(project)).tasks()[0]
+            task = NovelScenesStep(
+                project, "novel-src", registry=ModelRegistry(project)
+            ).tasks()[0]
 
             self.assertIsInstance(task, NovelScenesTask)
             assert isinstance(task, NovelScenesTask)

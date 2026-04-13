@@ -83,3 +83,6 @@ skip_covered = false
 directory = "htmlcov"
 
 [tool.uv.sources]
+
+[tool.basedpyright]
+typeCheckingMode = "standard"

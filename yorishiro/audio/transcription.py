@@ -32,7 +32,9 @@ from yorishiro.audio._speech_support import (
     get_funasr_model,
     get_qwen3_forced_aligner,
     get_transformers_pipeline,
+    get_whisper_forced_aligner,
     get_whisper_model,
+    normalize_language,
     qwen3_language,
     split_text_heuristically,
 )
@@ -1401,7 +1403,7 @@ class Transcriber:
     ) -> dict[str, GroupResult]:
         if not self.config.forced_aligner_enabled:
             return completed
-        if self.config.forced_aligner_backend != "qwen3":
+        if self.config.forced_aligner_backend not in ("qwen3", "whisper"):
             raise ValueError(
                 f"Unsupported forced aligner backend: {self.config.forced_aligner_backend}"
             )
@@ -1535,12 +1537,6 @@ class Transcriber:
             sum(stt_confidences) / len(stt_confidences) if stt_confidences else 0.0
         )
 
-        aligner = get_qwen3_forced_aligner(
-            self.config.forced_aligner_model,
-            device=self.config.forced_aligner_device or None,
-        )
-        align_lang = qwen3_language(language or result.detected_language)
-
         start_frame = int(result.start * file_sample_rate)
         end_frame = int(result.end * file_sample_rate)
         chunk_audio, _ = sf.read(
@@ -1553,47 +1549,22 @@ class Transcriber:
                 chunk_audio, orig_sr=file_sample_rate, target_sr=16000
             )
 
+        backend = self.config.forced_aligner_backend
         try:
-            with Qwen3AlignerConfidenceHook(aligner) as capture:
-                align_results = aligner.align(
-                    audio=(chunk_audio, 16000),
-                    text=align_text,
-                    language=align_lang,
+            if backend == "whisper":
+                aligned_tokens = self._align_with_whisper(
+                    chunk_audio, align_text, result, language
+                )
+            else:
+                aligned_tokens = self._align_with_qwen3(
+                    chunk_audio, align_text, result, language
                 )
         except Exception:
             print(
-                f"    [STT] Forced alignment failed for group {result.group_id}, using STT-only entries"
+                f"    [STT] Forced alignment ({backend}) failed for group"
+                f" {result.group_id}, using STT-only entries"
             )
             return result
-
-        if not align_results or not align_results[0]:
-            return result
-
-        confidence_per_item = capture.confidence_per_item
-        confidence_iter = iter(confidence_per_item)
-        has_capture = len(confidence_per_item) > 0
-
-        aligned_tokens: list[_AlignedToken] = []
-        for item in align_results[0]:
-            token_text = strip_punctuation_for_alignment(getattr(item, "text", ""))
-            if not token_text:
-                continue
-            if has_capture:
-                try:
-                    item_conf = next(confidence_iter)
-                except StopIteration:
-                    item_conf = getattr(item, "confidence", 0.0)
-            else:
-                item_conf = getattr(item, "confidence", 0.0)
-            aligned_tokens.append(
-                _AlignedToken(
-                    text=token_text,
-                    start=result.start + float(getattr(item, "start_time", 0.0)),
-                    end=result.start
-                    + float(getattr(item, "end_time", result.end - result.start)),
-                    confidence=item_conf,
-                )
-            )
 
         if not aligned_tokens:
             return result
@@ -1605,32 +1576,6 @@ class Transcriber:
         coverage = min(max(coverage, 0.0), 1.0)
         if coverage < self.config.forced_aligner_min_confidence:
             return result
-
-        align_debug: dict[str, Any] | None = None
-        if self.config.debug_dump_stt_diag:
-            align_debug = {
-                "align_text": align_text,
-                "display_text": display_text,
-                "aligned_tokens": [
-                    {
-                        "text": t.text,
-                        "start": t.start,
-                        "end": t.end,
-                        "confidence": t.confidence,
-                    }
-                    for t in aligned_tokens
-                ],
-                "coverage": coverage,
-                "raw_align_items": [
-                    {
-                        "text": getattr(item, "text", ""),
-                        "start_time": getattr(item, "start_time", None),
-                        "end_time": getattr(item, "end_time", None),
-                        "confidence": getattr(item, "confidence", None),
-                    }
-                    for item in (align_results[0] if align_results else [])
-                ],
-            }
 
         segments = split_with_aligned_tokens(
             display_text,
@@ -1683,8 +1628,102 @@ class Transcriber:
             raw_text=display_text,
             raw_alignment_text=align_text,
             alignment_applied=True,
-            align_debug=align_debug,
+            align_debug=None,
         )
+
+    def _align_with_qwen3(
+        self,
+        chunk_audio: Any,
+        align_text: str,
+        result: GroupResult,
+        language: str | None,
+    ) -> list[_AlignedToken]:
+        aligner = get_qwen3_forced_aligner(
+            self.config.forced_aligner_model,
+            device=self.config.forced_aligner_device or None,
+        )
+        align_lang = qwen3_language(language or result.detected_language)
+
+        with Qwen3AlignerConfidenceHook(aligner) as capture:
+            align_results = aligner.align(
+                audio=(chunk_audio, 16000),
+                text=align_text,
+                language=align_lang,
+            )
+
+        if not align_results or not align_results[0]:
+            return []
+
+        confidence_per_item = capture.confidence_per_item
+        confidence_iter = iter(confidence_per_item)
+        has_capture = len(confidence_per_item) > 0
+
+        aligned_tokens: list[_AlignedToken] = []
+        for item in align_results[0]:
+            token_text = strip_punctuation_for_alignment(getattr(item, "text", ""))
+            if not token_text:
+                continue
+            if has_capture:
+                try:
+                    item_conf = next(confidence_iter)
+                except StopIteration:
+                    item_conf = getattr(item, "confidence", 0.0)
+            else:
+                item_conf = getattr(item, "confidence", 0.0)
+            aligned_tokens.append(
+                _AlignedToken(
+                    text=token_text,
+                    start=result.start + float(getattr(item, "start_time", 0.0)),
+                    end=result.start
+                    + float(getattr(item, "end_time", result.end - result.start)),
+                    confidence=item_conf,
+                )
+            )
+
+        return aligned_tokens
+
+    def _align_with_whisper(
+        self,
+        chunk_audio: Any,
+        align_text: str,
+        result: GroupResult,
+        language: str | None,
+    ) -> list[_AlignedToken]:
+        import tempfile
+
+        aligner = get_whisper_forced_aligner()
+        norm_lang = normalize_language(language or result.detected_language) or "ja"
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = tmp.name
+        sf.write(tmp_path, chunk_audio, 16000)
+
+        try:
+            segments, _info = aligner.transcribe(
+                tmp_path,
+                language=norm_lang,
+                word_timestamps=True,
+                initial_prompt=align_text,
+            )
+        finally:
+            os.unlink(tmp_path)
+
+        aligned_tokens: list[_AlignedToken] = []
+        for seg in segments:
+            for word in seg.words:
+                token_text = strip_punctuation_for_alignment(word.word)
+                if not token_text:
+                    continue
+                aligned_tokens.append(
+                    _AlignedToken(
+                        text=token_text,
+                        start=result.start + word.start,
+                        end=result.start + word.end,
+                        confidence=word.probability,
+                    )
+                )
+
+        return aligned_tokens
 
     def _assemble_transcript(
         self,

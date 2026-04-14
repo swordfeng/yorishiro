@@ -414,6 +414,35 @@ def get_qwen3_forced_aligner(
     return cast(ForcedAlignerLike, aligner)
 
 
+_WHISPER_ALIGNERS: dict[tuple[str, str], Any] = {}
+
+
+def get_whisper_forced_aligner(
+    model_name: str = "large-v3",
+    *,
+    device: str | None = None,
+    compute_type: str = "int8",
+    instance_key: str = "default",
+) -> Any:
+    from faster_whisper import WhisperModel
+
+    if device is None:
+        device = get_device()
+    key = (f"{model_name}:{instance_key}", device)
+    cached = _WHISPER_ALIGNERS.get(key)
+    if cached is not None:
+        return cached
+
+    model = WhisperModel(
+        model_name,
+        device=device,
+        compute_type=compute_type,
+    )
+    print(f"    [STT] Loaded whisper forced aligner {model_name} on {device}")
+    _WHISPER_ALIGNERS[key] = model
+    return model
+
+
 @dataclass
 class _CapturedLogits:
     sequences_scores: torch.Tensor | None = None

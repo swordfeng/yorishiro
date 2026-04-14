@@ -2004,6 +2004,78 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
         self.assertFalse(aligned.alignment_applied)
         self.assertEqual(aligned.entries, result.entries)
 
+    def test_align_group_result_whisper_backend(self) -> None:
+        transcriber = Transcriber(
+            TranscriberConfig(
+                forced_aligner_enabled=True,
+                forced_aligner_backend="whisper",
+            )
+        )
+        result = GroupResult(
+            group_id="g_000000_000000",
+            span_start_idx=0,
+            span_end_idx=0,
+            start=2.0,
+            end=4.0,
+            entries=[
+                {"text": "Hello there", "start": 2.0, "end": 4.0, "confidence": 0.7},
+            ],
+            detected_language="en",
+            source_mtime=1.0,
+            raw_text="Hello there",
+            raw_alignment_text="Hello there",
+        )
+
+        class FakeWord:
+            def __init__(self, word, start, end, probability):
+                self.word = word
+                self.start = start
+                self.end = end
+                self.probability = probability
+
+        class FakeSegment:
+            def __init__(self, words):
+                self.words = words
+
+        class FakeInfo:
+            pass
+
+        class FakeWhisperModel:
+            def transcribe(self, audio_path, **kwargs):
+                return iter(
+                    [
+                        FakeSegment(
+                            [
+                                FakeWord("Hello", 0.0, 0.8, 0.9),
+                                FakeWord("there", 0.8, 1.6, 0.85),
+                            ]
+                        )
+                    ]
+                ), FakeInfo()
+
+        with (
+            patch(
+                "yorishiro.audio.transcription.get_whisper_forced_aligner",
+                return_value=FakeWhisperModel(),
+            ),
+            patch(
+                "yorishiro.audio.transcription.sf.read",
+                return_value=(np.zeros(32000, dtype=np.float32), 16000),
+            ),
+            patch("pathlib.Path.stat", return_value=SimpleNamespace(st_mtime=1.0)),
+        ):
+            aligned = transcriber._align_group_result(
+                result,
+                audio_path=Path("/tmp/test.wav"),
+                file_sample_rate=16000,
+                language="en",
+                resample_module=types.SimpleNamespace(
+                    resample=lambda audio, **_kw: audio
+                ),
+            )
+
+        self.assertTrue(aligned.alignment_applied)
+
     def test_run_transcription_aligns_when_resuming_from_checkpoints(self) -> None:
         transcriber = Transcriber(TranscriberConfig(forced_aligner_enabled=True))
         group = SpeechGroup(

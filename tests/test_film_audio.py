@@ -816,7 +816,7 @@ class TranscriberTests(unittest.TestCase):
         self.assertEqual((entries[0].start, entries[0].end), (0.0, 1.2))
 
     def test_segment_to_entries_filters_low_confidence(self) -> None:
-        transcriber = Transcriber(TranscriberConfig(stt_min_confidence=-0.5))
+        transcriber = Transcriber()
         segment = SimpleNamespace(
             text="hello",
             start=0.0,
@@ -1343,6 +1343,7 @@ class FunASRBackendTests(unittest.TestCase):
             TranscriberConfig(
                 stt_backend="funasr",
                 stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+                stt_min_confidence=0.3,
             )
         )
         groups = [
@@ -1529,15 +1530,17 @@ class FunASRBackendTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(len(results[0].entries), 1)
         self.assertEqual(results[0].entries[0]["text"], "Hi")
-        self.assertAlmostEqual(results[0].entries[0]["confidence"], -0.25)
-        self.assertAlmostEqual(results[0].entries[0]["stt_confidence"], -0.25)
+        self.assertAlmostEqual(results[0].entries[0]["confidence"], 0.7788, places=3)
+        self.assertAlmostEqual(
+            results[0].entries[0]["stt_confidence"], 0.7788, places=3
+        )
 
     def test_funasr_low_confidence_filters_output(self) -> None:
         transcriber = Transcriber(
             TranscriberConfig(
                 stt_backend="funasr",
                 stt_model="FunAudioLLM/Fun-ASR-MLT-Nano-2512",
-                stt_min_confidence=-0.001,
+                stt_min_confidence=0.0,
             )
         )
         groups = [

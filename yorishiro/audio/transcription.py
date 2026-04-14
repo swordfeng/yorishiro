@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -55,7 +56,7 @@ class TranscriberConfig:
     stt_checkpoint_shard_size: int = 500
     stt_group_max_duration_seconds: float = 30.0
     stt_group_max_gap_seconds: float = 0.6
-    stt_min_confidence: float = -0.5
+    stt_min_confidence: float = 0.6
     stt_max_chars_per_second: float = 28.0
     stt_min_segment_seconds: float = 0.3
     stt_extra_args: dict[str, Any] = field(default_factory=dict)
@@ -84,6 +85,10 @@ _SENTENCE_END_RE = re.compile(r"[。！？!?]$")
 _SOFT_PAUSE_SPLIT_SECONDS = 0.35
 _HARD_PAUSE_SPLIT_SECONDS = 0.8
 _MIN_SOFT_SPLIT_DURATION_SECONDS = 1.5
+
+
+def avg_logprob_to_probability(avg_logprob: float) -> float:
+    return min(max(0.0, math.exp(avg_logprob)), 1.0)
 
 
 def strip_punctuation_for_alignment(text: str) -> str:
@@ -1042,6 +1047,8 @@ class Transcriber:
         for key in ("confidence", "score", "avg_logprob"):
             value = self._as_float(result.get(key))
             if value is not None:
+                if key == "avg_logprob":
+                    return avg_logprob_to_probability(value)
                 return value
 
         sentence_info = result.get("sentence_info")
@@ -1053,14 +1060,17 @@ class Transcriber:
                 for key in ("confidence", "score", "avg_logprob"):
                     value = self._as_float(item.get(key))
                     if value is not None:
-                        sentence_scores.append(value)
+                        if key == "avg_logprob":
+                            sentence_scores.append(avg_logprob_to_probability(value))
+                        else:
+                            sentence_scores.append(value)
                         break
             if sentence_scores:
                 return sum(sentence_scores) / len(sentence_scores)
 
         llm_conf = compute_avg_logprob_from_captured_logits(captured)
         if llm_conf is not None:
-            return llm_conf
+            return avg_logprob_to_probability(llm_conf)
         return None
 
     def _extract_segment_avg_logprob(self, segment: Any) -> float | None:
@@ -1757,7 +1767,11 @@ class Transcriber:
             return []
 
         raw_confidence = getattr(segment, "avg_logprob", None)
-        confidence = raw_confidence if raw_confidence is not None else 0.0
+        confidence = (
+            avg_logprob_to_probability(raw_confidence)
+            if raw_confidence is not None
+            else 0.0
+        )
         abs_start = chunk_start + float(segment.start)
         abs_end = chunk_start + float(segment.end)
         clamped_start = max(abs_start, chunk_start)

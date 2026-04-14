@@ -51,6 +51,7 @@ film = [
     "fiddle>=0.3.0",
     "soxr>=1.0.0",
     "qwen-asr>=0.0.4",
+    "nltk>=3.9.4",
 ]
 
 [build-system]
@@ -66,9 +67,6 @@ dev = [
     "coverage[toml]>=7.10.0",
     "ruff>=0.15.7",
     "ty>=0.0.27",
-]
-film = [
-    "nltk>=3.9.4",
 ]
 
 [tool.coverage.run]

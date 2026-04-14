@@ -64,6 +64,7 @@ class TranscriberConfig:
     forced_aligner_device: str | None = None
     forced_aligner_min_confidence: float = 0.0
     forced_aligner_merge_gap_seconds: float = 0.12
+    debug_dump_stt_diag: bool = False
 
 
 @dataclass(frozen=True)
@@ -459,6 +460,7 @@ class Transcriber:
                 language=language,
                 resample_module=audio_resample,
                 checkpoint_dir=checkpoint_dir,
+                output_dir=output_dir,
             )
             return self._assemble_transcript(groups, completed, language)
 
@@ -512,6 +514,7 @@ class Transcriber:
             language=language,
             resample_module=audio_resample,
             checkpoint_dir=checkpoint_dir,
+            output_dir=output_dir,
         )
         return self._assemble_transcript(groups, completed, language)
 
@@ -835,21 +838,12 @@ class Transcriber:
             confidence: float = 0.0
             raw_confidence: float | None = None
             if res and len(res) > 0:
-                text = res[0].get("text", "").strip()
-                text_tn = res[0].get("text_tn", "").strip()
-                timestamps = res[0].get("timestamps")
-                if timestamps and isinstance(timestamps, list) and len(timestamps) > 0:
-                    scores = [
-                        ts.get("score", 0.0) if isinstance(ts, dict) else 0.0
-                        for ts in timestamps
-                    ]
-                    confidence = sum(scores) / len(scores) if scores else 0.0
-                    raw_confidence = confidence
-                else:
-                    llm_conf = compute_avg_logprob_from_captured_logits(captured)
-                    if llm_conf is not None:
-                        confidence = llm_conf
-                        raw_confidence = llm_conf
+                first_result = res[0]
+                text = first_result.get("text", "").strip()
+                text_tn = first_result.get("text_tn", "").strip()
+                raw_confidence = self._funasr_result_confidence(first_result, captured)
+                if raw_confidence is not None:
+                    confidence = raw_confidence
 
             chunk_language = language
             entries: list[dict[str, Any]] = []
@@ -997,6 +991,46 @@ class Transcriber:
             return float(value)
         except Exception:
             return None
+
+    def _funasr_result_confidence(
+        self,
+        result: dict[str, Any],
+        captured: Any,
+    ) -> float | None:
+        timestamps = result.get("timestamps")
+        if timestamps and isinstance(timestamps, list):
+            scores = [
+                self._as_float(ts.get("score"))
+                for ts in timestamps
+                if isinstance(ts, dict)
+            ]
+            scored = [s for s in scores if s is not None]
+            if scored:
+                return sum(scored) / len(scored)
+
+        for key in ("confidence", "score", "avg_logprob"):
+            value = self._as_float(result.get(key))
+            if value is not None:
+                return value
+
+        sentence_info = result.get("sentence_info")
+        if isinstance(sentence_info, list):
+            sentence_scores: list[float] = []
+            for item in sentence_info:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("confidence", "score", "avg_logprob"):
+                    value = self._as_float(item.get(key))
+                    if value is not None:
+                        sentence_scores.append(value)
+                        break
+            if sentence_scores:
+                return sum(sentence_scores) / len(sentence_scores)
+
+        llm_conf = compute_avg_logprob_from_captured_logits(captured)
+        if llm_conf is not None:
+            return llm_conf
+        return None
 
     def _extract_segment_avg_logprob(self, segment: Any) -> float | None:
         result = self._segment_value(segment, "result")
@@ -1334,6 +1368,7 @@ class Transcriber:
         language: str | None,
         resample_module: Any,
         checkpoint_dir: Path | None,
+        output_dir: Path | None = None,
     ) -> dict[str, GroupResult]:
         if not self.config.forced_aligner_enabled:
             return completed
@@ -1341,6 +1376,10 @@ class Transcriber:
             raise ValueError(
                 f"Unsupported forced aligner backend: {self.config.forced_aligner_backend}"
             )
+
+        pre_align_snapshot: dict[str, list[dict[str, Any]]] | None = None
+        if self.config.debug_dump_stt_diag:
+            pre_align_snapshot = {gid: list(r.entries) for gid, r in completed.items()}
 
         print("    [STT] Running forced alignment pass ...")
         from tqdm import tqdm
@@ -1383,7 +1422,48 @@ class Transcriber:
         completed.update(aligned_results)
         if checkpoint_dir is not None and changed_results:
             self._save_group_results_batch(checkpoint_dir, changed_results)
+
+        if (
+            self.config.debug_dump_stt_diag
+            and output_dir is not None
+            and pre_align_snapshot is not None
+        ):
+            self._write_stt_diag(output_dir, groups, completed, pre_align_snapshot)
+
         return completed
+
+    def _write_stt_diag(
+        self,
+        output_dir: Path,
+        groups: list[SpeechGroup],
+        completed: dict[str, GroupResult],
+        pre_align_snapshot: dict[str, list[dict[str, Any]]],
+    ) -> None:
+        diag_groups: list[dict[str, Any]] = []
+        for group in groups:
+            result = completed.get(group.group_id)
+            if result is None:
+                continue
+            pre_entries = pre_align_snapshot.get(group.group_id, [])
+            post_entries = list(result.entries)
+            diag_groups.append(
+                {
+                    "group_id": group.group_id,
+                    "start": group.start,
+                    "end": group.end,
+                    "alignment_applied": result.alignment_applied,
+                    "raw_text": result.raw_text,
+                    "raw_alignment_text": result.raw_alignment_text,
+                    "detected_language": result.detected_language,
+                    "pre_align_entries": pre_entries,
+                    "post_align_entries": post_entries,
+                }
+            )
+        diag_path = output_dir / "stt_diag.json"
+        self._atomic_write_text(
+            diag_path, json.dumps(diag_groups, indent=2, ensure_ascii=False)
+        )
+        print(f"    [STT] Wrote diagnostic: {diag_path}")
 
     def _align_group_result(
         self,
@@ -1404,10 +1484,14 @@ class Transcriber:
         stt_confidences: list[float] = []
         for entry_dict in result.entries:
             text = entry_dict.get("text", "")
-            conf = entry_dict.get("confidence", 0.0)
+            conf = entry_dict.get("stt_confidence")
+            if conf is None:
+                conf = entry_dict.get("confidence")
             if text:
                 stt_text_parts.append(text)
-                stt_confidences.append(conf)
+                conf_value = self._as_float(conf)
+                if conf_value is not None:
+                    stt_confidences.append(conf_value)
 
         display_text = result.raw_text.strip() or "".join(stt_text_parts).strip()
         align_text = (

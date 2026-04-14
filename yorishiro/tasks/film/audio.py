@@ -81,9 +81,9 @@ class FilmAudioDiarizeTask(Task):
     def output_paths(self) -> list[Path]:
         return [self._output_dir / "diarization.json"]
 
-    def run(self, force: bool = False) -> None:
+    def run(self, force: bool = False) -> bool:
         self._force = force
-        super().run(force=force)
+        return super().run(force=force)
 
     def _run(self) -> None:
         print("[film.audio.diarize] Running speaker diarization on voice stem ...")
@@ -113,9 +113,9 @@ class FilmAudioSTTTask(Task):
     def output_paths(self) -> list[Path]:
         return [self._output_dir / "stt.json"]
 
-    def run(self, force: bool = False) -> None:
+    def run(self, force: bool = False) -> bool:
         self._force = force
-        super().run(force=force)
+        return super().run(force=force)
 
     def _run(self) -> None:
         print("[film.audio.stt] Running speech-to-text ...")
@@ -150,9 +150,9 @@ class FilmAudioSpeakersTask(Task):
             self._output_dir / "speaker_embedding_cache.npz",
         ]
 
-    def run(self, force: bool = False) -> None:
+    def run(self, force: bool = False) -> bool:
         self._force = force
-        super().run(force=force)
+        return super().run(force=force)
 
     def _run(self) -> None:
         print("[film.audio.speakers] Running speaker attribution ...")

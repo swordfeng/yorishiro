@@ -418,21 +418,59 @@ def get_qwen3_forced_aligner(
 class _CapturedLogits:
     sequences_scores: torch.Tensor | None = None
     sequences: torch.Tensor | None = None
+    scores: tuple[torch.Tensor, ...] | None = None
 
 
 def compute_avg_logprob_from_captured_logits(captured: _CapturedLogits) -> float | None:
-    if captured.sequences_scores is None or captured.sequences is None:
-        return None
-    scores = captured.sequences_scores
-    seqs = captured.sequences
-    if not isinstance(scores, torch.Tensor) or scores.numel() == 0:
-        return None
-    if not isinstance(seqs, torch.Tensor) or seqs.numel() == 0:
-        return None
-    num_generated = seqs.shape[1]
-    if num_generated == 0:
-        return None
-    return float(scores[0].item()) / num_generated
+    if captured.sequences_scores is not None and captured.sequences is not None:
+        scores = captured.sequences_scores
+        seqs = captured.sequences
+        if not isinstance(scores, torch.Tensor) or scores.numel() == 0:
+            pass
+        elif not isinstance(seqs, torch.Tensor) or seqs.numel() == 0:
+            pass
+        else:
+            num_generated = seqs.shape[1]
+            if num_generated > 0:
+                return float(scores[0].item()) / num_generated
+
+    if captured.scores is not None and captured.sequences is not None:
+        seqs = captured.sequences
+        if isinstance(seqs, torch.Tensor) and seqs.ndim > 1:
+            sequence = seqs[0]
+        elif isinstance(seqs, torch.Tensor):
+            sequence = seqs
+        else:
+            return None
+        if not isinstance(captured.scores, (list, tuple)) or len(captured.scores) == 0:
+            return None
+        gen_steps = len(captured.scores)
+        if isinstance(sequence, torch.Tensor):
+            seq_len = int(sequence.shape[0])
+        else:
+            return None
+        if gen_steps <= 0 or seq_len <= 0:
+            return None
+        score_offset = seq_len - gen_steps
+        if score_offset < 0:
+            return None
+        logprob_values: list[float] = []
+        for score_idx in range(gen_steps):
+            token_pos = score_offset + score_idx
+            if token_pos < 0 or token_pos >= seq_len:
+                continue
+            logits = captured.scores[score_idx]
+            if not isinstance(logits, torch.Tensor):
+                continue
+            step_logits = logits[0] if logits.ndim > 1 else logits
+            token_id = int(sequence[token_pos].item())
+            token_logprob = torch.log_softmax(step_logits.float(), dim=-1)[token_id]
+            logprob_values.append(float(token_logprob.item()))
+        if not logprob_values:
+            return None
+        return sum(logprob_values) / len(logprob_values)
+
+    return None
 
 
 class FunASRConfidenceHook:
@@ -465,6 +503,7 @@ class FunASRConfidenceHook:
 
             self._captured.sequences_scores = getattr(result, "sequences_scores", None)
             self._captured.sequences = getattr(result, "sequences", None)
+            self._captured.scores = getattr(result, "scores", None)
 
             return result.sequences if hasattr(result, "sequences") else result
 

@@ -8,7 +8,7 @@ import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -1108,6 +1108,73 @@ class ConfidenceExtractionTests(unittest.TestCase):
         result = compute_avg_logprob_from_captured_logits(captured)
         self.assertIsNone(result)
 
+    def test_compute_avg_logprob_from_scores_when_no_sequences_scores(self) -> None:
+        from yorishiro.audio._speech_support import _CapturedLogits
+
+        token_0_logits = torch.tensor([[0.0, 1.0, 0.0, 0.0]])
+        token_2_logits = torch.tensor([[0.0, 0.0, 2.0, 0.0]])
+        captured = _CapturedLogits(
+            sequences_scores=None,
+            sequences=torch.tensor([[0, 2]], dtype=torch.long),
+            scores=(token_0_logits, token_2_logits),
+        )
+        result = compute_avg_logprob_from_captured_logits(captured)
+        self.assertIsNotNone(result)
+        assert result is not None
+        expected_0 = float(torch.log_softmax(token_0_logits.float(), dim=-1)[0, 0])
+        expected_2 = float(torch.log_softmax(token_2_logits.float(), dim=-1)[0, 2])
+        self.assertAlmostEqual(result, (expected_0 + expected_2) / 2, places=5)
+
+    def test_compute_avg_logprob_prefers_sequences_scores_over_scores(self) -> None:
+        from yorishiro.audio._speech_support import _CapturedLogits
+
+        captured = _CapturedLogits(
+            sequences_scores=torch.tensor([-2.0]),
+            sequences=torch.tensor([[1, 2, 3]], dtype=torch.long),
+            scores=(torch.tensor([[0.0]]),),
+        )
+        result = compute_avg_logprob_from_captured_logits(captured)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertAlmostEqual(result, -2.0 / 3)
+
+    def test_funasr_confidence_hook_captures_scores_from_greedy_generate(self) -> None:
+        call_log: list[Any] = []
+
+        class FakeLLM:
+            def generate(self, *args: Any, **kwargs: Any) -> Any:
+                seq = torch.tensor([[1, 2, 3]], dtype=torch.long)
+                logits = torch.tensor([[0.1, 0.2, 0.3, 0.4]])
+                call_log.append(dict(kwargs))
+                return SimpleNamespace(
+                    sequences=seq,
+                    sequences_scores=None,
+                    scores=(logits, logits, logits),
+                )
+
+        class FakeInner:
+            llm = FakeLLM()
+
+        class FakeModel:
+            model = FakeInner()
+
+        model = FakeModel()
+        captured = None
+        with FunASRConfidenceHook(model) as cap:
+            captured = cap
+            _ = model.model.llm.generate()
+
+        assert captured is not None
+        self.assertIsNone(captured.sequences_scores)
+        self.assertIsNotNone(captured.sequences)
+        self.assertIsNotNone(captured.scores)
+        assert captured.scores is not None
+        self.assertEqual(len(captured.scores), 3)
+        self.assertTrue(call_log[-1].get("output_scores", False))
+        self.assertTrue(call_log[-1].get("return_dict_in_generate", False))
+        result = compute_avg_logprob_from_captured_logits(captured)
+        self.assertIsNotNone(result)
+
     def test_funasr_confidence_hook_fallback_when_no_llm(self) -> None:
         class FakeModel:
             pass
@@ -1232,7 +1299,9 @@ class FunASRBackendTests(unittest.TestCase):
         self.assertEqual(results[0].raw_alignment_text, "これはテストです")
         self.assertEqual(fake_model.calls, 1)
 
-    def test_funasr_worker_groups_without_timestamps_uses_zero_confidence(self) -> None:
+    def test_funasr_worker_groups_without_timestamps_uses_result_confidence(
+        self,
+    ) -> None:
         transcriber = Transcriber(
             TranscriberConfig(
                 stt_backend="funasr",
@@ -1256,6 +1325,7 @@ class FunASRBackendTests(unittest.TestCase):
                         "key": "utt_0",
                         "text": "Hello world",
                         "text_tn": "Hello world",
+                        "confidence": 0.42,
                     }
                 ]
 
@@ -1283,7 +1353,8 @@ class FunASRBackendTests(unittest.TestCase):
             )
 
         self.assertEqual(len(results), 1)
-        self.assertAlmostEqual(results[0].entries[0]["confidence"], 0.0)
+        self.assertAlmostEqual(results[0].entries[0]["confidence"], 0.42)
+        self.assertAlmostEqual(results[0].entries[0]["stt_confidence"], 0.42)
 
     def test_funasr_worker_groups_empty_text_produces_no_entries(self) -> None:
         transcriber = Transcriber(
@@ -1398,6 +1469,10 @@ class FunASRBackendTests(unittest.TestCase):
                 "yorishiro.audio.transcription.get_funasr_model",
                 return_value=fake_model,
             ),
+            patch(
+                "yorishiro.audio.transcription.compute_avg_logprob_from_captured_logits",
+                return_value=-0.25,
+            ),
         ):
             mock_read.return_value = (np.zeros(32000, dtype=np.float32), 16000)
             results = transcriber._run_worker_groups_funasr(
@@ -1417,7 +1492,8 @@ class FunASRBackendTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(len(results[0].entries), 1)
         self.assertEqual(results[0].entries[0]["text"], "Hi")
-        self.assertAlmostEqual(results[0].entries[0]["confidence"], 0.0)
+        self.assertAlmostEqual(results[0].entries[0]["confidence"], -0.25)
+        self.assertAlmostEqual(results[0].entries[0]["stt_confidence"], -0.25)
 
     def test_funasr_low_confidence_filters_output(self) -> None:
         transcriber = Transcriber(

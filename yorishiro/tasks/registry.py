@@ -369,7 +369,9 @@ class ModelRegistry:
         if cfg.get("extra_args") is not None:
             kwargs["stt_extra_args"] = dict(cfg["extra_args"])
         if cfg.get("forced_aligner_enabled") is not None:
-            kwargs["forced_aligner_enabled"] = _parse_bool(cfg["forced_aligner_enabled"])
+            kwargs["forced_aligner_enabled"] = _parse_bool(
+                cfg["forced_aligner_enabled"]
+            )
         if cfg.get("forced_aligner_backend") is not None:
             kwargs["forced_aligner_backend"] = cfg["forced_aligner_backend"]
         if cfg.get("forced_aligner_model") is not None:
@@ -377,9 +379,15 @@ class ModelRegistry:
         if cfg.get("forced_aligner_device") is not None:
             kwargs["forced_aligner_device"] = cfg["forced_aligner_device"]
         if cfg.get("forced_aligner_min_confidence") is not None:
-            kwargs["forced_aligner_min_confidence"] = float(cfg["forced_aligner_min_confidence"])
+            kwargs["forced_aligner_min_confidence"] = float(
+                cfg["forced_aligner_min_confidence"]
+            )
         if cfg.get("forced_aligner_merge_gap_seconds") is not None:
-            kwargs["forced_aligner_merge_gap_seconds"] = float(cfg["forced_aligner_merge_gap_seconds"])
+            kwargs["forced_aligner_merge_gap_seconds"] = float(
+                cfg["forced_aligner_merge_gap_seconds"]
+            )
+        if cfg.get("debug_dump_stt_diag") is not None:
+            kwargs["debug_dump_stt_diag"] = _parse_bool(cfg["debug_dump_stt_diag"])
 
         return Transcriber(TranscriberConfig(**kwargs))
 

@@ -652,19 +652,57 @@ class TranscriberTests(unittest.TestCase):
         self.assertGreater(entries[1].start, entries[0].start)
         self.assertEqual(entries[-1].end, 2.0)
 
-    def test_split_with_aligned_tokens_splits_on_strong_pause(self) -> None:
+    def test_split_with_aligned_tokens_splits_on_hard_pause(self) -> None:
         segments = split_with_aligned_tokens(
             "Hello there",
             [
-                _AlignedToken(text="Hello", start=0.0, end=0.2, confidence=0.9),
-                _AlignedToken(text="there", start=0.9, end=1.2, confidence=0.9),
+                _AlignedToken(text="Hello", start=0.0, end=1.6, confidence=0.9),
+                _AlignedToken(text="there", start=2.5, end=3.8, confidence=0.9),
             ],
             0.0,
-            1.2,
+            3.8,
             "en",
         )
 
-        self.assertEqual(segments, [("Hello", 0.0, 0.2), ("there", 0.9, 1.2)])
+        self.assertEqual(segments, [("Hello", 0.0, 1.6), ("there", 2.5, 3.8)])
+
+    def test_split_with_aligned_tokens_soft_pause_merges_short_duration(self) -> None:
+        segments = split_with_aligned_tokens(
+            "色派のエイムすっげぇ。",
+            [
+                _AlignedToken(text="色派", start=79.464, end=79.464, confidence=0.9),
+                _AlignedToken(text="の", start=79.784, end=79.944, confidence=0.9),
+                _AlignedToken(text="エイム", start=79.944, end=80.264, confidence=0.9),
+                _AlignedToken(
+                    text="すっげぇ", start=80.824, end=80.904, confidence=0.9
+                ),
+            ],
+            79.144,
+            84.696,
+            "ja",
+        )
+
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0][0], "色派のエイムすっげぇ。")
+
+    def test_split_with_aligned_tokens_soft_pause_splits_when_both_sides_long(
+        self,
+    ) -> None:
+        segments = split_with_aligned_tokens(
+            "Hello there friend",
+            [
+                _AlignedToken(text="Hello", start=0.0, end=2.0, confidence=0.9),
+                _AlignedToken(text="there", start=2.0, end=4.0, confidence=0.9),
+                _AlignedToken(text="friend", start=4.4, end=6.0, confidence=0.9),
+            ],
+            0.0,
+            6.0,
+            "en",
+        )
+
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0][0], "Hello there")
+        self.assertEqual(segments[1][0], "friend")
 
     def test_split_with_aligned_tokens_keeps_short_soft_pause_together(self) -> None:
         segments = split_with_aligned_tokens(
@@ -774,9 +812,8 @@ class TranscriberTests(unittest.TestCase):
 
         entries = transcriber._segment_to_entries(segment, 0.0, 1.2, "en")
 
-        self.assertEqual([entry.text for entry in entries], ["Hello", "there"])
-        self.assertEqual((entries[0].start, entries[0].end), (0.0, 0.2))
-        self.assertEqual((entries[1].start, entries[1].end), (0.9, 1.2))
+        self.assertEqual([entry.text for entry in entries], ["Hello there"])
+        self.assertEqual((entries[0].start, entries[0].end), (0.0, 1.2))
 
     def test_segment_to_entries_filters_low_confidence(self) -> None:
         transcriber = Transcriber(TranscriberConfig(stt_min_confidence=-0.5))
@@ -1901,13 +1938,9 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
             )
 
         self.assertTrue(aligned.alignment_applied)
-        self.assertEqual(
-            [entry["text"] for entry in aligned.entries], ["Hello", "there"]
-        )
+        self.assertEqual([entry["text"] for entry in aligned.entries], ["Hello there"])
         self.assertAlmostEqual(aligned.entries[0]["start"], 2.0)
-        self.assertAlmostEqual(aligned.entries[0]["end"], 2.2)
-        self.assertAlmostEqual(aligned.entries[1]["start"], 2.95)
-        self.assertAlmostEqual(aligned.entries[1]["end"], 3.2)
+        self.assertAlmostEqual(aligned.entries[0]["end"], 3.2)
 
     def test_align_group_result_rejects_zero_duration_aligned_entries(self) -> None:
         transcriber = Transcriber(

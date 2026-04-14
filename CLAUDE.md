@@ -170,6 +170,26 @@ JavaScript `String.length` counts UTF-16 code units. Python `len()` counts Unico
 
 **Always use Python codepoints** for offset tracking in this project. Document this in all prompts.
 
+### Empirical Confirmation Over Code Reasoning
+
+**NEVER speculate about root causes when a diagnostic, test, or log can confirm the hypothesis.**
+
+When investigating a bug or unexpected behavior:
+1. Form a hypothesis (1-2 sentences max)
+2. Add a diagnostic or test to confirm it
+3. ONLY inspect more source code if the diagnostic is inconclusive
+
+**Hard rules**:
+- If you can add a print/log/diagnostic to confirm a theory, do that instead of reading more source files
+- If the user says "add diag" or "test it", stop analyzing and add the diagnostic immediately
+- Never propose a code fix for a bug you haven't empirically confirmed
+- If you've read more than 3 files trying to understand a bug, stop and add a diagnostic instead
+
+**Examples**:
+- ❌ Reading 10 source files to guess why confidence is 0.0, instead of running a 3-line test to check what the model returns
+- ❌ Theorizing about dropped words for 20 minutes, instead of enabling `stt_diag.json` and checking
+- ✅ Hypothesis: "the hook doesn't capture scores for greedy decode" → add a test → confirm → fix
+
 ### Scene Segmentation Boundaries
 
 Cuts MUST be at natural boundaries:

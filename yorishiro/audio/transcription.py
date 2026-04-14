@@ -80,8 +80,8 @@ _PUNCTUATION_RE = re.compile(
 )
 _SENTENCE_END_RE = re.compile(r"[。！？!?]$")
 _SOFT_PAUSE_SPLIT_SECONDS = 0.35
-_HARD_PAUSE_SPLIT_SECONDS = 0.6
-_MIN_SOFT_SPLIT_CHARS = 6
+_HARD_PAUSE_SPLIT_SECONDS = 0.8
+_MIN_SOFT_SPLIT_DURATION_SECONDS = 1.5
 
 
 def strip_punctuation_for_alignment(text: str) -> str:
@@ -228,6 +228,28 @@ def split_at_punctuation_aligned(
     return merged_segments
 
 
+def _duration_for_range(
+    token_ranges: list[tuple[int, int, _AlignedToken]],
+    start_di: int,
+    end_di: int,
+    group_start: float,
+    group_end: float,
+) -> float:
+    """Compute audio duration covered by tokens within a display-text range."""
+    range_start: float | None = None
+    range_end: float | None = None
+    for tok_start_di, tok_end_di, tok in token_ranges:
+        if tok_end_di < start_di or tok_start_di >= end_di:
+            continue
+        if range_start is None or tok.start < range_start:
+            range_start = tok.start
+        if range_end is None or tok.end > range_end:
+            range_end = tok.end
+    if range_start is not None and range_end is not None:
+        return max(0.0, range_end - range_start)
+    return 0.0
+
+
 def split_with_aligned_tokens(
     display_text: str,
     aligned_tokens: list[_AlignedToken],
@@ -261,9 +283,7 @@ def split_with_aligned_tokens(
         cursor = piece_end
         if piece_end <= 0 or piece_end >= len(display_text):
             continue
-        boundary_flags[piece_end] = boundary_flags.get(piece_end, False) or bool(
-            _SENTENCE_END_RE.match(display_text[piece_end - 1])
-        )
+        boundary_flags[piece_end] = True
 
     for (_, _prev_end_di, prev_tok), (next_start_di, _, next_tok) in zip(
         token_ranges, token_ranges[1:]
@@ -284,9 +304,17 @@ def split_with_aligned_tokens(
         if boundary_flags[boundary]:
             boundaries.append(boundary)
             continue
-        left_len = len(compact_alignment_text(display_text[boundaries[-1] : boundary]))
-        right_len = len(compact_alignment_text(display_text[boundary:]))
-        if left_len >= _MIN_SOFT_SPLIT_CHARS and right_len >= _MIN_SOFT_SPLIT_CHARS:
+        prev_boundary = boundaries[-1]
+        left_dur = _duration_for_range(
+            token_ranges, prev_boundary, boundary, group_start, group_end
+        )
+        right_dur = _duration_for_range(
+            token_ranges, boundary, len(display_text), group_start, group_end
+        )
+        if (
+            left_dur >= _MIN_SOFT_SPLIT_DURATION_SECONDS
+            and right_dur >= _MIN_SOFT_SPLIT_DURATION_SECONDS
+        ):
             boundaries.append(boundary)
     if boundaries[-1] < len(display_text):
         boundaries.append(len(display_text))
@@ -352,6 +380,7 @@ class GroupResult:
     raw_text: str = ""
     raw_alignment_text: str = ""
     alignment_applied: bool = False
+    align_debug: dict[str, Any] | None = None
 
 
 class Transcriber:
@@ -1457,6 +1486,7 @@ class Transcriber:
                     "detected_language": result.detected_language,
                     "pre_align_entries": pre_entries,
                     "post_align_entries": post_entries,
+                    "align_debug": result.align_debug,
                 }
             )
         diag_path = output_dir / "stt_diag.json"
@@ -1576,6 +1606,32 @@ class Transcriber:
         if coverage < self.config.forced_aligner_min_confidence:
             return result
 
+        align_debug: dict[str, Any] | None = None
+        if self.config.debug_dump_stt_diag:
+            align_debug = {
+                "align_text": align_text,
+                "display_text": display_text,
+                "aligned_tokens": [
+                    {
+                        "text": t.text,
+                        "start": t.start,
+                        "end": t.end,
+                        "confidence": t.confidence,
+                    }
+                    for t in aligned_tokens
+                ],
+                "coverage": coverage,
+                "raw_align_items": [
+                    {
+                        "text": getattr(item, "text", ""),
+                        "start_time": getattr(item, "start_time", None),
+                        "end_time": getattr(item, "end_time", None),
+                        "confidence": getattr(item, "confidence", None),
+                    }
+                    for item in (align_results[0] if align_results else [])
+                ],
+            }
+
         segments = split_with_aligned_tokens(
             display_text,
             aligned_tokens,
@@ -1627,6 +1683,7 @@ class Transcriber:
             raw_text=display_text,
             raw_alignment_text=align_text,
             alignment_applied=True,
+            align_debug=align_debug,
         )
 
     def _assemble_transcript(

@@ -235,55 +235,24 @@ class AudioSeparator:
     def _stitch_chunk(
         pending_tail: np.ndarray, current: np.ndarray, overlap_samples: int
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Stitch one chunk with overlap crossfade.
+        """Stitch one streamed chunk without rewriting time.
 
         Returns (write_block, next_pending_tail), both shaped (2, N).
         """
+        # Outer separator chunks are adjacent slices of the source audio, not
+        # overlapping windows. Crossfading them mixes different timestamps and
+        # drops duration at each boundary, so streamed chunks must be appended
+        # exactly as produced.
         if current.shape[1] == 0:
             return np.zeros((2, 0), dtype=np.float32), pending_tail
 
-        if overlap_samples <= 0:
-            if pending_tail.shape[1] == 0:
-                return current, np.zeros((2, 0), dtype=np.float32)
-            return (
-                np.concatenate([pending_tail, current], axis=1),
-                np.zeros((2, 0), dtype=np.float32),
-            )
-
         if pending_tail.shape[1] == 0:
-            if current.shape[1] <= overlap_samples:
-                return np.zeros((2, 0), dtype=np.float32), current
-            return (
-                current[:, :-overlap_samples],
-                current[:, -overlap_samples:],
-            )
+            return current, np.zeros((2, 0), dtype=np.float32)
 
-        overlap = min(pending_tail.shape[1], current.shape[1], overlap_samples)
-        fade = np.linspace(0.0, 1.0, overlap, dtype=np.float32)[None, :]
-        blended = (
-            pending_tail[:, -overlap:] * (1.0 - fade) + current[:, :overlap] * fade
+        return (
+            np.concatenate([pending_tail, current], axis=1),
+            np.zeros((2, 0), dtype=np.float32),
         )
-
-        prefix = (
-            pending_tail[:, : pending_tail.shape[1] - overlap]
-            if pending_tail.shape[1] > overlap
-            else np.zeros((2, 0), dtype=np.float32)
-        )
-
-        current_rest = current[:, overlap:]
-        if current_rest.shape[1] > overlap_samples:
-            body = current_rest[:, :-overlap_samples]
-            next_tail = current_rest[:, -overlap_samples:]
-        else:
-            body = np.zeros((2, 0), dtype=np.float32)
-            next_tail = current_rest
-
-        write_parts = [arr for arr in (prefix, blended, body) if arr.shape[1] > 0]
-        if write_parts:
-            write_block = np.concatenate(write_parts, axis=1)
-        else:
-            write_block = np.zeros((2, 0), dtype=np.float32)
-        return write_block, next_tail
 
     def _run_demucs(self, audio):  # type: ignore[return]
         """Run Demucs on a (2, N) float32 array. Returns (voice, nonvoice) as (2, N) arrays."""

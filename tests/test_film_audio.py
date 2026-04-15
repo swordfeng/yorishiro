@@ -2808,7 +2808,7 @@ class SpeakerAttributorTests(unittest.TestCase):
 
 
 class AudioSeparatorTests(unittest.TestCase):
-    def test_stitch_chunk_first_chunk_splits_body_and_tail(self) -> None:
+    def test_stitch_chunk_first_chunk_writes_all_samples(self) -> None:
         current = np.vstack(
             [
                 np.arange(10, dtype=np.float32),
@@ -2820,22 +2820,32 @@ class AudioSeparatorTests(unittest.TestCase):
             current,
             overlap_samples=3,
         )
-        self.assertEqual(write_block.shape, (2, 7))
-        self.assertEqual(next_tail.shape, (2, 3))
-        self.assertTrue(np.allclose(write_block, current[:, :7]))
-        self.assertTrue(np.allclose(next_tail, current[:, 7:]))
+        self.assertEqual(write_block.shape, (2, 10))
+        self.assertEqual(next_tail.shape, (2, 0))
+        self.assertTrue(np.allclose(write_block, current))
 
-    def test_stitch_chunk_crossfades_pending_and_current(self) -> None:
-        pending = np.full((2, 3), 1.0, dtype=np.float32)
-        current = np.full((2, 6), 3.0, dtype=np.float32)
+    def test_stitch_chunk_concatenates_adjacent_chunks_without_blending(self) -> None:
+        pending = np.vstack(
+            [
+                np.arange(7, 10, dtype=np.float32),
+                np.arange(7, 10, dtype=np.float32),
+            ]
+        )
+        current = np.vstack(
+            [
+                100 + np.arange(6, dtype=np.float32),
+                100 + np.arange(6, dtype=np.float32),
+            ]
+        )
         write_block, next_tail = AudioSeparator._stitch_chunk(
             pending, current, overlap_samples=3
         )
-        # For full overlap, blended center should be [1,2,3] per channel.
-        expected = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
-        self.assertTrue(np.allclose(write_block[0:1, :3], expected, atol=1e-6))
-        self.assertEqual(next_tail.shape, (2, 3))
-        self.assertTrue(np.allclose(next_tail, np.full((2, 3), 3.0, dtype=np.float32)))
+        expected = np.concatenate([pending, current], axis=1)
+        self.assertEqual(write_block.shape, expected.shape)
+        self.assertEqual(next_tail.shape, (2, 0))
+        self.assertTrue(np.allclose(write_block, expected))
+        self.assertEqual(write_block[0, 2], 9.0)
+        self.assertEqual(write_block[0, 3], 100.0)
 
     def test_stitch_chunk_without_overlap_concatenates(self) -> None:
         pending = np.ones((2, 2), dtype=np.float32)
@@ -2847,6 +2857,38 @@ class AudioSeparatorTests(unittest.TestCase):
         self.assertEqual(next_tail.shape, (2, 0))
         self.assertTrue(np.allclose(write_block[:, :2], 1.0))
         self.assertTrue(np.allclose(write_block[:, 2:], 2.0))
+
+    def test_stitch_chunk_preserves_total_duration_when_overlap_configured(
+        self,
+    ) -> None:
+        first = np.vstack(
+            [
+                np.arange(10, dtype=np.float32),
+                np.arange(10, dtype=np.float32),
+            ]
+        )
+        second = np.vstack(
+            [
+                100 + np.arange(10, dtype=np.float32),
+                100 + np.arange(10, dtype=np.float32),
+            ]
+        )
+
+        write_first, tail = AudioSeparator._stitch_chunk(
+            np.zeros((2, 0), dtype=np.float32),
+            first,
+            overlap_samples=3,
+        )
+        write_second, tail = AudioSeparator._stitch_chunk(
+            tail,
+            second,
+            overlap_samples=3,
+        )
+        output = np.concatenate([write_first, write_second, tail], axis=1)
+
+        self.assertEqual(output.shape, (2, first.shape[1] + second.shape[1]))
+        self.assertTrue(np.allclose(output[:, :10], first))
+        self.assertTrue(np.allclose(output[:, 10:], second))
 
 
 class EmotionAnalyzerTests(unittest.TestCase):

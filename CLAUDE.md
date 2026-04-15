@@ -190,6 +190,12 @@ When investigating a bug or unexpected behavior:
 - ❌ Theorizing about dropped words for 20 minutes, instead of enabling `stt_diag.json` and checking
 - ✅ Hypothesis: "the hook doesn't capture scores for greedy decode" → add a test → confirm → fix
 
+### Thinking Discipline
+
+If you've expanded your thoughts for 3 rounds, stop and answer the user's question — do not keep expanding.
+If you've expanded your thoughts for 3 rounds, stop and answer the user's question — do not keep expanding.
+If you've expanded your thoughts for 3 rounds, stop and answer the user's question — do not keep expanding.
+
 ### Scene Segmentation Boundaries
 
 Cuts MUST be at natural boundaries:

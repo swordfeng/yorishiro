@@ -76,6 +76,9 @@ class VadRunner:
     def __init__(self, config: VadConfig | None = None) -> None:
         self.config = config or VadConfig()
 
+    def release_models(self) -> None:
+        pass
+
     def run(
         self,
         audio_path: Path,

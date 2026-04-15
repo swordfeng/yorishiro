@@ -35,6 +35,13 @@ class MusicAnalyzer:
         self._demucs_model = None
         self._essentia = None
 
+    def release_models(self) -> None:
+        from yorishiro.audio._speech_support import clear_torch_cache
+
+        self._demucs_model = None
+        self._essentia = None
+        clear_torch_cache()
+
     def analyze(
         self,
         video_path: Path,

@@ -35,12 +35,25 @@ class Diarizer:
     def __init__(self, config: DiarizerConfig | None = None) -> None:
         self.config = config or DiarizerConfig()
 
-    def run(self, audio_path: Path, output_dir: Path, force: bool = False) -> list[dict[str, Any]]:
+    def release_models(self) -> None:
+        from yorishiro.audio._speech_support import (
+            clear_torch_cache,
+            release_model_caches,
+        )
+
+        release_model_caches(categories={"diarization"})
+        clear_torch_cache()
+
+    def run(
+        self, audio_path: Path, output_dir: Path, force: bool = False
+    ) -> list[dict[str, Any]]:
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"  [Diarization] Running on {audio_path.name} ...")
         turns = self._run_diarization(audio_path, output_dir=output_dir, force=force)
         out = output_dir / "diarization.json"
-        out.write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
+        out.write_text(
+            json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         speakers = {cast(str, turn["speaker"]) for turn in turns}
         print(
             f"  [Diarization] Done — {len(turns)} turn(s), {len(speakers)} speaker(s): {', '.join(sorted(speakers))}"
@@ -88,18 +101,32 @@ class Diarizer:
 
                 result = pipeline(str(tmp_path), hook=hook)
 
-            ann = result.exclusive_speaker_diarization if hasattr(result, "exclusive_speaker_diarization") else result
-            embeddings: np.ndarray | None = result.speaker_embeddings if hasattr(result, "speaker_embeddings") else None
-            full_ann = result.speaker_diarization if hasattr(result, "speaker_diarization") else ann
+            ann = (
+                result.exclusive_speaker_diarization
+                if hasattr(result, "exclusive_speaker_diarization")
+                else result
+            )
+            embeddings: np.ndarray | None = (
+                result.speaker_embeddings
+                if hasattr(result, "speaker_embeddings")
+                else None
+            )
+            full_ann = (
+                result.speaker_diarization
+                if hasattr(result, "speaker_diarization")
+                else ann
+            )
             speakers_local = full_ann.labels() if hasattr(full_ann, "labels") else []
 
             turns: list[dict[str, Any]] = []
             for segment, _, speaker in ann.itertracks(yield_label=True):
-                turns.append({
-                    "speaker": speaker,
-                    "start": round(chunk_start + segment.start, 3),
-                    "end": round(chunk_start + segment.end, 3),
-                })
+                turns.append(
+                    {
+                        "speaker": speaker,
+                        "start": round(chunk_start + segment.start, 3),
+                        "end": round(chunk_start + segment.end, 3),
+                    }
+                )
             return turns, embeddings, speakers_local
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -113,7 +140,9 @@ class Diarizer:
         try:
             hf_token = os.environ.get(self.config.hf_token_env)
             if not hf_token:
-                print(f"    [Diarization] {self.config.hf_token_env} not set, using single-speaker fallback")
+                print(
+                    f"    [Diarization] {self.config.hf_token_env} not set, using single-speaker fallback"
+                )
                 return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
 
             info = sf.info(str(audio_path))
@@ -123,11 +152,15 @@ class Diarizer:
 
             vad_segments: list[dict[str, float]] = []
             if output_dir and (output_dir / "vad.json").exists():
-                vad_segments = json.loads((output_dir / "vad.json").read_text(encoding="utf-8"))
+                vad_segments = json.loads(
+                    (output_dir / "vad.json").read_text(encoding="utf-8")
+                )
 
             boundaries = vad_chunk_boundaries(total_duration, vad_segments)
             num_chunks = len(boundaries) - 1
-            checkpoint_dir = output_dir / ".diarization_checkpoints" if output_dir else None
+            checkpoint_dir = (
+                output_dir / ".diarization_checkpoints" if output_dir else None
+            )
 
             if force:
                 import shutil
@@ -150,12 +183,18 @@ class Diarizer:
             for chunk_idx in range(num_chunks):
                 chunk_start = boundaries[chunk_idx]
                 chunk_end = boundaries[chunk_idx + 1]
-                checkpoint_file = checkpoint_dir / f"chunk_{chunk_idx:04d}.json" if checkpoint_dir else None
+                checkpoint_file = (
+                    checkpoint_dir / f"chunk_{chunk_idx:04d}.json"
+                    if checkpoint_dir
+                    else None
+                )
 
                 if checkpoint_file and checkpoint_file.exists() and not force:
                     checkpoint = json.loads(checkpoint_file.read_text(encoding="utf-8"))
                     if checkpoint.get("source_mtime") == source_mtime:
-                        print(f"    [Diarization] chunk {chunk_idx} — resuming from checkpoint")
+                        print(
+                            f"    [Diarization] chunk {chunk_idx} — resuming from checkpoint"
+                        )
                         npy_file = checkpoint_file.with_suffix(".npy")
                         if npy_file.exists():
                             checkpoint["embeddings"] = np.load(str(npy_file))
@@ -163,11 +202,18 @@ class Diarizer:
                             checkpoint["embeddings"] = None
                         chunk_results.append(checkpoint)
                         continue
-                    print(f"    [Diarization] chunk {chunk_idx} — checkpoint stale, reprocessing")
+                    print(
+                        f"    [Diarization] chunk {chunk_idx} — checkpoint stale, reprocessing"
+                    )
 
                 start_sample = int(chunk_start * sample_rate)
                 end_sample = int(chunk_end * sample_rate)
-                chunk_audio, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
+                chunk_audio, _ = sf.read(
+                    str(audio_path),
+                    start=start_sample,
+                    stop=end_sample,
+                    dtype="float32",
+                )
 
                 turns, embeddings, speakers_local = self._diarize_chunk(
                     pipeline,
@@ -185,7 +231,11 @@ class Diarizer:
                     "embeddings": embeddings,
                 }
                 if checkpoint_file:
-                    checkpoint_json = {key: value for key, value in checkpoint_data.items() if key != "embeddings"}
+                    checkpoint_json = {
+                        key: value
+                        for key, value in checkpoint_data.items()
+                        if key != "embeddings"
+                    }
                     checkpoint_file.write_text(
                         json.dumps(checkpoint_json, ensure_ascii=False, indent=2),
                         encoding="utf-8",
@@ -197,25 +247,50 @@ class Diarizer:
 
             if num_chunks == 1:
                 all_turns: list[dict[str, Any]] = []
-                sorted_speakers = sorted({cast(str, turn["speaker"]) for turn in cast(list[dict[str, Any]], chunk_results[0]["turns"])})
-                mapping = {speaker: f"SPEAKER_{idx:02d}" for idx, speaker in enumerate(sorted_speakers)}
+                sorted_speakers = sorted(
+                    {
+                        cast(str, turn["speaker"])
+                        for turn in cast(
+                            list[dict[str, Any]], chunk_results[0]["turns"]
+                        )
+                    }
+                )
+                mapping = {
+                    speaker: f"SPEAKER_{idx:02d}"
+                    for idx, speaker in enumerate(sorted_speakers)
+                }
                 for turn in cast(list[dict[str, Any]], chunk_results[0]["turns"]):
-                    all_turns.append({**turn, "speaker": mapping.get(cast(str, turn["speaker"]), cast(str, turn["speaker"]))})
+                    all_turns.append(
+                        {
+                            **turn,
+                            "speaker": mapping.get(
+                                cast(str, turn["speaker"]), cast(str, turn["speaker"])
+                            ),
+                        }
+                    )
                 segments = all_turns
 
                 speaker_embeddings: dict[str, np.ndarray] = {}
                 embeddings = cast(np.ndarray | None, chunk_results[0].get("embeddings"))
-                speakers_local = cast(list[str], chunk_results[0].get("speakers_local", []))
+                speakers_local = cast(
+                    list[str], chunk_results[0].get("speakers_local", [])
+                )
                 if embeddings is not None:
                     for idx, local_id in enumerate(speakers_local):
-                        speaker_embeddings[mapping.get(local_id, local_id)] = embeddings[idx]
+                        speaker_embeddings[mapping.get(local_id, local_id)] = (
+                            embeddings[idx]
+                        )
             else:
                 segments, speaker_embeddings = merge_chunk_speakers(chunk_results)
 
             if output_dir and segments:
                 save_speaker_bank(output_dir, segments, speaker_embeddings)
 
-            return segments if segments else [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
+            return (
+                segments
+                if segments
+                else [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
+            )
         except Exception as exc:
             print(f"    [Diarization] Error: {exc}, using single-speaker fallback")
             return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]

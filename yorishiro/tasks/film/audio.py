@@ -38,6 +38,7 @@ class FilmAudioSeparateTask(Task):
         separator = self._runtime.instance()
         print("[film.audio.separate] Separating voice / non-voice stems ...")
         separator.separate(self._video_path, self._output_dir, force=True)
+        separator.release_models()
         print("[film.audio.separate] Done.")
 
 
@@ -120,12 +121,15 @@ class FilmAudioSTTTask(Task):
     def _run(self) -> None:
         print("[film.audio.stt] Running speech-to-text ...")
         transcriber = self._runtime.instance()
-        transcriber.run(
-            self._output_dir / "voice.flac",
-            self._output_dir,
-            self._language,
-            force=self._force,
-        )
+        try:
+            transcriber.run(
+                self._output_dir / "voice.flac",
+                self._output_dir,
+                self._language,
+                force=self._force,
+            )
+        finally:
+            transcriber.release_models()
 
 
 class FilmAudioSpeakersTask(Task):
@@ -157,9 +161,12 @@ class FilmAudioSpeakersTask(Task):
     def _run(self) -> None:
         print("[film.audio.speakers] Running speaker attribution ...")
         attributor = self._runtime.instance()
-        attributor.run(
-            self._output_dir / "voice.flac", self._output_dir, force=self._force
-        )
+        try:
+            attributor.run(
+                self._output_dir / "voice.flac", self._output_dir, force=self._force
+            )
+        finally:
+            attributor.release_models()
 
 
 class FilmAudioEmotionTask(Task):
@@ -182,7 +189,10 @@ class FilmAudioEmotionTask(Task):
     def _run(self) -> None:
         print("[film.audio.emotion] Running emotion analysis ...")
         emotion_analyzer = self._runtime.instance()
-        emotion_analyzer.run(self._output_dir / "voice.flac", self._output_dir)
+        try:
+            emotion_analyzer.run(self._output_dir / "voice.flac", self._output_dir)
+        finally:
+            emotion_analyzer.release_models()
         print("[film.audio.emotion] Done.")
 
 
@@ -214,13 +224,16 @@ class FilmAudioSoundEventsTask(Task):
         print(
             "[film.audio.sound_events] Running sound event detection on voice + non-voice stems ..."
         )
-        sound_detector.detect(
-            voice_path,
-            nonvoice_path,
-            self._output_dir,
-            transcript_path=transcript_path,
-            force=True,
-        )
+        try:
+            sound_detector.detect(
+                voice_path,
+                nonvoice_path,
+                self._output_dir,
+                transcript_path=transcript_path,
+                force=True,
+            )
+        finally:
+            sound_detector.release_models()
         print("[film.audio.sound_events] Done.")
 
 
@@ -248,13 +261,16 @@ class FilmAudioMusicTask(Task):
 
         music_analyzer = self._runtime.instance()
         print("[film.audio.music] Running music analysis on non-voice stem ...")
-        music_analyzer.analyze(
-            self._video_path,
-            nonvoice_path,
-            self._output_dir,
-            force=True,
-            nonvoice_path=nonvoice_path,
-        )
+        try:
+            music_analyzer.analyze(
+                self._video_path,
+                nonvoice_path,
+                self._output_dir,
+                force=True,
+                nonvoice_path=nonvoice_path,
+            )
+        finally:
+            music_analyzer.release_models()
         print("[film.audio.music] Done.")
 
 

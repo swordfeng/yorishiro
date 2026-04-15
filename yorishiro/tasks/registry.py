@@ -135,6 +135,16 @@ class ModelRegistry:
         self._project = project
         self._cache: dict[str, Any] = {}
 
+    def release_all(self) -> None:
+        for instance in self._cache.values():
+            release_fn = getattr(instance, "release_models", None)
+            if callable(release_fn):
+                release_fn()
+        self._cache.clear()
+        from yorishiro.audio._speech_support import release_model_caches
+
+        release_model_caches()
+
     def for_step(self, step_id: str) -> StepRuntime:
         """Return a runtime facade for the given step."""
         spec = self._STEP_SPECS.get(step_id)
@@ -212,6 +222,7 @@ class ModelRegistry:
             str(cfg.get("forced_aligner_backend", "")),
             str(cfg.get("forced_aligner_model", "")),
             str(cfg.get("forced_aligner_device", "")),
+            str(cfg.get("forced_aligner_num_workers", "")),
             str(cfg.get("forced_aligner_min_confidence", "")),
             str(cfg.get("forced_aligner_merge_gap_seconds", "")),
         ]
@@ -378,6 +389,10 @@ class ModelRegistry:
             kwargs["forced_aligner_model"] = cfg["forced_aligner_model"]
         if cfg.get("forced_aligner_device") is not None:
             kwargs["forced_aligner_device"] = cfg["forced_aligner_device"]
+        if cfg.get("forced_aligner_num_workers") is not None:
+            kwargs["forced_aligner_num_workers"] = int(
+                cfg["forced_aligner_num_workers"]
+            )
         if cfg.get("forced_aligner_min_confidence") is not None:
             kwargs["forced_aligner_min_confidence"] = float(
                 cfg["forced_aligner_min_confidence"]

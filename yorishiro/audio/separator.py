@@ -16,6 +16,7 @@ import soundfile as sf
 from tqdm import tqdm
 
 from yorishiro.audio import resample as audio_resample
+from yorishiro.audio._speech_support import clear_torch_cache
 
 
 @dataclass
@@ -34,6 +35,10 @@ class AudioSeparator:
     def __init__(self, config: AudioSeparatorConfig | None = None) -> None:
         self.config = config or AudioSeparatorConfig()
         self._model = None
+
+    def release_models(self) -> None:
+        self._model = None
+        clear_torch_cache()
 
     def separate(
         self,
@@ -68,7 +73,9 @@ class AudioSeparator:
         processed_samples = 0
         total_seconds = self._audio_duration_seconds(video_path)
         total_minutes = (
-            float(total_seconds / 60.0) if total_seconds is not None and total_seconds > 0 else None
+            float(total_seconds / 60.0)
+            if total_seconds is not None and total_seconds > 0
+            else None
         )
 
         voice_tmp_path.unlink(missing_ok=True)
@@ -144,8 +151,14 @@ class AudioSeparator:
 
         container = av.open(str(video_path))
         try:
-            audio_stream = next((s for s in container.streams if s.type == "audio"), None)
-            if audio_stream is not None and audio_stream.duration is not None and audio_stream.time_base is not None:
+            audio_stream = next(
+                (s for s in container.streams if s.type == "audio"), None
+            )
+            if (
+                audio_stream is not None
+                and audio_stream.duration is not None
+                and audio_stream.time_base is not None
+            ):
                 return float(audio_stream.duration * audio_stream.time_base)
             if container.duration is not None:
                 return float(container.duration) / 1_000_000.0
@@ -184,15 +197,11 @@ class AudioSeparator:
                     )
                     if frame_sr > 0 and frame_sr != self.config.sample_rate:
                         # soxr expects shape (samples, channels) for multi-channel input.
-                        arr = (
-                            audio_resample.resample(
-                                arr.T,
-                                orig_sr=frame_sr,
-                                target_sr=self.config.sample_rate,
-                            )
-                            .T
-                            .astype("float32", copy=False)
-                        )
+                        arr = audio_resample.resample(
+                            arr.T,
+                            orig_sr=frame_sr,
+                            target_sr=self.config.sample_rate,
+                        ).T.astype("float32", copy=False)
                     buffered.append(arr)
                     buffered_samples += int(arr.shape[1])
 
@@ -251,7 +260,9 @@ class AudioSeparator:
 
         overlap = min(pending_tail.shape[1], current.shape[1], overlap_samples)
         fade = np.linspace(0.0, 1.0, overlap, dtype=np.float32)[None, :]
-        blended = pending_tail[:, -overlap:] * (1.0 - fade) + current[:, :overlap] * fade
+        blended = (
+            pending_tail[:, -overlap:] * (1.0 - fade) + current[:, :overlap] * fade
+        )
 
         prefix = (
             pending_tail[:, : pending_tail.shape[1] - overlap]
@@ -283,7 +294,9 @@ class AudioSeparator:
             from demucs import pretrained
             from demucs.apply import apply_model
 
-            device_str = get_device() if self.config.device == "auto" else self.config.device
+            device_str = (
+                get_device() if self.config.device == "auto" else self.config.device
+            )
             device = torch.device(device_str)
 
             if self._model is None:
@@ -296,7 +309,9 @@ class AudioSeparator:
 
             with torch.no_grad():
                 sources = apply_model(
-                    self._model, tensor, device=device,
+                    self._model,
+                    tensor,
+                    device=device,
                     # Keep Demucs internal splitting enabled so each streamed
                     # chunk can still exceed training window length safely.
                     split=True,
@@ -313,8 +328,12 @@ class AudioSeparator:
             return voice, nonvoice
 
         except ImportError:
-            print("  [AudioSeparator] Demucs not installed — returning original audio as both stems")
+            print(
+                "  [AudioSeparator] Demucs not installed — returning original audio as both stems"
+            )
             return audio, audio
         except Exception as e:
-            print(f"  [AudioSeparator] Demucs error: {e} — returning original audio as both stems")
+            print(
+                f"  [AudioSeparator] Demucs error: {e} — returning original audio as both stems"
+            )
             return audio, audio

@@ -38,13 +38,21 @@ class SpeakerBankManager:
         self.speaker_bank = SpeakerBank()
         self._embeddings: dict[str, np.ndarray] = {}
 
+    def release_models(self) -> None:
+        from yorishiro.audio._speech_support import clear_torch_cache
+
+        self._embedding_model = None
+        clear_torch_cache()
+
     def save(self, output_dir: Path) -> None:
         """Save speaker bank to disk."""
         output_dir.mkdir(parents=True, exist_ok=True)
         bank_file = output_dir / "speaker_bank.json"
         embeddings_file = output_dir / "speaker_embeddings.pkl"
 
-        bank_file.write_text(self.speaker_bank.model_dump_json(indent=2), encoding="utf-8")
+        bank_file.write_text(
+            self.speaker_bank.model_dump_json(indent=2), encoding="utf-8"
+        )
 
         with open(embeddings_file, "wb") as f:
             pickle.dump(self._embeddings, f)
@@ -69,7 +77,9 @@ class SpeakerBankManager:
         except Exception:
             return False
 
-    def extract_speaker_embedding(self, audio_path: Path, start: float, end: float) -> np.ndarray | None:
+    def extract_speaker_embedding(
+        self, audio_path: Path, start: float, end: float
+    ) -> np.ndarray | None:
         """Extract speaker embedding for a segment."""
         try:
             from pyannote.audio import Inference
@@ -78,11 +88,17 @@ class SpeakerBankManager:
             if self._embedding_model is None:
                 hf_token = os.environ.get(self.config.hf_token_env)
                 if not hf_token:
-                    print(f"    [SpeakerEmbedding] {self.config.hf_token_env} not set, skipping embedding extraction")
+                    print(
+                        f"    [SpeakerEmbedding] {self.config.hf_token_env} not set, skipping embedding extraction"
+                    )
                     return None
 
                 backend = (self.config.embedding_backend or "").strip()
-                if backend in {"wespeaker", "wespeaker_resnet34", "pyannote/wespeaker-voxceleb-resnet34-LM"}:
+                if backend in {
+                    "wespeaker",
+                    "wespeaker_resnet34",
+                    "pyannote/wespeaker-voxceleb-resnet34-LM",
+                }:
                     model_id = "pyannote/wespeaker-voxceleb-resnet34-LM"
                 elif backend in {"pyannote", "pyannote/embedding"}:
                     model_id = "pyannote/embedding"
@@ -98,16 +114,25 @@ class SpeakerBankManager:
 
             assert self._embedding_model is not None
             import soundfile as sf
+
             info = sf.info(str(audio_path))
             start_sample = int(start * info.samplerate)
             end_sample = int(end * info.samplerate)
-            chunk, sr = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32", always_2d=False)
+            chunk, sr = sf.read(
+                str(audio_path),
+                start=start_sample,
+                stop=end_sample,
+                dtype="float32",
+                always_2d=False,
+            )
             t = torch.tensor(chunk)
             if t.ndim == 1:
-                waveform = t.unsqueeze(0)        # mono: (1, time)
+                waveform = t.unsqueeze(0)  # mono: (1, time)
             else:
-                waveform = t.T.contiguous()      # stereo: (channels, time)
-            embedding = self._embedding_model({"waveform": waveform, "sample_rate": int(sr)})
+                waveform = t.T.contiguous()  # stereo: (channels, time)
+            embedding = self._embedding_model(
+                {"waveform": waveform, "sample_rate": int(sr)}
+            )
 
             return embedding if isinstance(embedding, np.ndarray) else None
 
@@ -115,7 +140,9 @@ class SpeakerBankManager:
             print(f"    [SpeakerEmbedding] Error extracting embedding: {e}")
             return None
 
-    def confirm_speaker(self, speaker_id: str, character_name: str, scene_id: str | None = None) -> None:
+    def confirm_speaker(
+        self, speaker_id: str, character_name: str, scene_id: str | None = None
+    ) -> None:
         """Confirm a speaker ID maps to a character name."""
         self.speaker_bank.confirm_speaker(speaker_id, character_name, scene_id)
 

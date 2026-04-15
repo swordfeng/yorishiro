@@ -12,12 +12,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import soundfile as sf
-import torch
 from tqdm import tqdm
 
 from yorishiro.audio import resample as audio_resample
 from yorishiro.audio._speech_support import get_emotion_model, prosody_segment_worker
-from yorishiro.models.film_models import SpeakerAttribution, STTTranscript, Transcript, TranscriptEntry
+from yorishiro.models.film_models import (
+    SpeakerAttribution,
+    STTTranscript,
+    Transcript,
+    TranscriptEntry,
+)
 
 
 @dataclass(frozen=True)
@@ -32,12 +36,23 @@ class EmotionAnalyzer:
     def __init__(self, config: EmotionAnalyzerConfig | None = None) -> None:
         self.config = config or EmotionAnalyzerConfig()
 
+    def release_models(self) -> None:
+        from yorishiro.audio._speech_support import (
+            clear_torch_cache,
+            release_model_caches,
+        )
+
+        release_model_caches(categories={"emotion"})
+        clear_torch_cache()
+
     def run(self, audio_path: Path, output_dir: Path) -> Transcript:
         output_dir.mkdir(parents=True, exist_ok=True)
         stt_path = output_dir / "stt.json"
         attribution_path = output_dir / "speaker_attribution.json"
         stt = STTTranscript(**json.loads(stt_path.read_text(encoding="utf-8")))
-        attribution = SpeakerAttribution(**json.loads(attribution_path.read_text(encoding="utf-8")))
+        attribution = SpeakerAttribution(
+            **json.loads(attribution_path.read_text(encoding="utf-8"))
+        )
         transcript = self._merge_stt_and_attribution(stt, attribution)
         print(f"  [Emotion] Analyzing {len(transcript.entries)} segment(s) ...")
         transcript = self._analyze_emotions(audio_path, transcript)
@@ -47,11 +62,17 @@ class EmotionAnalyzer:
         emotions = {entry.emotion for entry in transcript.entries if entry.emotion}
         out = output_dir / "transcript.json"
         out.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
-        print(f"  [Emotion] Done — {', '.join(sorted(emotions)) if emotions else 'none'}")
+        print(
+            f"  [Emotion] Done — {', '.join(sorted(emotions)) if emotions else 'none'}"
+        )
         return transcript
 
-    def _merge_stt_and_attribution(self, stt: STTTranscript, attribution: SpeakerAttribution) -> Transcript:
-        speaker_ids_by_key = {entry.entry_id: entry.speaker_id for entry in attribution.entries}
+    def _merge_stt_and_attribution(
+        self, stt: STTTranscript, attribution: SpeakerAttribution
+    ) -> Transcript:
+        speaker_ids_by_key = {
+            entry.entry_id: entry.speaker_id for entry in attribution.entries
+        }
         transcript_entries: list[TranscriptEntry] = []
         for idx, entry in enumerate(stt.entries):
             transcript_entries.append(
@@ -98,10 +119,17 @@ class EmotionAnalyzer:
                     continue
 
                 try:
-                    chunk, _ = sf.read(str(audio_path), start=start_sample, stop=end_sample, dtype="float32")
+                    chunk, _ = sf.read(
+                        str(audio_path),
+                        start=start_sample,
+                        stop=end_sample,
+                        dtype="float32",
+                    )
                 except Exception as exc:
                     errors += 1
-                    progress.write(f"    [Emotion] Warning: entry {idx} read error: {exc}")
+                    progress.write(
+                        f"    [Emotion] Warning: entry {idx} read error: {exc}"
+                    )
                     progress.update(1)
                     continue
 
@@ -114,7 +142,10 @@ class EmotionAnalyzer:
                         )
 
                     infer_start = time.perf_counter()
-                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    with (
+                        contextlib.redirect_stdout(io.StringIO()),
+                        contextlib.redirect_stderr(io.StringIO()),
+                    ):
                         result = model.generate(
                             input=chunk,
                             sample_rate=int(target_sr),
@@ -126,9 +157,16 @@ class EmotionAnalyzer:
                     if result and result[0].get("scores"):
                         scores = result[0]["scores"]
                         labels = result[0]["labels"]
-                        best_idx = int(max(range(len(scores)), key=lambda score_idx: scores[score_idx]))
+                        best_idx = int(
+                            max(
+                                range(len(scores)),
+                                key=lambda score_idx: scores[score_idx],
+                            )
+                        )
                         raw_label = labels[best_idx]
-                        entry.emotion = raw_label.split("/")[-1] if "/" in raw_label else raw_label
+                        entry.emotion = (
+                            raw_label.split("/")[-1] if "/" in raw_label else raw_label
+                        )
                         entry.confidence = max(entry.confidence, scores[best_idx])
                 except Exception as exc:
                     errors += 1
@@ -140,7 +178,9 @@ class EmotionAnalyzer:
                     gc.collect()
                     self._clear_torch_cache()
 
-        print(f"    [Emotion] Done — {total} segment(s), {errors} error(s), {total_inference_time:.1f}s inference")
+        print(
+            f"    [Emotion] Done — {total} segment(s), {errors} error(s), {total_inference_time:.1f}s inference"
+        )
         return transcript
 
     def _analyze_prosody(self, audio_path: Path, transcript: Transcript) -> Transcript:
@@ -177,11 +217,16 @@ class EmotionAnalyzer:
             ) as progress:
                 for idx, volume, speech_rate, pitch_trend, _, error in pool.imap(
                     prosody_segment_worker,
-                    [(segment, str(audio_path), sample_rate, max_samples) for segment in segments],
+                    [
+                        (segment, str(audio_path), sample_rate, max_samples)
+                        for segment in segments
+                    ],
                 ):
                     if error:
                         errors += 1
-                        progress.write(f"    [Prosody] Warning: entry {idx} failed: {error}")
+                        progress.write(
+                            f"    [Prosody] Warning: entry {idx} failed: {error}"
+                        )
                     else:
                         if volume:
                             transcript.entries[idx].volume = volume
@@ -208,7 +253,6 @@ class EmotionAnalyzer:
         return get_device()
 
     def _clear_torch_cache(self) -> None:
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-        elif torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        from yorishiro.audio._speech_support import clear_torch_cache
+
+        clear_torch_cache()

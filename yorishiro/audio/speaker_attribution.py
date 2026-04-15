@@ -103,6 +103,15 @@ class SpeakerAttributor:
     def __init__(self, config: SpeakerAttributorConfig | None = None) -> None:
         self.config = config or SpeakerAttributorConfig()
 
+    def release_models(self) -> None:
+        from yorishiro.audio._speech_support import (
+            clear_torch_cache,
+            release_model_caches,
+        )
+
+        release_model_caches(categories={"diarization"})
+        clear_torch_cache()
+
     def run(
         self, audio_path: Path, output_dir: Path, force: bool = False
     ) -> SpeakerAttribution:
@@ -388,9 +397,7 @@ class SpeakerAttributor:
     ) -> tuple[list[int], list[np.ndarray]]:
         valid_indices: list[int] = []
         embeddings: list[np.ndarray] = []
-        cache = self._load_embedding_cache(
-            audio_path, output_dir, stt=stt, force=force
-        )
+        cache = self._load_embedding_cache(audio_path, output_dir, stt=stt, force=force)
 
         print(f"  [Speakers] Extracting embeddings for {len(windows)} window(s) ...")
         with tqdm(
@@ -874,7 +881,6 @@ class SpeakerAttributor:
         Xn = X / np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-10)
         return Xn @ Xn.T
 
-
     @staticmethod
     def _label_nn_purity(
         X: np.ndarray,
@@ -1093,7 +1099,9 @@ class SpeakerAttributor:
         }
 
     @staticmethod
-    def _top_k_sizes(labels: np.ndarray, ks: tuple[int, ...] = (1, 5, 10, 20, 30)) -> str:
+    def _top_k_sizes(
+        labels: np.ndarray, ks: tuple[int, ...] = (1, 5, 10, 20, 30)
+    ) -> str:
         valid = labels[labels >= 0] if isinstance(labels, np.ndarray) else labels
         counts = sorted(Counter(int(x) for x in valid).values(), reverse=True)
         parts: list[str] = []

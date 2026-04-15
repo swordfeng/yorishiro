@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gc
 import math
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast
@@ -234,6 +236,55 @@ _TRANSFORMERS_PIPELINES: dict[tuple[str, str, str], TransformersPipelineLike] = 
 _EMOTION_MODELS: dict[tuple[str, str], EmotionModelLike] = {}
 _FUNASR_MODELS: dict[tuple[str, str], FunASRModelLike] = {}
 _FORCED_ALIGNERS: dict[tuple[str, str], ForcedAlignerLike] = {}
+_WHISPER_ALIGNERS: dict[tuple[str, str, str], Any] = {}
+
+_ALL_MODEL_CACHES: list[dict[Any, Any]] = [
+    _DIARIZATION_PIPELINES,
+    _WHISPER_MODELS,
+    _TRANSFORMERS_PIPELINES,
+    _EMOTION_MODELS,
+    _FUNASR_MODELS,
+    _FORCED_ALIGNERS,
+    _WHISPER_ALIGNERS,
+]
+
+
+def clear_torch_cache() -> None:
+    gc.collect()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    elif torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def release_model_caches(*, categories: set[str] | None = None) -> None:
+    lookup: dict[str, dict[Any, Any]] = {
+        "diarization": _DIARIZATION_PIPELINES,
+        "whisper": _WHISPER_MODELS,
+        "transformers": _TRANSFORMERS_PIPELINES,
+        "emotion": _EMOTION_MODELS,
+        "funasr": _FUNASR_MODELS,
+        "forced_aligner": _FORCED_ALIGNERS,
+        "whisper_aligner": _WHISPER_ALIGNERS,
+    }
+    if categories is None:
+        targets = _ALL_MODEL_CACHES
+    else:
+        targets = [lookup[c] for c in categories if c in lookup]
+    cleared_keys: list[str] = []
+    for cache in targets:
+        cleared_keys.extend(f"{k}" for k in list(cache.keys()))
+        cache.clear()
+    if cleared_keys:
+        clear_torch_cache()
+        names = [
+            c
+            for c in (categories or set(lookup.keys()))
+            if c in (lookup if categories else {})
+        ]
+        print(
+            f"    [Models] Released {len(cleared_keys)} model(s){' (' + ', '.join(names) + ')' if names else ''}"
+        )
 
 
 def get_diarization_pipeline(config: DiarizerConfigLike) -> DiarizationPipelineLike:
@@ -414,33 +465,40 @@ def get_qwen3_forced_aligner(
     return cast(ForcedAlignerLike, aligner)
 
 
-_WHISPER_ALIGNERS: dict[tuple[str, str], Any] = {}
+_ALIGNER_LOCK = threading.Lock()
 
 
 def get_whisper_forced_aligner(
     model_name: str = "large-v3",
     *,
     device: str | None = None,
-    compute_type: str = "int8",
+    compute_type: str = "auto",
+    num_workers: int = 1,
     instance_key: str = "default",
 ) -> Any:
     from faster_whisper import WhisperModel
 
-    if device is None:
-        device = get_device()
-    key = (f"{model_name}:{instance_key}", device)
+    if device is None or device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    if compute_type == "auto":
+        compute_type = "int8" if device == "cuda" else "float32"
+    key = (f"{model_name}:{instance_key}", device, compute_type)
     cached = _WHISPER_ALIGNERS.get(key)
     if cached is not None:
         return cached
 
-    model = WhisperModel(
-        model_name,
-        device=device,
-        compute_type=compute_type,
-    )
-    print(f"    [STT] Loaded whisper forced aligner {model_name} on {device}")
-    _WHISPER_ALIGNERS[key] = model
-    return model
+    with _ALIGNER_LOCK:
+        cached = _WHISPER_ALIGNERS.get(key)
+        if cached is not None:
+            return cached
+        model = WhisperModel(
+            model_name,
+            device=device,
+            compute_type=compute_type,
+        )
+        print(f"    [STT] Loaded whisper forced aligner {model_name} on {device}")
+        _WHISPER_ALIGNERS[key] = model
+        return model
 
 
 @dataclass

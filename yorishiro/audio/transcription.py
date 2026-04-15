@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -11,10 +10,7 @@ import shutil
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
-from dataclasses import dataclass
-from dataclasses import field
-from dataclasses import replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -37,6 +33,7 @@ from yorishiro.audio._speech_support import (
     get_whisper_model,
     normalize_language,
     qwen3_language,
+    release_model_caches,
     split_text_heuristically,
 )
 from yorishiro.models.film_models import STTEntry, STTTranscript
@@ -65,6 +62,7 @@ class TranscriberConfig:
     forced_aligner_backend: str = "qwen3"
     forced_aligner_model: str = "Qwen/Qwen3-ForcedAligner-0.6B"
     forced_aligner_device: str | None = None
+    forced_aligner_num_workers: int = 1
     forced_aligner_min_confidence: float = 0.0
     forced_aligner_merge_gap_seconds: float = 0.12
     debug_dump_stt_diag: bool = False
@@ -160,6 +158,166 @@ def _token_display_ranges(
             ranges.append((start_di, end_di, tok))
         cursor = end_ai + 1
     return ranges
+
+
+def _token_alignment_ranges(
+    aligned_tokens: list[_AlignedToken],
+    align_text: str,
+) -> list[tuple[int, int, _AlignedToken]]:
+    compact_align = compact_alignment_text(align_text)
+    ranges: list[tuple[int, int, _AlignedToken]] = []
+    cursor = 0
+    for tok in aligned_tokens:
+        token_text = compact_alignment_text(tok.text)
+        if not token_text:
+            continue
+        start_ai = cursor
+        end_ai = min(start_ai + len(token_text), len(compact_align))
+        if start_ai >= len(compact_align) or end_ai <= start_ai:
+            break
+        ranges.append((start_ai, end_ai, tok))
+        cursor = end_ai
+    return ranges
+
+
+def _token_weight(tok: _AlignedToken) -> int:
+    return max(len(compact_alignment_text(tok.text)), 1)
+
+
+def _distribute_token_run(
+    tokens: list[_AlignedToken],
+    run_start: int,
+    run_end: int,
+    interval_start: float,
+    interval_end: float,
+) -> list[_AlignedToken]:
+    total_weight = sum(_token_weight(tok) for tok in tokens[run_start:run_end])
+    if total_weight <= 0:
+        total_weight = run_end - run_start
+    duration = max(0.0, interval_end - interval_start)
+    cursor = interval_start
+    normalized = list(tokens)
+    for idx in range(run_start, run_end):
+        tok = tokens[idx]
+        weight = _token_weight(tok)
+        piece_duration = duration * (weight / total_weight)
+        next_cursor = interval_end if idx == run_end - 1 else cursor + piece_duration
+        normalized[idx] = _AlignedToken(
+            text=tok.text,
+            start=cursor,
+            end=next_cursor,
+            confidence=tok.confidence,
+        )
+        cursor = next_cursor
+    return normalized
+
+
+def _normalize_aligned_tokens(
+    aligned_tokens: list[_AlignedToken],
+    group_start: float,
+    group_end: float,
+) -> list[_AlignedToken]:
+    if not aligned_tokens:
+        return []
+    if all(tok.end > tok.start for tok in aligned_tokens):
+        return aligned_tokens
+
+    normalized = list(aligned_tokens)
+    positive_indices = [i for i, tok in enumerate(normalized) if tok.end > tok.start]
+    if not positive_indices:
+        return _distribute_token_run(
+            normalized, 0, len(normalized), group_start, group_end
+        )
+
+    idx = 0
+    while idx < len(normalized):
+        tok = normalized[idx]
+        if tok.end > tok.start:
+            idx += 1
+            continue
+        run_start = idx
+        while idx < len(normalized) and normalized[idx].end <= normalized[idx].start:
+            idx += 1
+        run_end = idx
+
+        prev_idx = run_start - 1
+        while prev_idx >= 0 and normalized[prev_idx].end <= normalized[prev_idx].start:
+            prev_idx -= 1
+        next_idx = run_end
+        while (
+            next_idx < len(normalized)
+            and normalized[next_idx].end <= normalized[next_idx].start
+        ):
+            next_idx += 1
+
+        if prev_idx >= 0 and next_idx < len(normalized):
+            interval_start = normalized[prev_idx].end
+            interval_end = normalized[next_idx].start
+        elif prev_idx >= 0:
+            interval_start = normalized[prev_idx].end
+            interval_end = group_end
+        elif next_idx < len(normalized):
+            interval_start = group_start
+            interval_end = normalized[next_idx].start
+        else:
+            interval_start = group_start
+            interval_end = group_end
+
+        if interval_end < interval_start:
+            interval_end = interval_start
+        normalized = _distribute_token_run(
+            normalized, run_start, run_end, interval_start, interval_end
+        )
+
+    return normalized
+
+
+def _segment_alignment_span(
+    pos_map: list[int | None],
+    start_di: int,
+    end_di: int,
+) -> tuple[int, int] | None:
+    align_positions = [ai for ai in pos_map[start_di:end_di] if ai is not None]
+    if not align_positions:
+        return None
+    return min(align_positions), max(align_positions) + 1
+
+
+def _segment_time_from_token_spans(
+    segment_span: tuple[int, int] | None,
+    token_alignment_ranges: list[tuple[int, int, _AlignedToken]],
+    fallback_start: float,
+    fallback_end: float,
+) -> tuple[float, float]:
+    if segment_span is None:
+        return fallback_start, fallback_end
+    seg_start_ai, seg_end_ai = segment_span
+    seg_start_time: float | None = None
+    seg_end_time: float | None = None
+    for tok_start_ai, tok_end_ai, tok in token_alignment_ranges:
+        overlap_start = max(tok_start_ai, seg_start_ai)
+        overlap_end = min(tok_end_ai, seg_end_ai)
+        if overlap_end <= overlap_start:
+            continue
+        token_span = tok_end_ai - tok_start_ai
+        if token_span <= 0:
+            continue
+        if tok.end > tok.start:
+            token_duration = tok.end - tok.start
+            start_fraction = (overlap_start - tok_start_ai) / token_span
+            end_fraction = (overlap_end - tok_start_ai) / token_span
+            piece_start = tok.start + start_fraction * token_duration
+            piece_end = tok.start + end_fraction * token_duration
+        else:
+            piece_start = tok.start
+            piece_end = tok.end
+        if seg_start_time is None or piece_start < seg_start_time:
+            seg_start_time = piece_start
+        if seg_end_time is None or piece_end > seg_end_time:
+            seg_end_time = piece_end
+    if seg_start_time is None or seg_end_time is None:
+        return fallback_start, fallback_end
+    return seg_start_time, seg_end_time
 
 
 def split_at_punctuation_aligned(
@@ -270,14 +428,19 @@ def split_with_aligned_tokens(
     if not aligned_tokens:
         return [(display_text, group_start, group_end)]
 
+    normalized_tokens = _normalize_aligned_tokens(
+        aligned_tokens, group_start, group_end
+    )
+
     # Aligned tokens live in the punctuation-stripped alignment space, so make the
     # display->alignment mapping explicit instead of relying on the helper to
     # compact the display text implicitly.
     align_text = strip_punctuation_for_alignment(display_text)
     pos_map = build_display_to_align_map(display_text, align_text)
-    token_ranges = _token_display_ranges(aligned_tokens, align_text, pos_map)
+    token_ranges = _token_display_ranges(normalized_tokens, align_text, pos_map)
     if not token_ranges:
         return [(display_text, group_start, group_end)]
+    token_alignment_ranges = _token_alignment_ranges(normalized_tokens, align_text)
 
     boundary_flags: dict[int, bool] = {}
     cursor = 0
@@ -331,29 +494,16 @@ def split_with_aligned_tokens(
         piece = display_text[piece_start:piece_end].strip()
         if not piece:
             continue
-
-        seg_start_time: float | None = None
-        seg_end_time: float | None = None
-        for tok_start_di, tok_end_di, tok in token_ranges:
-            if tok_end_di < piece_start or tok_start_di >= piece_end:
-                continue
-            if seg_start_time is None or tok.start < seg_start_time:
-                seg_start_time = tok.start
-            if seg_end_time is None or tok.end > seg_end_time:
-                seg_end_time = tok.end
-
-        if seg_start_time is None:
-            seg_start_time = segments[-1][2] if segments else group_start
-        if seg_end_time is None:
-            seg_end_time = group_end
-
-        segments.append(
-            (
-                piece,
-                max(seg_start_time, group_start),
-                min(seg_end_time, group_end),
-            )
+        segment_span = _segment_alignment_span(pos_map, piece_start, piece_end)
+        fallback_start = segments[-1][2] if segments else group_start
+        fallback_end = group_end
+        seg_start_time, seg_end_time = _segment_time_from_token_spans(
+            segment_span,
+            token_alignment_ranges,
+            fallback_start,
+            fallback_end,
         )
+        segments.append((piece, seg_start_time, seg_end_time))
 
     return segments or [(display_text, group_start, group_end)]
 
@@ -396,6 +546,30 @@ class Transcriber:
     def __init__(self, config: TranscriberConfig | None = None) -> None:
         self.config = config or TranscriberConfig()
 
+    def release_models(self) -> None:
+        categories = self._stt_categories() | self._aligner_categories()
+        if categories:
+            release_model_caches(categories=categories)
+
+    def _stt_categories(self) -> set[str]:
+        stt_backend = self.config.stt_backend
+        if stt_backend == "faster-whisper" or stt_backend is None:
+            return {"whisper"}
+        if stt_backend == "transformers-whisper":
+            return {"transformers"}
+        if stt_backend == "funasr":
+            return {"funasr"}
+        return set()
+
+    def _aligner_categories(self) -> set[str]:
+        if not self.config.forced_aligner_enabled:
+            return set()
+        if self.config.forced_aligner_backend == "faster-whisper":
+            return {"whisper_aligner"}
+        if self.config.forced_aligner_backend == "qwen3":
+            return {"forced_aligner"}
+        return set()
+
     def run(
         self,
         audio_path: Path,
@@ -410,12 +584,7 @@ class Transcriber:
             print("    [STT] Cleared output (force)")
         vad_path = output_dir / "vad.json"
         detected_language = language or self.config.language
-        input_signature = self._input_signature(
-            audio_path,
-            vad_path,
-            detected_language,
-        )
-        checkpoint_dir = output_dir / ".stt_checkpoints"
+        input_mtime = audio_path.stat().st_mtime
         speech_segments = cast(
             list[dict[str, Any]],
             json.loads(vad_path.read_text(encoding="utf-8")),
@@ -427,20 +596,10 @@ class Transcriber:
             detected_language,
             output_dir=output_dir,
             force=force,
-            input_signature=input_signature,
+            input_mtime=input_mtime,
         )
-        try:
-            self._assert_inputs_unchanged(
-                audio_path,
-                vad_path,
-                detected_language,
-                input_signature,
-            )
-        except RuntimeError:
-            self._cleanup_checkpoint_dir(checkpoint_dir)
-            raise
         self._atomic_write_text(out, transcript.model_dump_json(indent=2))
-        self._cleanup_checkpoint_dir(checkpoint_dir)
+        self._cleanup_checkpoint_dir(output_dir / ".stt_checkpoints")
         print(
             f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}"
         )
@@ -453,7 +612,7 @@ class Transcriber:
         language: str | None,
         output_dir: Path | None = None,
         force: bool = False,
-        input_signature: str | None = None,
+        input_mtime: float | None = None,
     ) -> STTTranscript:
         from tqdm import tqdm
 
@@ -469,8 +628,8 @@ class Transcriber:
             return STTTranscript(language=language or "unknown", entries=[])
         num_spans = len(spans)
         checkpoint_dir = (
-            self._prepare_checkpoint_dir(output_dir, input_signature, force=force)
-            if output_dir is not None and input_signature is not None
+            self._prepare_checkpoint_dir(output_dir, force=force)
+            if output_dir is not None
             else None
         )
         source_mtime = audio_path.stat().st_mtime
@@ -498,6 +657,7 @@ class Transcriber:
                 checkpoint_dir=checkpoint_dir,
                 output_dir=output_dir,
             )
+            release_model_caches(categories=self._aligner_categories())
             return self._assemble_transcript(groups, completed, language)
 
         with tqdm(
@@ -542,6 +702,8 @@ class Transcriber:
                         )
 
         completed.update({result.group_id: result for result in new_results})
+        release_model_caches(categories=self._stt_categories())
+
         completed = self._maybe_align_results(
             groups,
             completed,
@@ -552,6 +714,7 @@ class Transcriber:
             checkpoint_dir=checkpoint_dir,
             output_dir=output_dir,
         )
+        release_model_caches(categories=self._aligner_categories())
         return self._assemble_transcript(groups, completed, language)
 
     def _transcribe_groups(
@@ -1215,86 +1378,21 @@ class Transcriber:
     def _prepare_checkpoint_dir(
         self,
         output_dir: Path,
-        input_signature: str,
         *,
         force: bool = False,
     ) -> Path:
         checkpoint_dir = output_dir / ".stt_checkpoints"
-        if force:
-            had_checkpoints = checkpoint_dir.exists()
+        if force and checkpoint_dir.exists():
             self._cleanup_checkpoint_dir(checkpoint_dir)
-            if had_checkpoints:
-                print("    [STT] Cleared checkpoints (force)")
-        elif checkpoint_dir.exists() and not self._checkpoint_matches(
-            checkpoint_dir, input_signature
-        ):
-            self._cleanup_checkpoint_dir(checkpoint_dir)
+            print("    [STT] Cleared checkpoints (force)")
 
         if not checkpoint_dir.exists():
             checkpoint_dir.mkdir(parents=True, exist_ok=False)
-            self._write_checkpoint_metadata(checkpoint_dir, input_signature)
         return checkpoint_dir
-
-    @staticmethod
-    def _checkpoint_meta_path(checkpoint_dir: Path) -> Path:
-        return checkpoint_dir / "meta.json"
-
-    def _write_checkpoint_metadata(
-        self,
-        checkpoint_dir: Path,
-        input_signature: str,
-    ) -> None:
-        payload = {"input_signature": input_signature}
-        self._atomic_write_text(
-            self._checkpoint_meta_path(checkpoint_dir),
-            json.dumps(payload, ensure_ascii=False, indent=2),
-        )
-
-    def _checkpoint_matches(self, checkpoint_dir: Path, input_signature: str) -> bool:
-        meta_path = self._checkpoint_meta_path(checkpoint_dir)
-        if not checkpoint_dir.exists() or not meta_path.exists():
-            return False
-        try:
-            payload = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            return False
-        return payload.get("input_signature") == input_signature
 
     @staticmethod
     def _cleanup_checkpoint_dir(checkpoint_dir: Path) -> None:
         shutil.rmtree(checkpoint_dir, ignore_errors=True)
-
-    def _input_signature(
-        self,
-        audio_path: Path,
-        vad_path: Path,
-        language: str | None,
-    ) -> str:
-        audio_stat = audio_path.stat()
-        vad_payload = vad_path.read_text(encoding="utf-8")
-        payload = {
-            "audio_path": str(audio_path.resolve()),
-            "audio_mtime_ns": audio_stat.st_mtime_ns,
-            "audio_size": audio_stat.st_size,
-            "vad_sha256": hashlib.sha256(vad_payload.encode("utf-8")).hexdigest(),
-            "language": language,
-            "config": asdict(self.config),
-        }
-        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-    def _assert_inputs_unchanged(
-        self,
-        audio_path: Path,
-        vad_path: Path,
-        language: str | None,
-        expected_signature: str,
-    ) -> None:
-        current_signature = self._input_signature(audio_path, vad_path, language)
-        if current_signature != expected_signature:
-            raise RuntimeError(
-                "STT inputs changed during transcription; refusing to publish stale stt.json"
-            )
 
     def _atomic_write_text(self, path: Path, content: str) -> None:
         fd, temp_name = tempfile.mkstemp(
@@ -1413,7 +1511,7 @@ class Transcriber:
     ) -> dict[str, GroupResult]:
         if not self.config.forced_aligner_enabled:
             return completed
-        if self.config.forced_aligner_backend not in ("qwen3", "whisper"):
+        if self.config.forced_aligner_backend not in ("qwen3", "faster-whisper"):
             raise ValueError(
                 f"Unsupported forced aligner backend: {self.config.forced_aligner_backend}"
             )
@@ -1423,46 +1521,99 @@ class Transcriber:
             pre_align_snapshot = {gid: list(r.entries) for gid, r in completed.items()}
 
         print("    [STT] Running forced alignment pass ...")
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         from tqdm import tqdm
 
-        aligned_results: dict[str, GroupResult] = {}
+        pending: list[tuple[str, GroupResult]] = []
+        skip_ids: set[str] = set()
+        for group in groups:
+            result = completed.get(group.group_id)
+            if result is None or result.alignment_applied:
+                skip_ids.add(group.group_id)
+                continue
+            pending.append((group.group_id, result))
+
+        aligned_results: dict[str, GroupResult] = {
+            gid: completed[gid] for gid in skip_ids
+        }
         changed_results: list[GroupResult] = []
+        num_workers = max(1, self.config.forced_aligner_num_workers)
+
+        _ALIGNMENT_CHECKPOINT_FLUSH = 16
+
+        def _flush_alignment_checkpoints() -> None:
+            if checkpoint_dir is not None and changed_results:
+                self._save_group_results_batch(checkpoint_dir, changed_results)
+                changed_results.clear()
+
         with tqdm(
             total=len(groups),
             desc="    [STT] Alignment",
             unit="group",
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+            initial=len(skip_ids),
         ) as progress:
-            for group in groups:
-                result = completed.get(group.group_id)
-                if result is None:
+            if pending and num_workers > 1:
+                lock = threading.Lock()
+
+                def _align_one(
+                    gid: str, result: GroupResult
+                ) -> tuple[str, GroupResult, bool]:
+                    try:
+                        aligned = self._align_group_result(
+                            result,
+                            audio_path=audio_path,
+                            file_sample_rate=file_sample_rate,
+                            language=language,
+                            resample_module=resample_module,
+                        )
+                        return gid, aligned, aligned is not result
+                    except Exception:
+                        return gid, result, False
+
+                with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                    futures = {
+                        pool.submit(_align_one, gid, result): gid
+                        for gid, result in pending
+                    }
+                    done_count = 0
+                    for future in as_completed(futures):
+                        gid, aligned, changed = future.result()
+                        with lock:
+                            aligned_results[gid] = aligned
+                            if changed:
+                                changed_results.append(aligned)
+                        progress.update(1)
+                        done_count += 1
+                        if done_count % _ALIGNMENT_CHECKPOINT_FLUSH == 0:
+                            with lock:
+                                _flush_alignment_checkpoints()
+            else:
+                for i, (gid, result) in enumerate(pending):
+                    try:
+                        aligned = self._align_group_result(
+                            result,
+                            audio_path=audio_path,
+                            file_sample_rate=file_sample_rate,
+                            language=language,
+                            resample_module=resample_module,
+                        )
+                    except Exception as exc:
+                        print(
+                            f"    [STT] Forced alignment failed for group"
+                            f" {gid}: {exc!r}"
+                        )
+                        aligned = result
+                    aligned_results[gid] = aligned
+                    if aligned is not result:
+                        changed_results.append(aligned)
                     progress.update(1)
-                    continue
-                if result.alignment_applied:
-                    aligned_results[group.group_id] = result
-                    progress.update(1)
-                    continue
-                try:
-                    aligned = self._align_group_result(
-                        result,
-                        audio_path=audio_path,
-                        file_sample_rate=file_sample_rate,
-                        language=language,
-                        resample_module=resample_module,
-                    )
-                except Exception:
-                    print(
-                        f"    [STT] Alignment failed for group {group.group_id}, keeping STT results"
-                    )
-                    aligned = result
-                aligned_results[group.group_id] = aligned
-                if aligned is not result:
-                    changed_results.append(aligned)
-                progress.update(1)
+                    if (i + 1) % _ALIGNMENT_CHECKPOINT_FLUSH == 0:
+                        _flush_alignment_checkpoints()
 
         completed.update(aligned_results)
-        if checkpoint_dir is not None and changed_results:
-            self._save_group_results_batch(checkpoint_dir, changed_results)
+        _flush_alignment_checkpoints()
 
         if (
             self.config.debug_dump_stt_diag
@@ -1561,7 +1712,7 @@ class Transcriber:
 
         backend = self.config.forced_aligner_backend
         try:
-            if backend == "whisper":
+            if backend == "faster-whisper":
                 aligned_tokens = self._align_with_whisper(
                     chunk_audio, align_text, result, language
                 )
@@ -1569,10 +1720,10 @@ class Transcriber:
                 aligned_tokens = self._align_with_qwen3(
                     chunk_audio, align_text, result, language
                 )
-        except Exception:
+        except Exception as exc:
             print(
                 f"    [STT] Forced alignment ({backend}) failed for group"
-                f" {result.group_id}, using STT-only entries"
+                f" {result.group_id}: {exc!r}"
             )
             return result
 
@@ -1699,24 +1850,19 @@ class Transcriber:
         result: GroupResult,
         language: str | None,
     ) -> list[_AlignedToken]:
-        import tempfile
-
-        aligner = get_whisper_forced_aligner()
+        aligner = get_whisper_forced_aligner(
+            model_name=self.config.forced_aligner_model,
+            device=self.config.forced_aligner_device or None,
+            num_workers=self.config.forced_aligner_num_workers,
+        )
         norm_lang = normalize_language(language or result.detected_language) or "ja"
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp_path = tmp.name
-        sf.write(tmp_path, chunk_audio, 16000)
-
-        try:
-            segments, _info = aligner.transcribe(
-                tmp_path,
-                language=norm_lang,
-                word_timestamps=True,
-                initial_prompt=align_text,
-            )
-        finally:
-            os.unlink(tmp_path)
+        segments, _info = aligner.transcribe(
+            chunk_audio,
+            language=norm_lang,
+            word_timestamps=True,
+            initial_prompt=align_text,
+        )
 
         aligned_tokens: list[_AlignedToken] = []
         for seg in segments:

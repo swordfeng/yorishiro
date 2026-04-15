@@ -256,15 +256,6 @@ class TranscriberTests(unittest.TestCase):
             ckpt_dir = output_dir / ".stt_checkpoints"
             ckpt_dir.mkdir()
             transcriber = Transcriber(TranscriberConfig())
-            input_signature = transcriber._input_signature(
-                audio_path,
-                output_dir / "vad.json",
-                None,
-            )
-            (ckpt_dir / "meta.json").write_text(
-                json.dumps({"input_signature": input_signature}),
-                encoding="utf-8",
-            )
             checkpoint = {
                 "groups": [
                     {
@@ -360,12 +351,31 @@ class TranscriberTests(unittest.TestCase):
             )
             ckpt_dir = output_dir / ".stt_checkpoints"
             ckpt_dir.mkdir()
-            (ckpt_dir / "meta.json").write_text(
-                json.dumps({"input_signature": "stale-signature"}),
-                encoding="utf-8",
-            )
+            stale_mtime = audio_path.stat().st_mtime - 1000
             (ckpt_dir / "groups_0000.json").write_text(
-                json.dumps({"groups": []}),
+                json.dumps(
+                    {
+                        "groups": [
+                            {
+                                "group_id": "g_000000_000000",
+                                "span_start_idx": 0,
+                                "span_end_idx": 0,
+                                "start": 0.0,
+                                "end": 1.0,
+                                "source_mtime": stale_mtime,
+                                "entries": [
+                                    {
+                                        "start": 0.0,
+                                        "end": 1.0,
+                                        "text": "stale",
+                                        "confidence": 0.9,
+                                    }
+                                ],
+                                "detected_language": "en",
+                            }
+                        ]
+                    }
+                ),
                 encoding="utf-8",
             )
 
@@ -420,35 +430,6 @@ class TranscriberTests(unittest.TestCase):
 
             self.assertEqual(transcript.entries[0].text, "fresh")
             self.assertEqual(fake_whisper.calls, 1)
-            self.assertFalse(ckpt_dir.exists())
-
-    def test_run_refuses_to_publish_stale_output_when_inputs_change(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            audio_path = Path(tmp_dir) / "voice.flac"
-            audio_path.write_bytes(b"stub")
-            output_dir = Path(tmp_dir) / "audio"
-            output_dir.mkdir()
-            (output_dir / "vad.json").write_text(
-                json.dumps([{"start": 0.0, "end": 1.0}]), encoding="utf-8"
-            )
-
-            transcriber = Transcriber(TranscriberConfig())
-            with (
-                patch.object(
-                    transcriber,
-                    "_run_transcription",
-                    return_value=STTTranscript(language="en", entries=[]),
-                ),
-                patch.object(
-                    transcriber,
-                    "_input_signature",
-                    side_effect=["sig-a", "sig-b"],
-                ),
-            ):
-                with self.assertRaisesRegex(RuntimeError, "inputs changed"):
-                    transcriber.run(audio_path, output_dir)
-
-            self.assertFalse((output_dir / "stt.json").exists())
 
     def test_run_uses_vad_segment_offsets_for_transcript_timestamps(self) -> None:
         with (
@@ -796,6 +777,31 @@ class TranscriberTests(unittest.TestCase):
                 ("次どうする?", 2.4, 3.0),
             ],
         )
+
+    def test_split_with_aligned_tokens_splits_merged_token_proportionally(
+        self,
+    ) -> None:
+        segments = split_with_aligned_tokens(
+            "完璧、プロじゃん、プロ。イェーイ。",
+            [
+                _AlignedToken(text="完璧", start=80.904, end=81.504, confidence=0.9),
+                _AlignedToken(
+                    text="プロじゃん", start=81.504, end=83.064, confidence=0.9
+                ),
+                _AlignedToken(
+                    text="プロイェーイ", start=83.064, end=84.504, confidence=0.9
+                ),
+            ],
+            80.904,
+            84.504,
+            "ja",
+        )
+
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0][0], "完璧、プロじゃん、プロ。")
+        self.assertEqual(segments[1][0], "イェーイ。")
+        self.assertAlmostEqual(segments[0][2], segments[1][1])
+        self.assertGreater(segments[1][2], segments[1][1])
 
     def test_segment_to_entries_prefers_word_timestamps_for_pause_split(self) -> None:
         transcriber = Transcriber()
@@ -1945,7 +1951,7 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
         self.assertAlmostEqual(aligned.entries[0]["start"], 2.0)
         self.assertAlmostEqual(aligned.entries[0]["end"], 3.2)
 
-    def test_align_group_result_rejects_zero_duration_aligned_entries(self) -> None:
+    def test_align_group_result_repairs_zero_duration_aligned_entries(self) -> None:
         transcriber = Transcriber(
             TranscriberConfig(
                 forced_aligner_enabled=True,
@@ -2004,14 +2010,16 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                 ),
             )
 
-        self.assertFalse(aligned.alignment_applied)
-        self.assertEqual(aligned.entries, result.entries)
+        self.assertTrue(aligned.alignment_applied)
+        self.assertEqual(len(aligned.entries), 1)
+        self.assertEqual(aligned.entries[0]["text"], "あっ、あっ、あっ")
+        self.assertGreater(aligned.entries[0]["end"], aligned.entries[0]["start"])
 
     def test_align_group_result_whisper_backend(self) -> None:
         transcriber = Transcriber(
             TranscriberConfig(
                 forced_aligner_enabled=True,
-                forced_aligner_backend="whisper",
+                forced_aligner_backend="faster-whisper",
             )
         )
         result = GroupResult(
@@ -2044,7 +2052,11 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
             pass
 
         class FakeWhisperModel:
-            def transcribe(self, audio_path, **kwargs):
+            def __init__(self) -> None:
+                self.audio_input = None
+
+            def transcribe(self, audio_input, **kwargs):
+                self.audio_input = audio_input
                 return iter(
                     [
                         FakeSegment(
@@ -2056,10 +2068,12 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                     ]
                 ), FakeInfo()
 
+        fake_model = FakeWhisperModel()
+
         with (
             patch(
                 "yorishiro.audio.transcription.get_whisper_forced_aligner",
-                return_value=FakeWhisperModel(),
+                return_value=fake_model,
             ),
             patch(
                 "yorishiro.audio.transcription.sf.read",
@@ -2077,6 +2091,7 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                 ),
             )
 
+        self.assertIsInstance(fake_model.audio_input, np.ndarray)
         self.assertTrue(aligned.alignment_applied)
 
     def test_run_transcription_aligns_when_resuming_from_checkpoints(self) -> None:
@@ -2141,7 +2156,7 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                     [{"start": 0.0, "end": 1.0}],
                     "en",
                     output_dir=Path("/tmp"),
-                    input_signature="sig",
+                    input_mtime=1.0,
                 )
 
         maybe_align.assert_called_once()

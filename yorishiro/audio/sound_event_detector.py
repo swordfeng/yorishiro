@@ -68,6 +68,14 @@ class SoundEventDetector:
         self._clap_processor = None
         self._text_features_cache: dict[tuple[str, ...], torch.Tensor] = {}
 
+    def release_models(self) -> None:
+        from yorishiro.audio._speech_support import clear_torch_cache
+
+        self._clap_model = None
+        self._clap_processor = None
+        self._text_features_cache.clear()
+        clear_torch_cache()
+
     @staticmethod
     def _embedding_tensor(output: torch.Tensor | object) -> torch.Tensor:
         """Extract the embedding tensor from CLAP helper outputs across transformers versions."""

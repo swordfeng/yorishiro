@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,7 @@ AUTHORITY_LEVELS = ("PRIMARY", "SECONDARY", "RUMOR")
 @dataclass
 class Source:
     """A source material in the project."""
+
     id: str
     type: str
     path: str
@@ -35,6 +37,7 @@ class Source:
 @dataclass
 class ModelConfig:
     """Model configuration for a cloud LLM processing step."""
+
     backend: str | None = None
     provider: str | None = None
     model: str | None = None
@@ -87,6 +90,7 @@ _CLOUD_MODEL_FIELDS = {
 @dataclass
 class Project:
     """Project configuration loaded from project.yaml."""
+
     config_path: Path
     root: Path
     name: str
@@ -95,6 +99,8 @@ class Project:
     providers: dict[str, dict[str, Any]]
     steps: dict[str, dict[str, Any]]
     step_groups: dict[str, list[str]]
+    hf_token: str | None = None
+    hf_token_env: str = "YORISHIRO_HF_TOKEN"
 
     @classmethod
     def load(cls, path: Path) -> Project:
@@ -129,7 +135,16 @@ class Project:
         steps = raw.get("steps", {})
         step_groups = raw.get("step_groups", {})
 
-        return cls(
+        hf_cfg = project_data.get("hf_token") or raw.get("hf_token")
+        hf_token_val: str | None = None
+        hf_token_env_val: str = "YORISHIRO_HF_TOKEN"
+        if isinstance(hf_cfg, dict):
+            hf_token_val = hf_cfg.get("value")
+            hf_token_env_val = hf_cfg.get("env", "YORISHIRO_HF_TOKEN")
+        elif isinstance(hf_cfg, str):
+            hf_token_val = hf_cfg
+
+        project = cls(
             config_path=config_path,
             root=root,
             name=project_data.get("name", ""),
@@ -138,11 +153,34 @@ class Project:
             providers=providers,
             steps=steps,
             step_groups=step_groups,
+            hf_token=hf_token_val,
+            hf_token_env=hf_token_env_val,
         )
+        project.login_huggingface()
+        return project
 
     # ------------------------------------------------------------------
     # Path helpers
     # ------------------------------------------------------------------
+
+    def resolved_hf_token(self) -> str | None:
+        """Return the HuggingFace token, checking direct value then env var."""
+        if self.hf_token:
+            return self.hf_token
+        return os.environ.get(self.hf_token_env)
+
+    def login_huggingface(self) -> None:
+        """Authenticate with HuggingFace using the project-level token.
+
+        After this call, all HF libraries (transformers, pyannote, wespeaker)
+        can download gated models without explicit token arguments.
+        """
+        token = self.resolved_hf_token()
+        if not token:
+            return
+        from huggingface_hub import login
+
+        login(token=token, add_to_git_credential=False)
 
     def step_dir(self, source_id: str, step_name: str) -> Path:
         """Get the output directory for a specific step of a source.
@@ -241,7 +279,9 @@ class Project:
             if key != "provider":
                 merged_cfg[key] = value
 
-        cloud_fields = {k: merged_cfg[k] for k in _CLOUD_MODEL_FIELDS if k in merged_cfg}
+        cloud_fields = {
+            k: merged_cfg[k] for k in _CLOUD_MODEL_FIELDS if k in merged_cfg
+        }
         step_mc = ModelConfig(**cloud_fields)
         return FALLBACK_CONFIG.merge(step_mc)
 
@@ -258,11 +298,14 @@ class Project:
         aliases_path = self.step_dir(source_id, "aliases") / "character_aliases.json"
         if not aliases_path.exists():
             # fall back to legacy path
-            aliases_path = self.source_dir(source_id) / "characters" / "character_aliases.json"
+            aliases_path = (
+                self.source_dir(source_id) / "characters" / "character_aliases.json"
+            )
         if not aliases_path.exists():
             return []
 
         import json
+
         data = json.loads(aliases_path.read_text(encoding="utf-8"))
         return [k for k in data.keys() if k != "UNRESOLVED"]
 
@@ -277,5 +320,7 @@ class Project:
         chapters = list(chapters_dir.glob("ch*.txt"))
         return sorted(
             chapters,
-            key=lambda p: int(match.group()) if (match := re.search(r"\d+", p.stem)) else 0,
+            key=lambda p: (
+                int(match.group()) if (match := re.search(r"\d+", p.stem)) else 0
+            ),
         )

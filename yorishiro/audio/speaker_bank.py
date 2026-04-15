@@ -6,7 +6,6 @@ Manages speaker embeddings and maps local speaker IDs to global SPKR_XXX IDs.
 from __future__ import annotations
 
 import json
-import os
 import pickle
 from pathlib import Path
 
@@ -26,7 +25,6 @@ class SpeakerBankManagerConfig:
     # - "pyannote": pyannote/embedding
     # - any Hugging Face model id (e.g. "eek/wespeaker-voxceleb-resnet293-LM")
     embedding_backend: str = "wespeaker"
-    hf_token_env: str = "YORISHIRO_HF_TOKEN"
 
 
 class SpeakerBankManager:
@@ -86,13 +84,6 @@ class SpeakerBankManager:
             from pyannote.audio import Model
 
             if self._embedding_model is None:
-                hf_token = os.environ.get(self.config.hf_token_env)
-                if not hf_token:
-                    print(
-                        f"    [SpeakerEmbedding] {self.config.hf_token_env} not set, skipping embedding extraction"
-                    )
-                    return None
-
                 backend = (self.config.embedding_backend or "").strip()
                 if backend in {
                     "wespeaker",
@@ -107,7 +98,7 @@ class SpeakerBankManager:
                 else:
                     model_id = "pyannote/wespeaker-voxceleb-resnet34-LM"
 
-                model = Model.from_pretrained(model_id, token=hf_token)
+                model = Model.from_pretrained(model_id)
                 device = torch.device(get_device())
                 model = model.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                 self._embedding_model = Inference(model, window="whole")

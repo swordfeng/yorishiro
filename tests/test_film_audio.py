@@ -143,9 +143,7 @@ class DiarizerTests(unittest.TestCase):
             audio_path.write_bytes(b"stub")
             output_dir = Path(tmp_dir) / "audio"
 
-            turns = Diarizer(DiarizerConfig(hf_token_env="MISSING_TOKEN")).run(
-                audio_path, output_dir
-            )
+            turns = Diarizer(DiarizerConfig()).run(audio_path, output_dir)
 
             self.assertEqual(
                 turns, [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
@@ -156,10 +154,7 @@ class DiarizerTests(unittest.TestCase):
             self.assertEqual(saved[0]["speaker"], "SPEAKER_00")
 
     def test_run_resumes_from_checkpoint_and_saves_speaker_bank(self) -> None:
-        with (
-            tempfile.TemporaryDirectory() as tmp_dir,
-            patch.dict(os.environ, {"HF_TOKEN": "x"}),
-        ):
+        with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = Path(tmp_dir) / "voice.flac"
             audio_path.write_bytes(b"stub")
             output_dir = Path(tmp_dir) / "audio"
@@ -184,7 +179,7 @@ class DiarizerTests(unittest.TestCase):
                 np.array([[1.0, 2.0]], dtype=np.float32),
             )
 
-            diarizer = Diarizer(DiarizerConfig(hf_token_env="HF_TOKEN"))
+            diarizer = Diarizer(DiarizerConfig())
             with (
                 patch(
                     "yorishiro.audio.diarization.sf.info",
@@ -2193,7 +2188,7 @@ class SpeakerAttributorTests(unittest.TestCase):
     def test_default_config_uses_utterance_averaged_umap_hdbscan(self) -> None:
         cfg = SpeakerAttributorConfig()
         self.assertEqual(cfg.clustering_method, "umap_hdbscan_auto")
-        self.assertEqual(cfg.utterance_aggregation, "medoid")
+        self.assertEqual(cfg.utterance_aggregation, "weighted_medoid")
         self.assertEqual(cfg.umap_n_neighbors, 5)
         self.assertEqual(cfg.umap_n_components, 5)
         self.assertEqual(cfg.hdbscan_min_cluster_size, 10)
@@ -2514,16 +2509,16 @@ class SpeakerAttributorTests(unittest.TestCase):
             )
 
             with (
-                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch.object(attributor, "_window_rms_db", return_value=-20.0),
                 patch(
                     "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
                     return_value=emb,
                 ) as extract,
             ):
-                valid_1, embs_1 = attributor._embed_windows(
+                valid_1, embs_1, _ = attributor._embed_windows(
                     windows, audio_path, bank, output_dir, stt=stt
                 )
-                valid_2, embs_2 = attributor._embed_windows(
+                valid_2, embs_2, _ = attributor._embed_windows(
                     windows, audio_path, bank, output_dir, stt=stt
                 )
 
@@ -2556,7 +2551,7 @@ class SpeakerAttributorTests(unittest.TestCase):
             )
 
             with (
-                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch.object(attributor, "_window_rms_db", return_value=-20.0),
                 patch(
                     "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
                     return_value=emb,
@@ -2602,7 +2597,7 @@ class SpeakerAttributorTests(unittest.TestCase):
             )
 
             with (
-                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch.object(attributor, "_window_rms_db", return_value=-20.0),
                 patch(
                     "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
                     return_value=emb,
@@ -2642,7 +2637,7 @@ class SpeakerAttributorTests(unittest.TestCase):
                 SpeakerAttributorConfig(clustering_method="umap_hdbscan_manual")
             )
             with (
-                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch.object(attributor, "_window_rms_db", return_value=-20.0),
                 patch.object(
                     attributor,
                     "_run_umap_hdbscan",
@@ -2683,7 +2678,7 @@ class SpeakerAttributorTests(unittest.TestCase):
                 SpeakerAttributorConfig(clustering_method="umap_hdbscan_manual")
             )
             with (
-                patch.object(attributor, "_window_has_energy", return_value=True),
+                patch.object(attributor, "_window_rms_db", return_value=-20.0),
                 patch.object(
                     attributor,
                     "_run_umap_hdbscan",
@@ -2795,7 +2790,7 @@ class SpeakerAttributorTests(unittest.TestCase):
                 SpeakerAttributorConfig(clustering_method="umap_hdbscan_auto")
             )
             with (
-                patch.object(attributor, "_window_has_energy", return_value=False),
+                patch.object(attributor, "_window_rms_db", return_value=None),
                 patch(
                     "yorishiro.audio.speaker_attribution.SpeakerBankManager.extract_speaker_embedding",
                     side_effect=fake_extract,
@@ -2805,6 +2800,102 @@ class SpeakerAttributorTests(unittest.TestCase):
 
             self.assertEqual(call_count, 0)
             self.assertEqual(result.entries[0].speaker_id, "UNKNOWN")
+
+    def test_weighted_mean_aggregation(self) -> None:
+        e1 = np.array([1.0, 0.0], dtype=np.float64)
+        e2 = np.array([0.0, 1.0], dtype=np.float64)
+        embs = [e1, e2]
+
+        w_equal = np.array([0.5, 0.5], dtype=np.float64)
+        result = SpeakerAttributor._utterance_weighted_mean(embs, w_equal)
+        self.assertTrue(np.allclose(result, 0.5 * e1 + 0.5 * e2, atol=1e-6))
+
+        w_heavy_first = np.array([0.9, 0.1], dtype=np.float64)
+        result = SpeakerAttributor._utterance_weighted_mean(embs, w_heavy_first)
+        expected = 0.9 * e1 + 0.1 * e2
+        self.assertTrue(np.allclose(result, expected, atol=1e-6))
+
+    def test_weighted_mean_single_embedding(self) -> None:
+        e = np.array([1.0, 2.0], dtype=np.float64)
+        result = SpeakerAttributor._utterance_weighted_mean([e])
+        self.assertTrue(np.allclose(result, e))
+
+    def test_weighted_medoid_picks_high_weight_candidate(self) -> None:
+        e_center = np.array([1.0, 0.0], dtype=np.float64)
+        e_near = np.array([0.9, 0.1], dtype=np.float64)
+        e_far = np.array([0.0, 1.0], dtype=np.float64)
+        embs = [e_center, e_near, e_far]
+
+        w = np.array([0.5, 0.3, 0.2], dtype=np.float64)
+        result = SpeakerAttributor._utterance_weighted_medoid(embs, w)
+        norms = np.linalg.norm(result)
+        self.assertGreater(float(norms), 0.0)
+
+        w_heavy_far = np.array([0.1, 0.1, 0.8], dtype=np.float64)
+        result_far = SpeakerAttributor._utterance_weighted_medoid(embs, w_heavy_far)
+        self.assertTrue(np.allclose(result_far, e_far))
+
+    def test_weighted_medoid_single_embedding(self) -> None:
+        e = np.array([1.0, 2.0], dtype=np.float64)
+        result = SpeakerAttributor._utterance_weighted_medoid([e])
+        self.assertTrue(np.allclose(result, e))
+
+    def test_utterance_window_weights_center_heavy(self) -> None:
+        attributor = SpeakerAttributor(
+            SpeakerAttributorConfig(energy_threshold_db=-40.0)
+        )
+        stt = STTTranscript(
+            language="ja",
+            entries=[STTEntry(start=0.0, end=10.0, text="test", confidence=0.9)],
+        )
+        windows = [
+            EmbeddingWindow(stt_idx=0, start=0.0, end=1.5, rms_db=-20.0),
+            EmbeddingWindow(stt_idx=0, start=4.25, end=5.75, rms_db=-10.0),
+            EmbeddingWindow(stt_idx=0, start=8.5, end=10.0, rms_db=-30.0),
+        ]
+        weights = attributor._utterance_window_weights([0, 1, 2], windows, stt)
+
+        self.assertAlmostEqual(weights.sum(), 1.0, places=5)
+        self.assertGreater(weights[1], weights[0])
+        self.assertGreater(weights[1], weights[2])
+
+    def test_utterance_window_weights_log_energy_scaling(self) -> None:
+        attributor = SpeakerAttributor(
+            SpeakerAttributorConfig(energy_threshold_db=-40.0)
+        )
+        stt = STTTranscript(
+            language="ja",
+            entries=[STTEntry(start=0.0, end=10.0, text="test", confidence=0.9)],
+        )
+        windows = [
+            EmbeddingWindow(stt_idx=0, start=4.0, end=5.5, rms_db=-10.0),
+            EmbeddingWindow(stt_idx=0, start=4.5, end=6.0, rms_db=-30.0),
+        ]
+        weights = attributor._utterance_window_weights([0, 1], windows, stt)
+
+        self.assertAlmostEqual(weights.sum(), 1.0, places=5)
+        self.assertGreater(weights[0], weights[1])
+
+    def test_aggregate_utterance_dispatches_weighted_medoid(self) -> None:
+        attributor = SpeakerAttributor(
+            SpeakerAttributorConfig(utterance_aggregation="weighted_medoid")
+        )
+        e1 = np.array([1.0, 0.0], dtype=np.float64)
+        e2 = np.array([0.0, 1.0], dtype=np.float64)
+        weights = np.array([0.7, 0.3], dtype=np.float64)
+        result = attributor._aggregate_utterance_embeddings([e1, e2], weights=weights)
+        self.assertTrue(np.allclose(result, e1))
+
+    def test_aggregate_utterance_dispatches_weighted_mean(self) -> None:
+        attributor = SpeakerAttributor(
+            SpeakerAttributorConfig(utterance_aggregation="weighted_mean")
+        )
+        e1 = np.array([1.0, 0.0], dtype=np.float64)
+        e2 = np.array([0.0, 1.0], dtype=np.float64)
+        weights = np.array([0.75, 0.25], dtype=np.float64)
+        result = attributor._aggregate_utterance_embeddings([e1, e2], weights=weights)
+        expected = 0.75 * e1 + 0.25 * e2
+        self.assertTrue(np.allclose(result, expected, atol=1e-6))
 
 
 class AudioSeparatorTests(unittest.TestCase):

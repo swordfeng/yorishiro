@@ -248,7 +248,6 @@ class ModelRegistry:
             str(cfg.get("umap_min_dist", "")),
             str(cfg.get("umap_n_components", "")),
             str(cfg.get("utterance_aggregation", "")),
-            str(cfg.get("hf_token_env", "")),
         ]
         return "film.audio.speakers::" + "|".join(parts)
 
@@ -464,8 +463,6 @@ class ModelRegistry:
             kwargs["umap_n_components"] = int(cfg["umap_n_components"])
         if cfg.get("utterance_aggregation") is not None:
             kwargs["utterance_aggregation"] = str(cfg["utterance_aggregation"])
-        if cfg.get("hf_token_env") is not None:
-            kwargs["hf_token_env"] = cfg["hf_token_env"]
 
         return SpeakerAttributor(SpeakerAttributorConfig(**kwargs))
 

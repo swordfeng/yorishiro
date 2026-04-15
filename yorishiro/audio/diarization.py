@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -26,7 +25,6 @@ class DiarizerConfig:
     diarization_backend: str = "pyannote"
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     diarization_batch_size: int = 32
-    hf_token_env: str = "YORISHIRO_HF_TOKEN"
 
 
 class Diarizer:
@@ -138,13 +136,6 @@ class Diarizer:
         force: bool = False,
     ) -> list[dict[str, Any]]:
         try:
-            hf_token = os.environ.get(self.config.hf_token_env)
-            if not hf_token:
-                print(
-                    f"    [Diarization] {self.config.hf_token_env} not set, using single-speaker fallback"
-                )
-                return [{"speaker": "SPEAKER_00", "start": 0.0, "end": float("inf")}]
-
             info = sf.info(str(audio_path))
             total_duration = info.duration
             sample_rate = info.samplerate

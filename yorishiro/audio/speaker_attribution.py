@@ -37,6 +37,7 @@ class EmbeddingWindow:
     stt_idx: int
     start: float
     end: float
+    rms_db: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -93,8 +94,7 @@ class SpeakerAttributorConfig:
     umap_n_neighbors: int = 5
     umap_min_dist: float = 0.0
     umap_n_components: int = 5
-    utterance_aggregation: str = "medoid"
-    hf_token_env: str = "YORISHIRO_HF_TOKEN"
+    utterance_aggregation: str = "weighted_medoid"
 
 
 class SpeakerAttributor:
@@ -140,7 +140,6 @@ class SpeakerAttributor:
         bank = SpeakerBankManager(
             SpeakerBankManagerConfig(
                 embedding_backend=self.config.embedding_backend,
-                hf_token_env=self.config.hf_token_env,
             )
         )
 
@@ -155,7 +154,7 @@ class SpeakerAttributor:
             return self._unknown_attribution(stt, output_dir, bank)
 
         # ── Phase 2: Embed windows ───────────────────────────────────
-        valid_indices_all, embeddings_all_raw = self._embed_windows(
+        valid_indices_all, embeddings_all_raw, windows = self._embed_windows(
             windows, audio_path, bank, output_dir, stt=stt, force=force
         )
 
@@ -239,7 +238,9 @@ class SpeakerAttributor:
         else:
             if self.config.diagnostics_enabled:
                 self._print_diagnostics(X, windows, valid_indices_cluster)
-            cluster_labels = self._cluster_windows(X, windows, valid_indices_cluster)
+            cluster_labels = self._cluster_windows(
+                X, windows, valid_indices_cluster, stt=stt
+            )
 
         unique_labels_in_cluster = set(int(x) for x in cluster_labels if x >= 0)
         label_to_speaker: dict[int, str] = {}
@@ -252,17 +253,31 @@ class SpeakerAttributor:
 
         # ── Compute speaker centroids from window embeddings ────────
         speaker_emb_accum: dict[str, list[np.ndarray]] = defaultdict(list)
+        speaker_win_positions: dict[str, list[int]] = defaultdict(list)
         for pos in range(len(valid_indices_cluster)):
             label = int(cluster_labels[pos])
             if label < 0:
                 continue
             speaker_id = label_to_speaker[label]
             speaker_emb_accum[speaker_id].append(embeddings_cluster[pos])
+            speaker_win_positions[speaker_id].append(pos)
 
-        speaker_centroids_raw: dict[str, np.ndarray] = {
-            speaker_id: np.mean(np.stack(embs), axis=0)
-            for speaker_id, embs in speaker_emb_accum.items()
-        }
+        speaker_centroids_raw: dict[str, np.ndarray] = {}
+        for speaker_id, embs in speaker_emb_accum.items():
+            if (
+                self.config.utterance_aggregation.startswith("weighted_")
+                and stt is not None
+            ):
+                win_positions = speaker_win_positions[speaker_id]
+                positions = [valid_indices_cluster[p] for p in win_positions]
+                weights = self._utterance_window_weights(positions, windows, stt)
+                speaker_centroids_raw[speaker_id] = (
+                    self._aggregate_utterance_embeddings(embs, weights=weights)
+                )
+            else:
+                speaker_centroids_raw[speaker_id] = (
+                    self._aggregate_utterance_embeddings(embs)
+                )
         # Normalize centroids for cosine similarity comparisons.
         speaker_centroids: dict[str, np.ndarray] = {}
         for speaker_id, c in speaker_centroids_raw.items():
@@ -364,7 +379,7 @@ class SpeakerAttributor:
 
         return windows
 
-    def _window_has_energy(self, audio_path: Path, win: EmbeddingWindow) -> bool:
+    def _window_rms_db(self, audio_path: Path, win: EmbeddingWindow) -> float | None:
         try:
             info = sf.info(str(audio_path))
             start_sample = int(win.start * info.samplerate)
@@ -380,11 +395,10 @@ class SpeakerAttributor:
                 chunk = chunk.mean(axis=1)
             rms = np.sqrt(np.mean(chunk**2))
             if rms < 1e-10:
-                return False
-            rms_db = 20.0 * np.log10(rms)
-            return rms_db >= self.config.energy_threshold_db
+                return None
+            return float(20.0 * np.log10(rms))
         except Exception:
-            return False
+            return None
 
     def _embed_windows(
         self,
@@ -394,9 +408,10 @@ class SpeakerAttributor:
         output_dir: Path,
         stt: STTTranscript | None = None,
         force: bool = False,
-    ) -> tuple[list[int], list[np.ndarray]]:
+    ) -> tuple[list[int], list[np.ndarray], list[EmbeddingWindow]]:
         valid_indices: list[int] = []
         embeddings: list[np.ndarray] = []
+        enriched_windows: list[EmbeddingWindow] = []
         cache = self._load_embedding_cache(audio_path, output_dir, stt=stt, force=force)
 
         print(f"  [Speakers] Extracting embeddings for {len(windows)} window(s) ...")
@@ -407,11 +422,21 @@ class SpeakerAttributor:
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         ) as progress:
             for i, win in enumerate(windows):
-                if not self._window_has_energy(audio_path, win):
+                rms_db = self._window_rms_db(audio_path, win)
+                if rms_db is None or rms_db < self.config.energy_threshold_db:
+                    enriched_windows.append(win)
                     progress.update(1)
                     continue
 
-                cache_key = self._embedding_cache_key(win)
+                enriched_win = EmbeddingWindow(
+                    stt_idx=win.stt_idx,
+                    start=win.start,
+                    end=win.end,
+                    rms_db=rms_db,
+                )
+                enriched_windows.append(enriched_win)
+
+                cache_key = self._embedding_cache_key(enriched_win)
                 emb = cache.get(cache_key)
                 if emb is None:
                     emb = bank.extract_speaker_embedding(audio_path, win.start, win.end)
@@ -423,7 +448,7 @@ class SpeakerAttributor:
                 progress.update(1)
 
         self._save_embedding_cache(audio_path, output_dir, cache, stt=stt)
-        return valid_indices, embeddings
+        return valid_indices, embeddings, enriched_windows
 
     @staticmethod
     def _embedding_cache_path(output_dir: Path) -> Path:
@@ -699,11 +724,15 @@ class SpeakerAttributor:
         return kept_indices, kept_embeddings
 
     def _cluster_windows(
-        self, X: np.ndarray, windows: list[EmbeddingWindow], valid_indices: list[int]
+        self,
+        X: np.ndarray,
+        windows: list[EmbeddingWindow],
+        valid_indices: list[int],
+        stt: STTTranscript | None = None,
     ) -> np.ndarray:
         method = self.config.clustering_method
         seg_ids, utterance_embs = self._build_utterance_embeddings(
-            X, windows, valid_indices
+            X, windows, valid_indices, stt=stt
         )
         seg_to_pos = {seg_id: i for i, seg_id in enumerate(seg_ids)}
 
@@ -749,19 +778,34 @@ class SpeakerAttributor:
         X: np.ndarray,
         windows: list[EmbeddingWindow],
         valid_indices: list[int],
+        stt: STTTranscript | None = None,
     ) -> tuple[list[int], np.ndarray, np.ndarray, np.ndarray]:
         seg_emb_accum: dict[int, list[np.ndarray]] = defaultdict(list)
+        seg_pos_accum: dict[int, list[int]] = defaultdict(list)
         for pos, win_idx in enumerate(valid_indices):
             win = windows[win_idx]
             seg_emb_accum[win.stt_idx].append(X[pos])
+            seg_pos_accum[win.stt_idx].append(pos)
+
+        needs_weights = self.config.utterance_aggregation.startswith("weighted_")
 
         seg_ids = sorted(seg_emb_accum.keys())
-        utterance_embs_raw = np.stack(
-            [
-                self._aggregate_utterance_embeddings(seg_emb_accum[seg_id])
-                for seg_id in seg_ids
-            ]
-        )
+        utterance_embs_raw_list: list[np.ndarray] = []
+        for seg_id in seg_ids:
+            embs = seg_emb_accum[seg_id]
+            if needs_weights and stt is not None:
+                weights = self._utterance_window_weights(
+                    seg_pos_accum[seg_id], windows, stt
+                )
+                utterance_embs_raw_list.append(
+                    self._aggregate_utterance_embeddings(embs, weights=weights)
+                )
+            else:
+                utterance_embs_raw_list.append(
+                    self._aggregate_utterance_embeddings(embs)
+                )
+
+        utterance_embs_raw = np.stack(utterance_embs_raw_list)
         norms = np.linalg.norm(utterance_embs_raw, axis=1, keepdims=True)
         norms = np.maximum(norms, 1e-10)
         utterance_embs = utterance_embs_raw / norms
@@ -782,18 +826,26 @@ class SpeakerAttributor:
         X: np.ndarray,
         windows: list[EmbeddingWindow],
         valid_indices: list[int],
+        stt: STTTranscript | None = None,
     ) -> tuple[list[int], np.ndarray]:
         seg_ids, utterance_embs, _, _ = self._build_utterance_profiles(
-            X, windows, valid_indices
+            X, windows, valid_indices, stt=stt
         )
         return seg_ids, utterance_embs
 
     def _aggregate_utterance_embeddings(
-        self, embeddings: list[np.ndarray]
+        self, embeddings: list[np.ndarray], *, weights: np.ndarray | None = None
     ) -> np.ndarray:
-        if self.config.utterance_aggregation == "mean":
+        mode = self.config.utterance_aggregation
+        if mode == "mean":
             return self._utterance_mean(embeddings)
-        return self._utterance_medoid(embeddings)
+        if mode == "medoid":
+            return self._utterance_medoid(embeddings)
+        if mode == "weighted_mean":
+            return self._utterance_weighted_mean(embeddings, weights)
+        if mode == "weighted_medoid":
+            return self._utterance_weighted_medoid(embeddings, weights)
+        return self._utterance_weighted_medoid(embeddings, weights)
 
     @staticmethod
     def _utterance_mean(embeddings: list[np.ndarray]) -> np.ndarray:
@@ -814,6 +866,76 @@ class SpeakerAttributor:
         avg_sims = sim_matrix.mean(axis=1)
         best_idx = int(np.argmax(avg_sims))
         return X[best_idx]
+
+    @staticmethod
+    def _utterance_weighted_mean(
+        embeddings: list[np.ndarray], weights: np.ndarray | None = None
+    ) -> np.ndarray:
+        if len(embeddings) == 1:
+            return embeddings[0]
+        X = np.stack(embeddings)
+        if weights is None or len(weights) != len(embeddings):
+            return np.mean(X, axis=0)
+        w = np.maximum(weights, 1e-10)
+        w_sum = w.sum()
+        if w_sum < 1e-10:
+            return np.mean(X, axis=0)
+        result = (X * w[:, None]).sum(axis=0) / w_sum
+        return result
+
+    @staticmethod
+    def _utterance_weighted_medoid(
+        embeddings: list[np.ndarray], weights: np.ndarray | None = None
+    ) -> np.ndarray:
+        if len(embeddings) == 1:
+            return embeddings[0]
+
+        X = np.stack(embeddings)
+        norms = np.linalg.norm(X, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-10)
+        Xn = X / norms
+        sim_matrix = Xn @ Xn.T
+
+        if weights is None or len(weights) != len(embeddings):
+            avg_sims = sim_matrix.mean(axis=1)
+        else:
+            w = np.maximum(weights, 1e-10)
+            w_sum = w.sum()
+            if w_sum < 1e-10:
+                avg_sims = sim_matrix.mean(axis=1)
+            else:
+                avg_sims = (sim_matrix * w[None, :]).sum(axis=1) / w_sum
+
+        best_idx = int(np.argmax(avg_sims))
+        return X[best_idx]
+
+    def _utterance_window_weights(
+        self,
+        positions: list[int],
+        windows: list[EmbeddingWindow],
+        stt: STTTranscript,
+    ) -> np.ndarray:
+        threshold = self.config.energy_threshold_db
+        weights = np.zeros(len(positions), dtype=np.float64)
+        for i, pos in enumerate(positions):
+            win = windows[pos]
+            entry = stt.entries[win.stt_idx]
+            duration = entry.end - entry.start
+            midpoint = (entry.start + entry.end) / 2.0
+            log_energy = max(win.rms_db - threshold, 0.0)
+            if duration < 1e-6:
+                sigma = 1.0
+            else:
+                sigma = duration / 4.0
+            win_center = (win.start + win.end) / 2.0
+            gaussian = np.exp(-0.5 * ((win_center - midpoint) / sigma) ** 2)
+            weights[i] = log_energy * gaussian
+        total = weights.sum()
+        if total < 1e-10:
+            weights = np.ones(len(positions), dtype=np.float64) / len(positions)
+        else:
+            weights /= total
+        return weights
 
     @staticmethod
     def _utterance_coherence(embeddings: list[np.ndarray]) -> float:

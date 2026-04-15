@@ -106,8 +106,6 @@ class DiarizerConfigLike(Protocol):
     def diarization_model(self) -> str: ...
     @property
     def diarization_batch_size(self) -> int: ...
-    @property
-    def hf_token_env(self) -> str: ...
 
 
 class TranscriberConfigLike(Protocol):
@@ -290,16 +288,12 @@ def release_model_caches(*, categories: set[str] | None = None) -> None:
 def get_diarization_pipeline(config: DiarizerConfigLike) -> DiarizationPipelineLike:
     from pyannote.audio import Pipeline
 
-    hf_token = os.environ.get(config.hf_token_env)
-    if not hf_token:
-        raise RuntimeError(f"{config.hf_token_env} not set")
-
     key = (config.diarization_model, config.diarization_batch_size, get_device())
     cached = _DIARIZATION_PIPELINES.get(key)
     if cached is not None:
         return cached
 
-    pipeline = Pipeline.from_pretrained(config.diarization_model, token=hf_token)
+    pipeline = Pipeline.from_pretrained(config.diarization_model)
     device = torch.device(get_device())
     pipeline = cast(Any, pipeline).to(device)
     if hasattr(pipeline, "_segmentation"):

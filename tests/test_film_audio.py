@@ -27,6 +27,7 @@ from yorishiro.audio.speaker_attribution import (
 )
 from yorishiro.audio.transcription import (
     _AlignedToken,
+    _reconcile_whisper_tokens,
     GroupResult,
     SpeechSpan,
     SpeechGroup,
@@ -2040,8 +2041,9 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                 self.probability = probability
 
         class FakeSegment:
-            def __init__(self, words):
+            def __init__(self, words, text=""):
                 self.words = words
+                self.text = text
 
         class FakeInfo:
             pass
@@ -2058,7 +2060,8 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                             [
                                 FakeWord("Hello", 0.0, 0.8, 0.9),
                                 FakeWord("there", 0.8, 1.6, 0.85),
-                            ]
+                            ],
+                            text="Hello there",
                         )
                     ]
                 ), FakeInfo()
@@ -2155,6 +2158,85 @@ class ForcedAlignmentFlowTests(unittest.TestCase):
                 )
 
         maybe_align.assert_called_once()
+
+
+class ReconcileWhisperTokensTests(unittest.TestCase):
+    """Tests for _reconcile_whisper_tokens sequence-alignment logic."""
+
+    def test_identical_text_passes_through(self) -> None:
+        tokens = [
+            _AlignedToken(text="Hello", start=0.0, end=0.5, confidence=0.9),
+            _AlignedToken(text="world", start=0.5, end=1.0, confidence=0.8),
+        ]
+        result = _reconcile_whisper_tokens(tokens, "Hello world")
+        combined = "".join(t.text for t in result)
+        self.assertEqual(combined, "Helloworld")
+
+    def test_substitution_drops_mismatched_chars(self) -> None:
+        # Original: 彼女は走った, Whisper: 彼女が走った (は→が)
+        tokens = [
+            _AlignedToken(text="彼女が走った", start=0.0, end=1.0, confidence=0.9),
+        ]
+        result = _reconcile_whisper_tokens(tokens, "彼女は走った")
+        combined = "".join(t.text for t in result)
+        # "は" has no match from Whisper, "が" is dropped; matched chars survive
+        self.assertIn("彼女", combined)
+        self.assertIn("走った", combined)
+        self.assertNotIn("が", combined)
+
+    def test_whisper_insertion_ignored(self) -> None:
+        # Original: "abc", Whisper adds extra "X": "aXbc"
+        tokens = [
+            _AlignedToken(text="aX", start=0.0, end=0.5, confidence=0.9),
+            _AlignedToken(text="bc", start=0.5, end=1.0, confidence=0.8),
+        ]
+        result = _reconcile_whisper_tokens(tokens, "abc")
+        combined = "".join(t.text for t in result)
+        self.assertEqual(combined, "abc")
+
+    def test_whisper_deletion_leaves_gap(self) -> None:
+        # Original: "abcd", Whisper drops "b": "acd"
+        tokens = [
+            _AlignedToken(text="a", start=0.0, end=0.3, confidence=0.9),
+            _AlignedToken(text="cd", start=0.5, end=1.0, confidence=0.8),
+        ]
+        result = _reconcile_whisper_tokens(tokens, "abcd")
+        combined = "".join(t.text for t in result)
+        # "b" is not in any Whisper token, so it won't appear
+        self.assertIn("a", combined)
+        self.assertIn("cd", combined)
+
+    def test_empty_tokens_returns_empty(self) -> None:
+        result = _reconcile_whisper_tokens([], "hello")
+        self.assertEqual(result, [])
+
+    def test_empty_original_returns_empty(self) -> None:
+        tokens = [_AlignedToken(text="hello", start=0.0, end=1.0, confidence=0.9)]
+        result = _reconcile_whisper_tokens(tokens, "")
+        self.assertEqual(result, [])
+
+    def test_timing_preserved_from_whisper_tokens(self) -> None:
+        tokens = [
+            _AlignedToken(text="Hello", start=0.1, end=0.5, confidence=0.9),
+            _AlignedToken(text="world", start=0.6, end=1.0, confidence=0.8),
+        ]
+        result = _reconcile_whisper_tokens(tokens, "Hello world")
+        # Find token containing "Hello"
+        hello_tok = [t for t in result if "Hello" in t.text]
+        self.assertTrue(hello_tok)
+        self.assertAlmostEqual(hello_tok[0].start, 0.1)
+        self.assertAlmostEqual(hello_tok[0].end, 0.5)
+
+    def test_punctuation_stripped_for_matching(self) -> None:
+        # Original has punctuation that gets stripped for alignment
+        tokens = [
+            _AlignedToken(text="こんにちは", start=0.0, end=0.5, confidence=0.9),
+            _AlignedToken(text="世界", start=0.5, end=1.0, confidence=0.8),
+        ]
+        result = _reconcile_whisper_tokens(tokens, "こんにちは、世界！")
+        combined = "".join(t.text for t in result)
+        self.assertIn("こんにちは", combined)
+        self.assertIn("世界", combined)
 
 
 class SpeakerAttributorTests(unittest.TestCase):

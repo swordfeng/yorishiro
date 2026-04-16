@@ -184,6 +184,84 @@ def _token_weight(tok: _AlignedToken) -> int:
     return max(len(compact_alignment_text(tok.text)), 1)
 
 
+def _reconcile_whisper_tokens(
+    tokens: list[_AlignedToken],
+    original_align_text: str,
+) -> list[_AlignedToken]:
+    """Align Whisper's retranscribed tokens against the original text.
+
+    Whisper ``transcribe(initial_prompt=...)`` is not true forced alignment —
+    it can insert, delete, or substitute characters.  This function uses
+    ``difflib.SequenceMatcher`` on the character level to keep only the token
+    characters that actually match the original text, remapping each surviving
+    token to the correct position in the original alignment-text sequence.
+    """
+    from difflib import SequenceMatcher
+
+    original_compact = compact_alignment_text(original_align_text)
+    if not original_compact or not tokens:
+        return []
+
+    # Build the Whisper-side compact string and a map from each character
+    # back to (token_index, char_offset_within_token).
+    whisper_chars: list[str] = []
+    char_to_token: list[tuple[int, int]] = []
+    for tok_idx, tok in enumerate(tokens):
+        tok_text = compact_alignment_text(tok.text)
+        for ci, ch in enumerate(tok_text):
+            whisper_chars.append(ch)
+            char_to_token.append((tok_idx, ci))
+
+    whisper_compact = "".join(whisper_chars)
+    if not whisper_compact:
+        return []
+
+    sm = SequenceMatcher(None, original_compact, whisper_compact, autojunk=False)
+
+    # For each matching block, record which original-side character positions
+    # are covered by which token, so we can emit new tokens whose .text
+    # corresponds exactly to original_compact characters.
+    #
+    # matched_spans: list of (orig_start, orig_end, token_idx, token_confidence,
+    #                         token_start_time, token_end_time)
+    # We group consecutive matched chars that come from the same token.
+    matched_spans: list[tuple[int, int, int, float, float, float]] = []
+
+    for orig_pos, whis_pos, length in sm.get_matching_blocks():
+        if length == 0:
+            continue
+        for offset in range(length):
+            oi = orig_pos + offset
+            wi = whis_pos + offset
+            tok_idx, _char_off = char_to_token[wi]
+            tok = tokens[tok_idx]
+            if (
+                matched_spans
+                and matched_spans[-1][2] == tok_idx
+                and matched_spans[-1][1] == oi
+            ):
+                # Extend current span
+                span = matched_spans[-1]
+                matched_spans[-1] = (
+                    span[0], oi + 1, tok_idx, tok.confidence, tok.start, tok.end
+                )
+            else:
+                matched_spans.append(
+                    (oi, oi + 1, tok_idx, tok.confidence, tok.start, tok.end)
+                )
+
+    # Emit one _AlignedToken per span, with text taken from original_compact.
+    reconciled: list[_AlignedToken] = []
+    for orig_start, orig_end, _tok_idx, confidence, t_start, t_end in matched_spans:
+        text = original_compact[orig_start:orig_end]
+        if text:
+            reconciled.append(
+                _AlignedToken(text=text, start=t_start, end=t_end, confidence=confidence)
+            )
+
+    return reconciled
+
+
 def _distribute_token_run(
     tokens: list[_AlignedToken],
     run_start: int,
@@ -1711,9 +1789,10 @@ class Transcriber:
             )
 
         backend = self.config.forced_aligner_backend
+        retranscribed_text: str | None = None
         try:
             if backend == "faster-whisper":
-                aligned_tokens = self._align_with_whisper(
+                aligned_tokens, retranscribed_text = self._align_with_whisper(
                     chunk_audio, align_text, result, language
                 )
             else:
@@ -1729,6 +1808,16 @@ class Transcriber:
 
         if not aligned_tokens:
             return result
+
+        # When using Whisper pseudo-alignment, the retranscribed text may
+        # differ from the original.  Reconcile via sequence alignment so
+        # that only tokens matching the original text contribute timing.
+        if retranscribed_text is not None:
+            aligned_tokens = _reconcile_whisper_tokens(
+                aligned_tokens, align_text
+            )
+            if not aligned_tokens:
+                return result
 
         compact_align_text = compact_alignment_text(align_text)
         coverage = sum(
@@ -1777,6 +1866,15 @@ class Transcriber:
         if not new_entries:
             return result
 
+        align_debug: dict[str, Any] | None = None
+        if self.config.diagnostics_enabled and retranscribed_text is not None:
+            align_debug = {
+                "retranscribed_text": retranscribed_text,
+                "original_text": align_text,
+                "coverage": coverage,
+                "align_confidence": align_confidence,
+            }
+
         return GroupResult(
             group_id=result.group_id,
             span_start_idx=result.span_start_idx,
@@ -1789,7 +1887,7 @@ class Transcriber:
             raw_text=display_text,
             raw_alignment_text=align_text,
             alignment_applied=True,
-            align_debug=None,
+            align_debug=align_debug,
         )
 
     def _align_with_qwen3(
@@ -1849,7 +1947,14 @@ class Transcriber:
         align_text: str,
         result: GroupResult,
         language: str | None,
-    ) -> list[_AlignedToken]:
+    ) -> tuple[list[_AlignedToken], str]:
+        """Run Whisper transcription and return (aligned_tokens, retranscribed_text).
+
+        Note: this uses ``transcribe(initial_prompt=...)`` which is **not**
+        true forced alignment.  Whisper may produce different text from
+        ``align_text``.  The caller must reconcile the two via sequence
+        alignment before using the token positions.
+        """
         aligner = get_whisper_forced_aligner(
             model_name=self.config.forced_aligner_model,
             device=self.config.forced_aligner_device or None,
@@ -1865,7 +1970,9 @@ class Transcriber:
         )
 
         aligned_tokens: list[_AlignedToken] = []
+        retranscribed_parts: list[str] = []
         for seg in segments:
+            retranscribed_parts.append(seg.text)
             for word in seg.words:
                 token_text = strip_punctuation_for_alignment(word.word)
                 if not token_text:
@@ -1879,7 +1986,8 @@ class Transcriber:
                     )
                 )
 
-        return aligned_tokens
+        retranscribed_text = "".join(retranscribed_parts).strip()
+        return aligned_tokens, retranscribed_text
 
     def _assemble_transcript(
         self,

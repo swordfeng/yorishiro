@@ -1037,6 +1037,138 @@ class TranscriberTests(unittest.TestCase):
         config = TranscriberConfig(stt_backend="transformers-whisper")
         self.assertEqual(config.stt_extra_args, {})
 
+    def test_generate_srt_writes_subtitles_file(self) -> None:
+        """STT with generate_srt=True writes subtitles.srt"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            (output_dir / "vad.json").write_text(
+                json.dumps([{"start": 0.0, "end": 1.0}]), encoding="utf-8"
+            )
+            ckpt_dir = output_dir / ".stt_checkpoints"
+            ckpt_dir.mkdir()
+
+            class FakeSoundFile:
+                samplerate = 16000
+                frames = 16000
+
+                def __init__(self, *_args, **_kwargs) -> None:
+                    pass
+
+                def __enter__(self) -> "FakeSoundFile":
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    return None
+
+            checkpoint = {
+                "groups": [
+                    {
+                        "group_id": "g_000000_000000",
+                        "span_start_idx": 0,
+                        "span_end_idx": 0,
+                        "start": 0.0,
+                        "end": 1.0,
+                        "source_mtime": audio_path.stat().st_mtime,
+                        "entries": [
+                            {
+                                "start": 0.0,
+                                "end": 1.0,
+                                "text": "hello world",
+                                "confidence": 0.9,
+                            }
+                        ],
+                        "detected_language": "en",
+                    }
+                ]
+            }
+            (ckpt_dir / "groups_0000.json").write_text(
+                json.dumps(checkpoint), encoding="utf-8"
+            )
+
+            transcriber = Transcriber(TranscriberConfig(generate_srt=True))
+            with (
+                patch("yorishiro.audio.transcription.sf.SoundFile", FakeSoundFile),
+                patch(
+                    "yorishiro.audio.transcription.torch.cuda.is_available",
+                    return_value=False,
+                ),
+            ):
+                transcriber.run(audio_path, output_dir)
+
+            srt_path = output_dir / "subtitles.srt"
+            self.assertTrue(srt_path.exists())
+            srt_content = srt_path.read_text(encoding="utf-8")
+            self.assertIn("1", srt_content)
+            self.assertIn("00:00:00,000 --> 00:00:01,000", srt_content)
+            self.assertIn("hello world", srt_content)
+
+    def test_generate_srt_false_does_not_write_srt(self) -> None:
+        """STT with generate_srt=False (default) does not write subtitles.srt"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "voice.flac"
+            audio_path.write_bytes(b"stub")
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            (output_dir / "vad.json").write_text(
+                json.dumps([{"start": 0.0, "end": 1.0}]), encoding="utf-8"
+            )
+            ckpt_dir = output_dir / ".stt_checkpoints"
+            ckpt_dir.mkdir()
+
+            class FakeSoundFile:
+                samplerate = 16000
+                frames = 16000
+
+                def __init__(self, *_args, **_kwargs) -> None:
+                    pass
+
+                def __enter__(self) -> "FakeSoundFile":
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    return None
+
+            checkpoint = {
+                "groups": [
+                    {
+                        "group_id": "g_000000_000000",
+                        "span_start_idx": 0,
+                        "span_end_idx": 0,
+                        "start": 0.0,
+                        "end": 1.0,
+                        "source_mtime": audio_path.stat().st_mtime,
+                        "entries": [
+                            {
+                                "start": 0.0,
+                                "end": 1.0,
+                                "text": "hello",
+                                "confidence": 0.9,
+                            }
+                        ],
+                        "detected_language": "en",
+                    }
+                ]
+            }
+            (ckpt_dir / "groups_0000.json").write_text(
+                json.dumps(checkpoint), encoding="utf-8"
+            )
+
+            transcriber = Transcriber(TranscriberConfig(generate_srt=False))
+            with (
+                patch("yorishiro.audio.transcription.sf.SoundFile", FakeSoundFile),
+                patch(
+                    "yorishiro.audio.transcription.torch.cuda.is_available",
+                    return_value=False,
+                ),
+            ):
+                transcriber.run(audio_path, output_dir)
+
+            srt_path = output_dir / "subtitles.srt"
+            self.assertFalse(srt_path.exists())
+
 
 class FunASRLanguageMappingTests(unittest.TestCase):
     def test_common_languages_map_to_chinese_names(self) -> None:

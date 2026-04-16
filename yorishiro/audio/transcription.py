@@ -66,6 +66,7 @@ class TranscriberConfig:
     forced_aligner_min_confidence: float = 0.0
     forced_aligner_merge_gap_seconds: float = 0.12
     diagnostics_enabled: bool = False
+    generate_srt: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,26 @@ def strip_punctuation_for_alignment(text: str) -> str:
 
 def compact_alignment_text(text: str) -> str:
     return strip_punctuation_for_alignment(text).replace(" ", "")
+
+
+def _fmt_srt_time(seconds: float) -> str:
+    """Format time in seconds as SRT timestamp: HH:MM:SS,mmm"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int(round((seconds % 1) * 1000))
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _write_srt(entries: list[STTEntry], srt_path: Path) -> None:
+    """Write entries to SRT file."""
+    lines: list[str] = []
+    for i, entry in enumerate(entries, 1):
+        lines.append(str(i))
+        lines.append(f"{_fmt_srt_time(entry.start)} --> {_fmt_srt_time(entry.end)}")
+        lines.append(entry.text)
+        lines.append("")
+    srt_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def build_display_to_align_map(display_text: str, align_text: str) -> list[int | None]:
@@ -677,6 +698,13 @@ class Transcriber:
             input_mtime=input_mtime,
         )
         self._atomic_write_text(out, transcript.model_dump_json(indent=2))
+
+        # Write subtitles.srt if enabled
+        if self.config.generate_srt:
+            srt_path = output_dir / "subtitles.srt"
+            _write_srt(transcript.entries, srt_path)
+            print(f"  [STT] Wrote {srt_path}")
+
         self._cleanup_checkpoint_dir(output_dir / ".stt_checkpoints")
         print(
             f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}"

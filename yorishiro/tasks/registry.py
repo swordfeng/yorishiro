@@ -403,6 +403,8 @@ class ModelRegistry:
             )
         if cfg.get("diagnostics_enabled") is not None:
             kwargs["diagnostics_enabled"] = _parse_bool(cfg["diagnostics_enabled"])
+        if cfg.get("generate_srt") is not None:
+            kwargs["generate_srt"] = _parse_bool(cfg["generate_srt"])
 
         return Transcriber(TranscriberConfig(**kwargs))
 

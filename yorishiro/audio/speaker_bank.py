@@ -19,12 +19,14 @@ from yorishiro.utils import get_device
 
 @dataclass
 class SpeakerBankManagerConfig:
-    # Which speaker embedding model to use.
-    # Supported values:
-    # - "wespeaker" (default): pyannote/wespeaker-voxceleb-resnet34-LM
-    # - "pyannote": pyannote/embedding
-    # - any Hugging Face model id (e.g. "eek/wespeaker-voxceleb-resnet293-LM")
-    embedding_backend: str = "wespeaker"
+    # Which interface to use for speaker embedding extraction.
+    # - "pyannote" (default): pyannote.audio Inference (supports pyannote/* and pyannote/wespeaker-* models)
+    # - "wespeaker": native wespeaker SDK via ModelScope (for iic/* models, etc.)
+    embedding_backend: str = "pyannote"
+    # Model ID override. If None, a sensible default is used per backend:
+    # - pyannote: pyannote/wespeaker-voxceleb-resnet34-LM
+    # - wespeaker: iic/speech_eres2netv2_sv_zh-cn_16k-common
+    embedding_model: str | None = None
 
 
 class SpeakerBankManager:
@@ -80,31 +82,32 @@ class SpeakerBankManager:
     ) -> np.ndarray | None:
         """Extract speaker embedding for a segment."""
         try:
-            from pyannote.audio import Inference
-            from pyannote.audio import Model
+            import soundfile as sf
+
+            backend = (self.config.embedding_backend or "pyannote").strip()
 
             if self._embedding_model is None:
-                backend = (self.config.embedding_backend or "").strip()
-                if backend in {
-                    "wespeaker",
-                    "wespeaker_resnet34",
-                    "pyannote/wespeaker-voxceleb-resnet34-LM",
-                }:
-                    model_id = "pyannote/wespeaker-voxceleb-resnet34-LM"
-                elif backend in {"pyannote", "pyannote/embedding"}:
-                    model_id = "pyannote/embedding"
-                elif "/" in backend:
-                    model_id = backend
-                else:
-                    model_id = "pyannote/wespeaker-voxceleb-resnet34-LM"
+                if backend == "wespeaker":
+                    from wespeaker import Speaker  # type: ignore[import-untyped]  # ty:ignore[unresolved-import]
 
-                model = Model.from_pretrained(model_id)
-                device = torch.device(get_device())
-                model = model.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
-                self._embedding_model = Inference(model, window="whole")
+                    model_id = (
+                        self.config.embedding_model
+                        or "iic/speech_eres2netv2_sv_zh-cn_16k-common"
+                    )
+                    self._embedding_model = Speaker(model_id=model_id)
+                else:
+                    from pyannote.audio import Inference, Model
+
+                    model_id = (
+                        self.config.embedding_model
+                        or "pyannote/wespeaker-voxceleb-resnet34-LM"
+                    )
+                    model = Model.from_pretrained(model_id)
+                    device = torch.device(get_device())
+                    model = model.to(device)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                    self._embedding_model = Inference(model, window="whole")
 
             assert self._embedding_model is not None
-            import soundfile as sf
 
             info = sf.info(str(audio_path))
             start_sample = int(start * info.samplerate)
@@ -116,14 +119,22 @@ class SpeakerBankManager:
                 dtype="float32",
                 always_2d=False,
             )
-            t = torch.tensor(chunk)
-            if t.ndim == 1:
-                waveform = t.unsqueeze(0)  # mono: (1, time)
+
+            if backend == "wespeaker":
+                # wespeaker SDK expects a mono float32 numpy array
+                audio_mono = chunk if chunk.ndim == 1 else chunk.mean(axis=1)
+                embedding = self._embedding_model.extract_embedding_from_data(  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                    audio_mono, sr
+                )
             else:
-                waveform = t.T.contiguous()  # stereo: (channels, time)
-            embedding = self._embedding_model(
-                {"waveform": waveform, "sample_rate": int(sr)}
-            )
+                t = torch.tensor(chunk)
+                if t.ndim == 1:
+                    waveform = t.unsqueeze(0)  # mono: (1, time)
+                else:
+                    waveform = t.T.contiguous()  # stereo: (channels, time)
+                embedding = self._embedding_model(  # type: ignore[operator]
+                    {"waveform": waveform, "sample_rate": int(sr)}
+                )
 
             return embedding if isinstance(embedding, np.ndarray) else None
 

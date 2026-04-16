@@ -65,7 +65,7 @@ class TranscriberConfig:
     forced_aligner_num_workers: int = 1
     forced_aligner_min_confidence: float = 0.0
     forced_aligner_merge_gap_seconds: float = 0.12
-    debug_dump_stt_diag: bool = False
+    diagnostics_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -1517,7 +1517,7 @@ class Transcriber:
             )
 
         pre_align_snapshot: dict[str, list[dict[str, Any]]] | None = None
-        if self.config.debug_dump_stt_diag:
+        if self.config.diagnostics_enabled:
             pre_align_snapshot = {gid: list(r.entries) for gid, r in completed.items()}
 
         print("    [STT] Running forced alignment pass ...")
@@ -1616,7 +1616,7 @@ class Transcriber:
         _flush_alignment_checkpoints()
 
         if (
-            self.config.debug_dump_stt_diag
+            self.config.diagnostics_enabled
             and output_dir is not None
             and pre_align_snapshot is not None
         ):

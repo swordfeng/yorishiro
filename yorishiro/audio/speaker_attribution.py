@@ -10,10 +10,10 @@ Uses windowed embedding extraction with per-segment voting:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
-import hashlib
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -75,7 +75,8 @@ class SweepCandidateRow(TypedDict):
 
 @dataclass(frozen=True)
 class SpeakerAttributorConfig:
-    embedding_backend: str = "wespeaker"
+    embedding_backend: str = "pyannote"
+    embedding_model: str | None = None
     similarity_threshold: float = 0.75
     diagnostics_enabled: bool = False
     clustering_method: str = "umap_hdbscan_auto"
@@ -140,6 +141,7 @@ class SpeakerAttributor:
         bank = SpeakerBankManager(
             SpeakerBankManagerConfig(
                 embedding_backend=self.config.embedding_backend,
+                embedding_model=self.config.embedding_model,
             )
         )
 
@@ -1165,9 +1167,12 @@ class SpeakerAttributor:
                 1 for pos in poses if int(best_labels[pos]) != voted_label
             )
 
-        disagreement_rate = (
+        raw_rate = (
             float(disagreement_count / len(window_X)) if len(window_X) > 0 else 0.0
         )
+        n_clusters = len(set(int(x) for x in expanded_labels if int(x) >= 0))
+        divisor = np.sqrt(max(n_clusters, 1))
+        disagreement_rate = raw_rate / divisor
         voted_separation = self._mean_silhouette(
             window_X, voted_window_labels, sim_matrix=sim_matrix
         )
@@ -1400,10 +1405,10 @@ class SpeakerAttributor:
             return
 
         specs = [
-            ("silhouette", 1.0, True),
-            ("nn_purity", 1.0, True),
-            ("sep", 1.0, True),
-            ("disagree", 1.0, False),
+            ("silhouette", 0.5, True),
+            ("nn_purity", 3.0, True),
+            ("sep", 0.5, True),
+            ("disagree", 3.0, False),
         ]
 
         normalized_by_key: dict[str, list[float]] = {}

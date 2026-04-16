@@ -233,6 +233,7 @@ class ModelRegistry:
         parts = [
             "speaker-attributor",
             str(cfg.get("backend", "")),
+            str(cfg.get("model", "")),
             str(cfg.get("speaker_similarity_threshold", "")),
             str(cfg.get("diagnostics_enabled", "")),
             str(cfg.get("clustering_method", "")),
@@ -400,8 +401,8 @@ class ModelRegistry:
             kwargs["forced_aligner_merge_gap_seconds"] = float(
                 cfg["forced_aligner_merge_gap_seconds"]
             )
-        if cfg.get("debug_dump_stt_diag") is not None:
-            kwargs["debug_dump_stt_diag"] = _parse_bool(cfg["debug_dump_stt_diag"])
+        if cfg.get("diagnostics_enabled") is not None:
+            kwargs["diagnostics_enabled"] = _parse_bool(cfg["diagnostics_enabled"])
 
         return Transcriber(TranscriberConfig(**kwargs))
 
@@ -425,6 +426,8 @@ class ModelRegistry:
         kwargs: dict[str, Any] = {}
         if cfg.get("backend") is not None:
             kwargs["embedding_backend"] = cfg["backend"]
+        if cfg.get("model") is not None:
+            kwargs["embedding_model"] = cfg["model"]
         if cfg.get("speaker_similarity_threshold") is not None:
             kwargs["similarity_threshold"] = float(cfg["speaker_similarity_threshold"])
         if cfg.get("diagnostics_enabled") is not None:

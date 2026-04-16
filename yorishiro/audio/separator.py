@@ -167,7 +167,14 @@ class AudioSeparator:
             container.close()
 
     def _iter_audio_chunks(self, video_path: Path, chunk_samples: int):
-        """Yield resampled stereo chunks as float32 arrays shaped (2, N)."""
+        """Yield resampled stereo chunks as float32 arrays shaped (2, N).
+
+        Audio is accumulated at the source sample rate, then each chunk is
+        resampled to the target rate in one soxr call.  This avoids per-frame
+        rounding drift that accumulates when resampling small codec frames
+        individually (e.g. 48 kHz EAC3 1536-sample frames → 44.1 kHz loses
+        ~0.2 samples/frame, adding up to >1 s over a feature-length film).
+        """
         import av
         from av.audio.frame import AudioFrame
 
@@ -178,36 +185,49 @@ class AudioSeparator:
         if audio_stream is None:
             raise ValueError(f"No audio stream found in {video_path}")
 
-        # Keep channel/layout normalization in PyAV; do sample-rate conversion via
-        # shared soxr resampler for consistent high-quality behavior project-wide.
+        # PyAV handles channel/layout normalisation only; sample-rate conversion
+        # is deferred to soxr operating on whole chunks.
         resampler = av.AudioResampler(format="fltp", layout="stereo")
         buffered: deque[np.ndarray] = deque()
-        buffered_samples = 0
+        buffered_samples = 0  # counted at *source* sample rate
+        source_sr: int = 0
         emitted_any = False
+
+        def _resample_chunk(chunk: np.ndarray) -> np.ndarray:
+            """Resample a (2, N) array from source_sr to target SR."""
+            if source_sr > 0 and source_sr != self.config.sample_rate:
+                # soxr expects (samples, channels)
+                return audio_resample.resample(
+                    chunk.T,
+                    orig_sr=source_sr,
+                    target_sr=self.config.sample_rate,
+                ).T.astype("float32", copy=False)
+            return chunk
+
+        def _source_chunk_samples() -> int:
+            """How many source-rate samples correspond to one output chunk."""
+            if source_sr > 0 and source_sr != self.config.sample_rate:
+                return int(chunk_samples * source_sr / self.config.sample_rate)
+            return chunk_samples
 
         try:
             for frame in input_container.decode(audio_stream):
                 assert isinstance(frame, AudioFrame)
                 for resampled in resampler.resample(frame):
                     arr = resampled.to_ndarray().astype("float32", copy=False)
-                    frame_sr = int(
-                        getattr(resampled, "sample_rate", None)
-                        or getattr(frame, "sample_rate", None)
-                        or 0
-                    )
-                    if frame_sr > 0 and frame_sr != self.config.sample_rate:
-                        # soxr expects shape (samples, channels) for multi-channel input.
-                        arr = audio_resample.resample(
-                            arr.T,
-                            orig_sr=frame_sr,
-                            target_sr=self.config.sample_rate,
-                        ).T.astype("float32", copy=False)
+                    if source_sr == 0:
+                        source_sr = int(
+                            getattr(resampled, "sample_rate", None)
+                            or getattr(frame, "sample_rate", None)
+                            or self.config.sample_rate
+                        )
                     buffered.append(arr)
                     buffered_samples += int(arr.shape[1])
 
-                    while buffered_samples >= chunk_samples:
+                    src_chunk = _source_chunk_samples()
+                    while buffered_samples >= src_chunk:
                         out_parts: list[np.ndarray] = []
-                        remaining = chunk_samples
+                        remaining = src_chunk
                         while remaining > 0:
                             part = buffered[0]
                             part_samples = int(part.shape[1])
@@ -219,9 +239,9 @@ class AudioSeparator:
                                 out_parts.append(part[:, :remaining])
                                 buffered[0] = part[:, remaining:]
                                 remaining = 0
-                        buffered_samples -= chunk_samples
+                        buffered_samples -= src_chunk
                         emitted_any = True
-                        yield np.concatenate(out_parts, axis=1)
+                        yield _resample_chunk(np.concatenate(out_parts, axis=1))
         finally:
             input_container.close()
 
@@ -229,7 +249,7 @@ class AudioSeparator:
             raise ValueError(f"No audio frames decoded from {video_path}")
 
         if buffered_samples > 0:
-            yield np.concatenate(list(buffered), axis=1)
+            yield _resample_chunk(np.concatenate(list(buffered), axis=1))
 
     @staticmethod
     def _stitch_chunk(

@@ -118,6 +118,139 @@ def _write_srt(entries: list[STTEntry], srt_path: Path) -> None:
     srt_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _parse_srt_time(time_str: str) -> float:
+    """Parse SRT timestamp to seconds."""
+    time_str = time_str.strip().replace(",", ".")
+    parts = time_str.split(":")
+    if len(parts) == 3:
+        h, m, s = parts
+        return int(h) * 3600 + int(m) * 60 + float(s)
+    elif len(parts) == 2:
+        m, s = parts
+        return int(m) * 60 + float(s)
+    else:
+        return float(parts[0])
+
+
+def _parse_srt(srt_path: Path) -> list[STTEntry]:
+    """Parse SRT or WebVTT file and return STT entries."""
+    content = srt_path.read_text(encoding="utf-8")
+    entries: list[STTEntry] = []
+    entry_id = 0
+
+    # Strip WebVTT header if present
+    if content.strip().startswith("WEBVTT"):
+        # Remove the header block (everything before first blank line)
+        header_end = content.find("\n\n")
+        if header_end != -1:
+            content = content[header_end + 2:]
+
+    # Split by double newline to get blocks
+    blocks = re.split(r"\n\s*\n", content.strip())
+
+    for block in blocks:
+        lines = block.strip().split("\n")
+        if len(lines) < 2:
+            continue
+
+        # Find the timing line (contains -->)
+        time_idx = None
+        for i, line in enumerate(lines):
+            if "-->" in line:
+                time_idx = i
+                break
+        if time_idx is None:
+            continue
+
+        time_line = lines[time_idx].strip()
+        text_lines = lines[time_idx + 1:]
+
+        # VTT may have positioning info after the timestamp
+        # e.g. "00:00:01.000 --> 00:00:04.000 position:10% align:left"
+        match = re.match(
+            r"(.+?)\s*-->\s*(.+?)(?:\s+|$)",
+            time_line,
+        )
+        if not match:
+            continue
+
+        start_str, end_str = match.groups()
+        start = _parse_srt_time(start_str)
+        end = _parse_srt_time(end_str)
+        text = "\n".join(text_lines).strip()
+
+        # Skip styling-only lines (VTT <b>, <i>, etc.)
+        text = re.sub(r"<[^>]+>", "", text).strip()
+
+        if text:
+            entries.append(
+                STTEntry(
+                    entry_id=f"utt_{entry_id:06d}",
+                    start=start,
+                    end=end,
+                    text=text,
+                    confidence=1.0,  # Subtitles have no confidence score
+                )
+            )
+            entry_id += 1
+
+    return entries
+
+
+def _parse_ass(ass_path: Path) -> list[STTEntry]:
+    """Parse ASS/SSA subtitle file and return STT entries."""
+    content = ass_path.read_text(encoding="utf-8-sig")
+    entries: list[STTEntry] = []
+    entry_id = 0
+
+    for line in content.split("\n"):
+        line = line.strip()
+        if not line.startswith("Dialogue:"):
+            continue
+
+        # Format: Dialogue: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+        parts = line[len("Dialogue:"):].split(",", 9)
+        if len(parts) < 10:
+            continue
+
+        try:
+            start = _parse_ass_time(parts[1].strip())
+            end = _parse_ass_time(parts[2].strip())
+        except (ValueError, IndexError):
+            continue
+
+        text = parts[9].strip()
+        # ASS uses \N for line breaks
+        text = text.replace("\\N", "\n").replace("\\n", "\n")
+        # Strip ASS formatting tags like {\i1}, {\b0}, etc.
+        text = re.sub(r"\{[^}]*\}", "", text).strip()
+
+        if text:
+            entries.append(
+                STTEntry(
+                    entry_id=f"utt_{entry_id:06d}",
+                    start=start,
+                    end=end,
+                    text=text,
+                    confidence=1.0,
+                )
+            )
+            entry_id += 1
+
+    return entries
+
+
+def _parse_ass_time(time_str: str) -> float:
+    """Parse ASS/SSA timestamp (H:MM:SS.CC) to seconds."""
+    # ASS format: H:MM:SS.CC (centiseconds)
+    time_str = time_str.strip()
+    parts = time_str.split(":")
+    if len(parts) != 3:
+        raise ValueError(f"Invalid ASS timestamp: {time_str}")
+    h, m, s = parts
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+
 def build_display_to_align_map(display_text: str, align_text: str) -> list[int | None]:
     pos_map: list[int | None] = [None] * len(display_text)
     compact_align = compact_alignment_text(align_text)
@@ -681,8 +814,8 @@ class Transcriber:
         if force and out.exists():
             out.unlink()
             print("    [STT] Cleared output (force)")
-        vad_path = output_dir / "vad.json"
         detected_language = language or self.config.language
+        vad_path = output_dir / "vad.json"
         input_mtime = audio_path.stat().st_mtime
         speech_segments = cast(
             list[dict[str, Any]],
@@ -706,6 +839,108 @@ class Transcriber:
             print(f"  [STT] Wrote {srt_path}")
 
         self._cleanup_checkpoint_dir(output_dir / ".stt_checkpoints")
+        print(
+            f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}"
+        )
+        return transcript
+
+    def run_from_subtitle_path(
+        self,
+        subtitle_path: Path,
+        output_path: Path,
+        language: str | None = None,
+        force: bool = False,
+        track: int | None = None,
+    ) -> STTTranscript:
+        """Run transcription from subtitle file directly.
+
+        This bypasses audio processing and extracts entries from
+        the subtitle file. Supports .srt format natively. For video
+        containers with embedded subtitles, ``track`` selects which
+        subtitle stream to extract (0-based index).
+        """
+        if force and output_path.exists():
+            output_path.unlink()
+            print("    [STT] Cleared output (force)")
+
+        output_dir = output_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        _SUBTITLE_EXTENSIONS = {".srt", ".vtt", ".ass", ".ssa"}
+        _VIDEO_EXTENSIONS = {
+            ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
+        }
+
+        ext = subtitle_path.suffix.lower()
+
+        # For embedded subtitles in video containers, extract via ffmpeg
+        if ext not in _SUBTITLE_EXTENSIONS:
+            if ext not in _VIDEO_EXTENSIONS:
+                raise ValueError(
+                    f"Unsupported file format: {ext}. "
+                    f"Subtitle files: {', '.join(sorted(_SUBTITLE_EXTENSIONS))}. "
+                    f"Video containers: {', '.join(sorted(_VIDEO_EXTENSIONS))}."
+                )
+            import subprocess
+
+            if track is None:
+                track = 0
+            srt_extracted = output_dir / f"_subtitle_track_{track}.srt"
+            print(
+                f"  [STT] Extracting subtitle track {track} from {subtitle_path.name} ..."
+            )
+            cmd = [
+                "ffmpeg",
+                "-i",
+                str(subtitle_path),
+                "-map",
+                f"0:s:{track}",
+                "-f",
+                "srt",
+                str(srt_extracted),
+                "-y",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"ffmpeg subtitle extraction failed (track {track}): "
+                    f"{result.stderr[:500]}"
+                )
+            subtitle_path = srt_extracted
+
+        print(f"  [STT] Extracting from subtitle file {subtitle_path.name} ...")
+
+        # Parse based on file extension
+        if subtitle_path.suffix.lower() in (".srt", ".vtt"):
+            entries = _parse_srt(subtitle_path)
+        elif subtitle_path.suffix.lower() in (".ass", ".ssa"):
+            entries = _parse_ass(subtitle_path)
+        else:
+            raise ValueError(
+                f"Unsupported subtitle format: {subtitle_path.suffix}. "
+                "Supported formats: .srt, .vtt, .ass, .ssa"
+            )
+
+        # Try to detect language from config or use unknown
+        detected_language = language or self.config.language or "unknown"
+
+        transcript = STTTranscript(
+            language=detected_language,
+            entries=entries,
+        )
+
+        self._atomic_write_text(output_path, transcript.model_dump_json(indent=2))
+
+        # Write subtitles.srt if enabled (just copy in this case)
+        if self.config.generate_srt:
+            srt_path = output_path.parent / "subtitles.srt"
+            if subtitle_path.suffix.lower() == ".srt":
+                # Copy the source subtitle file
+                shutil.copy(subtitle_path, srt_path)
+            else:
+                _write_srt(transcript.entries, srt_path)
+            print(f"  [STT] Wrote {srt_path}")
+
         print(
             f"  [STT] Done — {len(transcript.entries)} segment(s), language: {transcript.language}"
         )

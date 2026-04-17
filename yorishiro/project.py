@@ -224,6 +224,28 @@ class Project:
             return path
         return self.root / path
 
+    def get_subtitle_source(self, source_id: str) -> tuple[Path, dict[str, Any]]:
+        """Get subtitle source file path and config.
+
+        Returns (path, config) where config may contain:
+        - track: subtitle track index (for embedded subtitles)
+        - format: subtitle format hint (srt, ass, vtt, etc.)
+        """
+        source = self.get_source(source_id)
+        if not source:
+            raise ValueError(f"Source '{source_id}' not found")
+
+        if source.type != "subtitles":
+            raise ValueError(
+                f"Source '{source_id}' is type '{source.type}', expected 'subtitles'"
+            )
+
+        path = Path(source.path)
+        if not path.is_absolute():
+            path = self.root / path
+
+        return path, source.config
+
     # ------------------------------------------------------------------
     # Model config resolution
     # ------------------------------------------------------------------

@@ -27,6 +27,10 @@ from yorishiro.audio.speaker_attribution import (
 )
 from yorishiro.audio.transcription import (
     _AlignedToken,
+    _parse_ass,
+    _parse_ass_time,
+    _parse_srt,
+    _parse_srt_time,
     _reconcile_whisper_tokens,
     GroupResult,
     SpeechSpan,
@@ -2369,6 +2373,193 @@ class ReconcileWhisperTokensTests(unittest.TestCase):
         combined = "".join(t.text for t in result)
         self.assertIn("こんにちは", combined)
         self.assertIn("世界", combined)
+
+
+class SrtParsingTests(unittest.TestCase):
+    def test_parse_srt_time_with_comma(self) -> None:
+        self.assertAlmostEqual(_parse_srt_time("00:01:30,500"), 90.5)
+
+    def test_parse_srt_time_with_dot(self) -> None:
+        self.assertAlmostEqual(_parse_srt_time("00:01:30.500"), 90.5)
+
+    def test_parse_srt_time_hours(self) -> None:
+        self.assertAlmostEqual(_parse_srt_time("01:02:03,004"), 3723.004)
+
+    def test_parse_srt_basic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            srt_path = Path(tmp_dir) / "test.srt"
+            srt_path.write_text(
+                "1\n00:00:01,000 --> 00:00:04,000\nHello world\n\n"
+                "2\n00:00:05,000 --> 00:00:08,500\nGoodbye\n",
+                encoding="utf-8",
+            )
+            entries = _parse_srt(srt_path)
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0].text, "Hello world")
+            self.assertAlmostEqual(entries[0].start, 1.0)
+            self.assertAlmostEqual(entries[0].end, 4.0)
+            self.assertEqual(entries[1].text, "Goodbye")
+            self.assertAlmostEqual(entries[1].start, 5.0)
+            self.assertAlmostEqual(entries[1].end, 8.5)
+            self.assertEqual(entries[0].entry_id, "utt_000000")
+            self.assertAlmostEqual(entries[0].confidence, 1.0)
+
+    def test_parse_srt_multiline_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            srt_path = Path(tmp_dir) / "test.srt"
+            srt_path.write_text(
+                "1\n00:00:01,000 --> 00:00:04,000\nLine one\nLine two\n\n",
+                encoding="utf-8",
+            )
+            entries = _parse_srt(srt_path)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].text, "Line one\nLine two")
+
+    def test_parse_srt_empty_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            srt_path = Path(tmp_dir) / "test.srt"
+            srt_path.write_text("", encoding="utf-8")
+            entries = _parse_srt(srt_path)
+            self.assertEqual(entries, [])
+
+    def test_parse_vtt_with_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            vtt_path = Path(tmp_dir) / "test.vtt"
+            vtt_path.write_text(
+                "WEBVTT\n\n1\n00:00:01.000 --> 00:00:04.000\nHello\n\n"
+                "2\n00:00:05.000 --> 00:00:08.000\nWorld\n",
+                encoding="utf-8",
+            )
+            entries = _parse_srt(vtt_path)
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0].text, "Hello")
+
+    def test_parse_srt_skips_empty_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            srt_path = Path(tmp_dir) / "test.srt"
+            srt_path.write_text(
+                "1\n00:00:01,000 --> 00:00:04,000\n   \n\n"
+                "2\n00:00:05,000 --> 00:00:08,000\nReal text\n",
+                encoding="utf-8",
+            )
+            entries = _parse_srt(srt_path)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].text, "Real text")
+
+
+class AssParsingTests(unittest.TestCase):
+    def test_parse_ass_time(self) -> None:
+        self.assertAlmostEqual(_parse_ass_time("0:01:30.50"), 90.5)
+
+    def test_parse_ass_time_hours(self) -> None:
+        self.assertAlmostEqual(_parse_ass_time("1:02:03.04"), 3723.04)
+
+    def test_parse_ass_basic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ass_path = Path(tmp_dir) / "test.ass"
+            ass_path.write_text(
+                "[Script Info]\nTitle: Test\n\n"
+                "[Events]\n"
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+                "Dialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,Hello world\n"
+                "Dialogue: 0,0:00:05.00,0:00:08.50,Default,,0,0,0,,Goodbye\n",
+                encoding="utf-8",
+            )
+            entries = _parse_ass(ass_path)
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0].text, "Hello world")
+            self.assertAlmostEqual(entries[0].start, 1.0)
+            self.assertAlmostEqual(entries[0].end, 4.0)
+            self.assertEqual(entries[1].text, "Goodbye")
+            self.assertAlmostEqual(entries[1].start, 5.0)
+            self.assertAlmostEqual(entries[1].end, 8.5)
+
+    def test_parse_ass_strips_formatting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ass_path = Path(tmp_dir) / "test.ass"
+            ass_path.write_text(
+                "[Script Info]\n\n"
+                "[Events]\n"
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+                "Dialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,{\\i1}Italic{\\i0} text\n",
+                encoding="utf-8",
+            )
+            entries = _parse_ass(ass_path)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].text, "Italic text")
+
+    def test_parse_ass_line_breaks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ass_path = Path(tmp_dir) / "test.ass"
+            ass_path.write_text(
+                "[Script Info]\n\n"
+                "[Events]\n"
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+                "Dialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,Line one\\NLine two\n",
+                encoding="utf-8",
+            )
+            entries = _parse_ass(ass_path)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].text, "Line one\nLine two")
+
+    def test_parse_ass_empty_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ass_path = Path(tmp_dir) / "test.ass"
+            ass_path.write_text("[Script Info]\n\n[Events]\n", encoding="utf-8")
+            entries = _parse_ass(ass_path)
+            self.assertEqual(entries, [])
+
+
+class SubtitleBackendTests(unittest.TestCase):
+    def test_run_from_srt_creates_stt_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            srt_path = Path(tmp_dir) / "sub.srt"
+            srt_path.write_text(
+                "1\n00:00:01,000 --> 00:00:04,000\nHello world\n\n"
+                "2\n00:00:05,000 --> 00:00:08,500\nGoodbye\n",
+                encoding="utf-8",
+            )
+            output_path = Path(tmp_dir) / "audio" / "stt.json"
+
+            transcriber = Transcriber(TranscriberConfig())
+            transcript = transcriber.run_from_subtitle_path(
+                srt_path, output_path, language="en"
+            )
+
+            self.assertEqual(transcript.language, "en")
+            self.assertEqual(len(transcript.entries), 2)
+            self.assertEqual(transcript.entries[0].text, "Hello world")
+            self.assertAlmostEqual(transcript.entries[0].start, 1.0)
+            self.assertAlmostEqual(transcript.entries[0].confidence, 1.0)
+            self.assertTrue(output_path.exists())
+
+    def test_run_from_srt_generates_srt_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            srt_path = Path(tmp_dir) / "sub.srt"
+            srt_path.write_text(
+                "1\n00:00:01,000 --> 00:00:04,000\nHello\n",
+                encoding="utf-8",
+            )
+            output_dir = Path(tmp_dir) / "audio"
+            output_dir.mkdir()
+            output_path = output_dir / "stt.json"
+
+            transcriber = Transcriber(TranscriberConfig(generate_srt=True))
+            transcriber.run_from_subtitle_path(srt_path, output_path, language="en")
+
+            srt_out = output_dir / "subtitles.srt"
+            self.assertTrue(srt_out.exists())
+
+    def test_run_from_srt_unsupported_format_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            fake_path = Path(tmp_dir) / "sub.txt"
+            fake_path.write_text("dummy", encoding="utf-8")
+            output_path = Path(tmp_dir) / "stt.json"
+
+            transcriber = Transcriber(TranscriberConfig())
+            with self.assertRaises(ValueError) as ctx:
+                transcriber.run_from_subtitle_path(fake_path, output_path)
+            self.assertIn(".txt", str(ctx.exception))
 
 
 class SpeakerAttributorTests(unittest.TestCase):

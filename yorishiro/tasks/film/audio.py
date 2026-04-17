@@ -95,17 +95,26 @@ class FilmAudioDiarizeTask(Task):
 
 
 class FilmAudioSTTTask(Task):
-    """Run speech-to-text using vad.json → stt.json."""
+    """Run speech-to-text using vad.json → stt.json, or from subtitle file."""
 
     def __init__(
-        self, output_dir: Path, language: str | None, runtime: StepRuntime
+        self,
+        output_dir: Path,
+        language: str | None,
+        runtime: StepRuntime,
+        subtitle_path: Path | None = None,
+        subtitle_track: int | None = None,
     ) -> None:
         self._output_dir = output_dir
         self._language = language
         self._runtime = runtime
+        self._subtitle_path = subtitle_path
+        self._subtitle_track = subtitle_track
         self._force = False
 
     def input_paths(self) -> list[Path]:
+        if self._subtitle_path is not None:
+            return [self._subtitle_path]
         return [
             self._output_dir / "voice.flac",
             self._output_dir / "vad.json",
@@ -122,12 +131,21 @@ class FilmAudioSTTTask(Task):
         print("[film.audio.stt] Running speech-to-text ...")
         transcriber = self._runtime.instance()
         try:
-            transcriber.run(
-                self._output_dir / "voice.flac",
-                self._output_dir,
-                self._language,
-                force=self._force,
-            )
+            if self._subtitle_path is not None:
+                transcriber.run_from_subtitle_path(
+                    self._subtitle_path,
+                    self._output_dir / "stt.json",
+                    self._language,
+                    force=self._force,
+                    track=self._subtitle_track,
+                )
+            else:
+                transcriber.run(
+                    self._output_dir / "voice.flac",
+                    self._output_dir,
+                    self._language,
+                    force=self._force,
+                )
         finally:
             transcriber.release_models()
 
@@ -350,6 +368,35 @@ class FilmAudioSTTStep(Step):
     def tasks(self) -> list[Task]:
         source = self._project.get_source(self._source_id)
         language = source.config.get("language") if source else None
+        step_config = self._project.step_config(self.step_id)
+        stt_backend = step_config.get("backend", "faster-whisper")
+
+        # Check if using subtitle backend
+        if stt_backend == "subtitles":
+            subtitle_source = step_config.get("subtitle_source")
+            if subtitle_source:
+                subtitle_path, subtitle_config = self._project.get_subtitle_source(
+                    subtitle_source
+                )
+            else:
+                # Use the film source itself as the subtitle source
+                subtitle_path = self._project.get_source_path(self._source_id)
+                subtitle_config = source.config if source else {}
+            subtitle_track = None
+            if "subtitle_track" in step_config:
+                subtitle_track = int(step_config["subtitle_track"])
+            elif "track" in subtitle_config:
+                subtitle_track = int(subtitle_config["track"])
+            return [
+                FilmAudioSTTTask(
+                    self._project.step_dir(self._source_id, "audio"),
+                    language,
+                    self._registry.for_step(self.step_id),
+                    subtitle_path=subtitle_path,
+                    subtitle_track=subtitle_track,
+                )
+            ]
+
         return [
             FilmAudioSTTTask(
                 self._project.step_dir(self._source_id, "audio"),

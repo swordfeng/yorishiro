@@ -1,5 +1,7 @@
 **注：施工现场中👷 | Note: Work In Progress**
 
+大概摸几天，过几天有空了回来继续蹬
+
 # Yorishiro（依り代）
 
 ### Fictional Character Soul Document Generator & Chat System
